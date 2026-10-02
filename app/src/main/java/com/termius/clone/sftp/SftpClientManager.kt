@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.FileMode
-import net.schmizz.sshj.sftp.FilePermission
 import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
@@ -84,7 +83,7 @@ class SftpClientManager {
                 isDirectory = isDir,
                 size = info.attributes.size,
                 mtime = info.attributes.mtime * 1000L,
-                permissions = formatPermissions(isDir, info.attributes.permissions)
+                permissions = formatPermissions(isDir, info.attributes.mode.mask)
             )
         }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
     }
@@ -165,18 +164,20 @@ class SftpClientManager {
         }
     }
 
-    private fun formatPermissions(isDir: Boolean, perms: Set<FilePermission>?): String {
-        if (perms == null) return if (isDir) "drwxr-xr-x" else "-rw-r--r--"
+    private fun formatPermissions(isDir: Boolean, mask: Int): String {
         val sb = java.lang.StringBuilder(if (isDir) "d" else "-")
-        sb.append(if (perms.contains(FilePermission.USR_R)) 'r' else '-')
-        sb.append(if (perms.contains(FilePermission.USR_W)) 'w' else '-')
-        sb.append(if (perms.contains(FilePermission.USR_X)) 'x' else '-')
-        sb.append(if (perms.contains(FilePermission.GRP_R)) 'r' else '-')
-        sb.append(if (perms.contains(FilePermission.GRP_W)) 'w' else '-')
-        sb.append(if (perms.contains(FilePermission.GRP_X)) 'x' else '-')
-        sb.append(if (perms.contains(FilePermission.OTH_R)) 'r' else '-')
-        sb.append(if (perms.contains(FilePermission.OTH_W)) 'w' else '-')
-        sb.append(if (perms.contains(FilePermission.OTH_X)) 'x' else '-')
+        val rwx = charArrayOf(
+            if ((mask and 0x100) != 0) 'r' else '-',
+            if ((mask and 0x80) != 0) 'w' else '-',
+            if ((mask and 0x40) != 0) 'x' else '-',
+            if ((mask and 0x20) != 0) 'r' else '-',
+            if ((mask and 0x10) != 0) 'w' else '-',
+            if ((mask and 0x8) != 0) 'x' else '-',
+            if ((mask and 0x4) != 0) 'r' else '-',
+            if ((mask and 0x2) != 0) 'w' else '-',
+            if ((mask and 0x1) != 0) 'x' else '-'
+        )
+        rwx.forEach { sb.append(it) }
         return sb.toString()
     }
 }

@@ -104,7 +104,7 @@ fun TerminalAccessoryBar(
             AccessoryButton(
                 label = "Ctrl+C",
                 textColor = ObsidianError,
-                onClick = { onSendKey(TerminalKeyCodes.CTRL_C) }
+                onClick = { onSendKey("\u0003") }
             )
 
             AccessoryButton(
