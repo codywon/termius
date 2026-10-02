@@ -74,7 +74,8 @@ fun MainScreen(
                     }
                 }
             }
-        }
+        },
+        containerColor = ObsidianBackground
     ) { innerPadding ->
         Box(
             modifier = Modifier
