@@ -11,6 +11,7 @@ import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.keyprovider.KeyProvider
+import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.File
 
 data class SftpItem(
@@ -42,7 +43,7 @@ class SftpClientManager {
             AuthType.PASSWORD -> client.authPassword(username, host.password)
             AuthType.KEY -> {
                 val keyProvider: KeyProvider = if (host.passphrase.isNotEmpty()) {
-                    client.loadKeys(host.privateKey, null, host.passphrase.toCharArray())
+                    client.loadKeys(host.privateKey, null, PasswordUtils.createOneOff(host.passphrase.toCharArray()))
                 } else {
                     client.loadKeys(host.privateKey, null, null)
                 }
@@ -51,7 +52,7 @@ class SftpClientManager {
             AuthType.IDENTITY_REF -> {
                 if (identity != null && identity.privateKey.isNotEmpty()) {
                     val keyProvider: KeyProvider = if (identity.passphrase.isNotEmpty()) {
-                        client.loadKeys(identity.privateKey, null, identity.passphrase.toCharArray())
+                        client.loadKeys(identity.privateKey, null, PasswordUtils.createOneOff(identity.passphrase.toCharArray()))
                     } else {
                         client.loadKeys(identity.privateKey, null, null)
                     }

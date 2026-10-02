@@ -64,7 +64,7 @@ class TerminalLine(val cols: Int) {
 class TerminalBuffer(
     var cols: Int = 80,
     var rows: Int = 24,
-    var theme: TerminalThemeColors = TerminalThemes.TermiusDefault
+    var theme: TerminalThemeColors = TerminalThemes.ObsidianShell
 ) {
     private val maxHistoryLines = 2000
 

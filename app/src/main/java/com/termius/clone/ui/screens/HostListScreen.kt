@@ -1,5 +1,6 @@
 package com.termius.clone.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -261,6 +262,7 @@ fun HostListScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StitchHostCard(
     host: HostEntity,

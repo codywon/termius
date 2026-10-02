@@ -13,6 +13,7 @@ import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.keyprovider.KeyProvider
+import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
@@ -84,7 +85,7 @@ class SshSession(
                     }
                     AuthType.KEY -> {
                         val keyProvider: KeyProvider = if (host.passphrase.isNotEmpty()) {
-                            client.loadKeys(host.privateKey, null, host.passphrase.toCharArray())
+                            client.loadKeys(host.privateKey, null, PasswordUtils.createOneOff(host.passphrase.toCharArray()))
                         } else {
                             client.loadKeys(host.privateKey, null, null)
                         }
@@ -94,7 +95,7 @@ class SshSession(
                         if (identity != null) {
                             if (identity.privateKey.isNotEmpty()) {
                                 val keyProvider: KeyProvider = if (identity.passphrase.isNotEmpty()) {
-                                    client.loadKeys(identity.privateKey, null, identity.passphrase.toCharArray())
+                                    client.loadKeys(identity.privateKey, null, PasswordUtils.createOneOff(identity.passphrase.toCharArray()))
                                 } else {
                                     client.loadKeys(identity.privateKey, null, null)
                                 }
