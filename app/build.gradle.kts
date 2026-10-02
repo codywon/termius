@@ -77,7 +77,7 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // SSH & Security
-    implementation("net.schmizz:sshj:0.38.0")
+    implementation("com.hierynomus:sshj:0.38.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
