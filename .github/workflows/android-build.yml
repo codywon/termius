@@ -1,8 +1,9 @@
-name: Build TermX Android APK
+name: Build and Release TermX Android APK
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -12,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble Debug APK
+    name: Assemble TermX APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -31,8 +32,18 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Debug & Release APK
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
+
+      - name: Prepare APK Release Artifacts
+        run: |
+          mkdir -p release-artifacts
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk release-artifacts/TermX-Mobile-v1.0.0-release.apk
+          fi
+          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/TermX-Mobile-v1.0.0-debug.apk
+          fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -41,10 +52,36 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
-      - name: Create Release on Tag Push
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TermX-Release-APK
+          path: release-artifacts/*.apk
+          retention-days: 30
+
+      - name: Create GitHub Release on Tag Push
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          name: TermX Mobile ${{ github.ref_name }} (Android 原生 Termius 高保真复刻版)
+          body: |
+            ## 🎉 TermX Mobile ${{ github.ref_name }} 正式发布！
+            
+            基于 Google Stitch 设计原型（[Stitch Project 12105989460024767953](https://stitch.withgoogle.com/projects/12105989460024767953)）打造的 **Android 原生 Termius 高保真复刻版**，采用 Kotlin + Jetpack Compose (Material 3) 现代纯原生架构。
+
+            ### 🚀 核心特性：
+            - **Obsidian Shell 黑曜石极客暗黑主题**：`#0B141C` 沉浸底色，`#67DF70` 翡翠荧光绿，`#A2C9FF` 冰蓝次强调色。
+            - **触觉 4-Way D-Pad 导航控制器 (Screen 4)**：专为 Vim / Nano / Htop / Tmux 打造的触觉摇杆控制器与居中 ENTER 回车盘。
+            - **三模软键盘配件条 (Keys / D-Pad / Quick)**：经典控制键、触觉方向盘、快捷运维脚本注入。
+            - **Port Forwarding 端口转发与 SSH 隧道调度**：支持本地端口转发（Local Port Forwarding）与实时状态监控。
+            - **Hosts & Clusters 主机管理**：云同步指示灯、分类 Chips 标签过滤、实时搜索与资产卡片。
+            - **Host Connection Config 配置中心**：别名、颜色选择器、IP 快速粘贴、预设端口芯片、三模认证与握手诊断。
+            - **SFTP 文件浏览器**：逐级面包屑导航、文件上传与下载。
+            - **Keychain 安全钥匙串**：AES-GCM 本地加密与 RSA/ED25519 密钥对生成。
+            
+            ### 📱 安装包下载：
+            - **Release 正式版 APK**：下载附件中的 `TermX-Mobile-v1.0.0-release.apk`
+            - **Debug 调试版 APK**：下载附件中的 `TermX-Mobile-v1.0.0-debug.apk`
+          files: release-artifacts/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
