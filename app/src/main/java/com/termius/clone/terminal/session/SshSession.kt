@@ -53,6 +53,7 @@ class SshSession(
     val renderTick: StateFlow<Long> = _renderTick
 
     private var sshClient: SSHClient? = null
+    fun getClient(): SSHClient? = sshClient
     private var sshSession: Session? = null
     private var shell: Session.Shell? = null
     private var outputStream: OutputStream? = null
