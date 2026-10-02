@@ -1,17 +1,13 @@
 package com.termius.clone.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,35 +39,34 @@ fun MainScreen(
                 containerColor = ObsidianSurfaceContainerLow,
                 tonalElevation = 0.dp
             ) {
-                    MainTab.entries.forEach { tab ->
-                        val isSelected = currentTab == tab
-                        NavigationBarItem(
-                            icon = { Icon(tab.icon, contentDescription = tab.title) },
-                            label = { Text(tab.title, fontSize = 11.sp) },
-                            selected = isSelected,
-                            onClick = {
-                                if (tab == MainTab.TERMINAL) {
-                                    if (activeSessions.isNotEmpty()) {
-                                        onNavigateToTerminal()
-                                    } else {
-                                        currentTab = MainTab.TERMINAL
-                                    }
+                MainTab.entries.forEach { tab ->
+                    val isSelected = currentTab == tab
+                    NavigationBarItem(
+                        icon = { Icon(tab.icon, contentDescription = tab.title) },
+                        label = { Text(tab.title, fontSize = 11.sp) },
+                        selected = isSelected,
+                        onClick = {
+                            if (tab == MainTab.TERMINAL) {
+                                if (activeSessions.isNotEmpty()) {
+                                    onNavigateToTerminal()
                                 } else {
-                                    if (tab != MainTab.SFTP) {
-                                        sftpHostTarget = null
-                                    }
-                                    currentTab = tab
+                                    currentTab = MainTab.TERMINAL
                                 }
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = ObsidianPrimary,
-                                selectedTextColor = ObsidianPrimary,
-                                unselectedIconColor = ObsidianTextMuted,
-                                unselectedTextColor = ObsidianTextMuted,
-                                indicatorColor = ObsidianPrimary.copy(alpha = 0.15f)
-                            )
+                            } else {
+                                if (tab != MainTab.SFTP) {
+                                    sftpHostTarget = null
+                                }
+                                currentTab = tab
+                            }
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = ObsidianPrimary,
+                            selectedTextColor = ObsidianPrimary,
+                            unselectedIconColor = ObsidianTextMuted,
+                            unselectedTextColor = ObsidianTextMuted,
+                            indicatorColor = ObsidianPrimary.copy(alpha = 0.15f)
                         )
-                    }
+                    )
                 }
             }
         },
