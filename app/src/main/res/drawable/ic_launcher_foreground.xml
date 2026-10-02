@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.6"
+        android:scaleY="1.6"
+        android:translateX="35"
+        android:translateY="35">
+        <!-- Terminal command prompt > -->
+        <path
+            android:fillColor="#3FB950"
+            android:pathData="M2,4 L11,12 L2,20 L4.5,22.5 L16,12 L4.5,1.5 Z" />
+        <!-- Terminal cursor _ -->
+        <path
+            android:fillColor="#67DF70"
+            android:pathData="M13,20 L24,20 L24,23 L13,23 Z" />
+    </group>
+</vector>
