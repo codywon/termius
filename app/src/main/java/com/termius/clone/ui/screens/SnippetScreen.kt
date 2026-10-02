@@ -92,6 +92,8 @@ fun SnippetScreen() {
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = ObsidianPrimary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                 )
                             }
@@ -101,6 +103,8 @@ fun SnippetScreen() {
                                 fontWeight = FontWeight.Bold,
                                 color = ObsidianTextPrimary,
                                 fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(

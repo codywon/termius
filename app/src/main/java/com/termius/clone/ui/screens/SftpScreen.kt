@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -158,6 +160,117 @@ fun SftpScreen(
         if (initialHost != null) {
             connectToHost(initialHost)
         }
+    }
+
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    BackHandler(enabled = editingItem != null) {
+        keyboardController?.hide()
+        editingItem = null
+    }
+
+    if (editingItem != null) {
+        val targetItem = editingItem!!
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding(),
+            color = ObsidianBackground
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(color = ObsidianSurfaceContainerLow) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = {
+                            keyboardController?.hide()
+                            editingItem = null
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = ObsidianTextPrimary)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = targetItem.name,
+                                color = ObsidianTextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = targetItem.path,
+                                color = ObsidianTextSecondary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(onClick = { keyboardController?.hide() }) {
+                            Icon(Icons.Default.KeyboardHide, contentDescription = "Hide Keyboard", tint = ObsidianTextSecondary)
+                        }
+
+                        Button(
+                            onClick = {
+                                keyboardController?.hide()
+                                scope.launch {
+                                    isSavingEdit = true
+                                    try {
+                                        sftpManager.writeTextFile(targetItem.path, editingContent)
+                                        Toast.makeText(context, "文件保存成功", Toast.LENGTH_SHORT).show()
+                                        editingItem = null
+                                        loadDir(currentPath)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        isSavingEdit = false
+                                    }
+                                }
+                            },
+                            enabled = !isSavingEdit,
+                            colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            if (isSavingEdit) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                            } else {
+                                Text("保存", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = editingContent,
+                    onValueChange = { editingContent = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedTextColor = ObsidianTextPrimary,
+                        unfocusedTextColor = ObsidianTextPrimary,
+                        cursorColor = ObsidianPrimary
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                )
+            }
+        }
+        return
     }
 
     Scaffold(
@@ -429,7 +542,9 @@ fun SftpScreen(
                                                 },
                                                 color = ObsidianTextSecondary,
                                                 fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace
+                                                fontFamily = FontFamily.Monospace,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
 
@@ -566,106 +681,6 @@ fun SftpScreen(
             },
             containerColor = ObsidianSurfaceContainerLow
         )
-    }
-
-    // 在线文本编辑器对话框 (Termius In-App Editor)
-    editingItem?.let { targetItem ->
-        Dialog(
-            onDismissRequest = { editingItem = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .imePadding(),
-                color = ObsidianBackground
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Editor Top Bar
-                    Surface(color = ObsidianSurfaceContainerLow) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = { editingItem = null }) {
-                                Icon(Icons.Default.Close, contentDescription = "Close", tint = ObsidianTextPrimary)
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = targetItem.name,
-                                    color = ObsidianTextPrimary,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = targetItem.path,
-                                    color = ObsidianTextSecondary,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isSavingEdit = true
-                                        try {
-                                            sftpManager.writeTextFile(targetItem.path, editingContent)
-                                            Toast.makeText(context, "文件保存成功", Toast.LENGTH_SHORT).show()
-                                            editingItem = null
-                                            loadDir(currentPath)
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        } finally {
-                                            isSavingEdit = false
-                                        }
-                                    }
-                                },
-                                enabled = !isSavingEdit,
-                                colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                if (isSavingEdit) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                                } else {
-                                    Text("保存", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    // Content Editor Body
-                    OutlinedTextField(
-                        value = editingContent,
-                        onValueChange = { editingContent = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .padding(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent,
-                            focusedTextColor = ObsidianTextPrimary,
-                            unfocusedTextColor = ObsidianTextPrimary,
-                            cursorColor = ObsidianPrimary
-                        ),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp
-                        )
-                    )
-                }
-            }
-        }
     }
 
     // 重命名对话框

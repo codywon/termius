@@ -16,6 +16,22 @@ object TerminalKeyCodes {
     const val END = "\u001B[F"
     const val PAGE_UP = "\u001B[5~"
     const val PAGE_DOWN = "\u001B[6~"
+    const val INSERT = "\u001B[2~"
+    const val DELETE = "\u001B[3~"
+
+    // F1 - F12
+    const val F1 = "\u001BOP"
+    const val F2 = "\u001BOQ"
+    const val F3 = "\u001BOR"
+    const val F4 = "\u001BOS"
+    const val F5 = "\u001B[15~"
+    const val F6 = "\u001B[17~"
+    const val F7 = "\u001B[18~"
+    const val F8 = "\u001B[19~"
+    const val F9 = "\u001B[20~"
+    const val F10 = "\u001B[21~"
+    const val F11 = "\u001B[23~"
+    const val F12 = "\u001B[24~"
 
     /**
      * 将 Ctrl + 字符 转换为 ASCII 控制码 (例如 Ctrl+C -> 0x03)

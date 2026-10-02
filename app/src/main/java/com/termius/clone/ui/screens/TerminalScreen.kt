@@ -104,7 +104,9 @@ fun TerminalScreen(
                                             color = if (isSelected) Color.White else ObsidianTextSecondary,
                                             fontSize = 12.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            fontFamily = FontFamily.Monospace
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
 
                                         IconButton(

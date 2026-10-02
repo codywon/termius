@@ -225,15 +225,16 @@ fun EditHostDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(vertical = 2.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                presetTags.take(4).forEach { tag ->
+                                presetTags.forEach { tag ->
                                     val isSelected = groupName == tag
                                     FilterChip(
                                         selected = isSelected,
                                         onClick = { groupName = tag },
-                                        label = { Text(tag, fontSize = 11.sp) },
+                                        label = { Text(tag, fontSize = 11.sp, maxLines = 1, softWrap = false) },
                                         colors = FilterChipDefaults.filterChipColors(
                                             selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
                                             selectedLabelColor = ObsidianPrimary
@@ -332,13 +333,15 @@ fun EditHostDialog(
 
                         // Auth type chips
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             FilterChip(
                                 selected = authType == AuthType.PASSWORD,
                                 onClick = { authType = AuthType.PASSWORD },
-                                label = { Text("Password", fontSize = 12.sp) },
+                                label = { Text("Password", fontSize = 12.sp, maxLines = 1, softWrap = false) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
                                     selectedLabelColor = ObsidianPrimary
@@ -347,7 +350,7 @@ fun EditHostDialog(
                             FilterChip(
                                 selected = authType == AuthType.KEY,
                                 onClick = { authType = AuthType.KEY },
-                                label = { Text("SSH Key", fontSize = 12.sp) },
+                                label = { Text("SSH Key", fontSize = 12.sp, maxLines = 1, softWrap = false) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
                                     selectedLabelColor = ObsidianPrimary
@@ -356,7 +359,7 @@ fun EditHostDialog(
                             FilterChip(
                                 selected = authType == AuthType.IDENTITY_REF,
                                 onClick = { authType = AuthType.IDENTITY_REF },
-                                label = { Text("Vault Key", fontSize = 12.sp) }
+                                label = { Text("Vault Key", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                             )
                         }
 

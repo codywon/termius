@@ -163,6 +163,8 @@ fun HostListScreen(
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     color = if (isSelected) ObsidianPrimary else ObsidianTextSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
@@ -325,26 +327,36 @@ fun TeamXHostCard(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
                         text = host.label,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
-                        color = ObsidianTextPrimary
+                        color = ObsidianTextPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    // Tag chip
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = ObsidianSurfaceContainerHigh
-                    ) {
-                        Text(
-                            text = host.groupName,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = ObsidianTextSecondary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                    if (host.groupName.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        // Tag chip
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = ObsidianSurfaceContainerHigh
+                        ) {
+                            Text(
+                                text = host.groupName,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = ObsidianTextSecondary,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
 
@@ -354,7 +366,9 @@ fun TeamXHostCard(
                     text = "${host.username}@${host.hostname}:${host.port}",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = ObsidianTextSecondary
+                    color = ObsidianTextSecondary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
 

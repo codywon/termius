@@ -208,7 +208,9 @@ fun TunnelItemCard(
                         rule.name,
                         color = ObsidianTextPrimary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
 
@@ -220,7 +222,9 @@ fun TunnelItemCard(
                     color = if (rule.isRunning) ObsidianPrimary else ObsidianTextSecondary,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
 
                 if (rule.description.isNotEmpty()) {
@@ -228,6 +232,8 @@ fun TunnelItemCard(
                         rule.description,
                         color = ObsidianTextMuted,
                         fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }

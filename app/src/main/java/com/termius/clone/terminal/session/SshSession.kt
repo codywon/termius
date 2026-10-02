@@ -153,9 +153,30 @@ class SshSession(
         }
     }
 
+    private val isRenderPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var lastRenderTimestamp = 0L
+
+    private fun scheduleRender() {
+        val now = System.currentTimeMillis()
+        if (now - lastRenderTimestamp >= 30L) {
+            lastRenderTimestamp = now
+            _renderTick.value = now
+        } else {
+            if (isRenderPending.compareAndSet(false, true)) {
+                scope.launch(Dispatchers.Default) {
+                    kotlinx.coroutines.delay(25L)
+                    isRenderPending.set(false)
+                    val t = System.currentTimeMillis()
+                    lastRenderTimestamp = t
+                    _renderTick.value = t
+                }
+            }
+        }
+    }
+
     private fun startReadingLoop() {
         scope.launch(Dispatchers.IO) {
-            val buffer = ByteArray(4096)
+            val buffer = ByteArray(8192)
             try {
                 val stream = inputStream ?: return@launch
                 while (isActive) {
@@ -163,7 +184,7 @@ class SshSession(
                     if (read == -1) break
                     if (read > 0) {
                         emulator.processInput(buffer, 0, read)
-                        _renderTick.value = System.currentTimeMillis()
+                        scheduleRender()
                     }
                 }
             } catch (e: Exception) {
