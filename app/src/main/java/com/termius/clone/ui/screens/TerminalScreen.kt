@@ -20,9 +20,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.termius.clone.terminal.session.SessionManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.termius.clone.terminal.session.SessionManager
+import com.termius.clone.terminal.session.SessionState
 import com.termius.clone.ui.components.TerminalAccessoryBar
 import com.termius.clone.ui.components.TerminalInputMode
 import com.termius.clone.ui.components.TerminalView
