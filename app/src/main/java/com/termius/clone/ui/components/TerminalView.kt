@@ -45,7 +45,8 @@ fun TerminalView(
     isAltActive: Boolean,
     onConsumeAlt: () -> Unit,
     modifier: Modifier = Modifier,
-    externalFocusRequester: FocusRequester? = null
+    externalFocusRequester: FocusRequester? = null,
+    onTapTerminal: (() -> Unit)? = null
 ) {
     // 监听重新渲染 tick
     val renderTick by session.renderTick.collectAsState()
@@ -101,6 +102,7 @@ fun TerminalView(
                 detectTapGestures(
                     onTap = {
                         try {
+                            onTapTerminal?.invoke()
                             focusRequester.requestFocus()
                             keyboardController?.show()
                         } catch (e: Exception) {

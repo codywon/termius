@@ -73,7 +73,7 @@ fun PortForwardingDialog(
                         }
                         Column {
                             Text(
-                                "端口转发 (Port Forwarding)",
+                                "端口转发",
                                 color = ObsidianTextPrimary,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold

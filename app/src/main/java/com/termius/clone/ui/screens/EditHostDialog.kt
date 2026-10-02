@@ -56,7 +56,7 @@ fun EditHostDialog(
     var label by remember { mutableStateOf(hostToEdit?.label ?: "") }
     var hostname by remember { mutableStateOf(hostToEdit?.hostname ?: "") }
     var portText by remember { mutableStateOf(hostToEdit?.port?.toString() ?: "22") }
-    var username by remember { mutableStateOf(hostToEdit?.username ?: "ubuntu") }
+    var username by remember { mutableStateOf(hostToEdit?.username ?: "root") }
     // 默认认证方式设为 PASSWORD，避免用户未填私钥保存导致的连接失败
     var authType by remember { mutableStateOf(hostToEdit?.authType ?: AuthType.PASSWORD) }
     var password by remember { mutableStateOf(hostToEdit?.password ?: "") }
@@ -99,19 +99,13 @@ fun EditHostDialog(
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ObsidianTextPrimary)
                         }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (hostToEdit == null) "New Host Connection" else "Host Configuration",
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary,
-                                fontSize = 17.sp
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Lock, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(12.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Obsidian Encrypted Session", fontSize = 11.sp, color = ObsidianTextSecondary)
-                            }
-                        }
+                        Text(
+                            text = if (hostToEdit == null) "New Host" else "Host Config",
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary,
+                            fontSize = 17.sp,
+                            modifier = Modifier.weight(1f)
+                        )
                         Button(
                             onClick = {
                                 val trimmedHost = hostname.trim()
@@ -522,9 +516,17 @@ fun EditHostDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("Background Keepalive", color = ObsidianTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                        Text("Keep SSH session connected via Foreground Service", color = ObsidianTextSecondary, fontSize = 11.sp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("后台保活", color = ObsidianTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                        IconButton(
+                                            onClick = { Toast.makeText(context, "前台服务保活，锁屏或切后台时连接不断开", Toast.LENGTH_SHORT).show() },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.HelpOutline, contentDescription = "Help", tint = ObsidianTextMuted, modifier = Modifier.size(15.dp))
+                                        }
                                     }
                                     Switch(
                                         checked = isBackgroundKeepAlive,
@@ -536,17 +538,28 @@ fun EditHostDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Heartbeat Keep-Alive:", color = ObsidianTextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("心跳间隔", color = ObsidianTextSecondary, fontSize = 12.sp)
+                                        IconButton(
+                                            onClick = { Toast.makeText(context, "定期发送空包探测，防止NAT防火墙中断空闲会话", Toast.LENGTH_SHORT).show() },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.HelpOutline, contentDescription = "Help", tint = ObsidianTextMuted, modifier = Modifier.size(15.dp))
+                                        }
+                                    }
                                     OutlinedTextField(
                                         value = keepAliveSec,
                                         onValueChange = { keepAliveSec = it.filter { c -> c.isDigit() } },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         singleLine = true,
                                         shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.width(80.dp)
+                                        modifier = Modifier.width(70.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("sec", color = ObsidianTextMuted, fontSize = 12.sp)
+                                    Text("秒", color = ObsidianTextMuted, fontSize = 12.sp)
                                 }
                             }
                         }

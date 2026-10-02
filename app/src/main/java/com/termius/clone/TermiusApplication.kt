@@ -25,7 +25,8 @@ class TermiusApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         setupBouncyCastle()
-        // 预热并初始化数据库
+        // 预热并初始化数据库与快捷指令库
         AppDatabase.getDatabase(this)
+        com.termius.clone.data.local.QuickCommandManager.init(this)
     }
 }

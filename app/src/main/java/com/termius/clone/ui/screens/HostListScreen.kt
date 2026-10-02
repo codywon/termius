@@ -102,7 +102,7 @@ fun HostListScreen(
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = "Vault Synced & Secure",
+                                    text = "Synced",
                                     fontSize = 11.sp,
                                     color = ObsidianTextSecondary
                                 )

@@ -21,8 +21,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.terminal.session.SessionManager
-import com.termius.clone.terminal.session.SessionState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import com.termius.clone.ui.components.TerminalAccessoryBar
+import com.termius.clone.ui.components.TerminalInputMode
 import com.termius.clone.ui.components.TerminalView
 import com.termius.clone.ui.theme.*
 
@@ -40,6 +42,7 @@ fun TerminalScreen(
 
     var isCtrlActive by remember { mutableStateOf(false) }
     var isAltActive by remember { mutableStateOf(false) }
+    var currentInputMode by remember { mutableStateOf(TerminalInputMode.IME) }
 
     val activeSession = sessions.find { it.id == currentSessionId }
 
@@ -135,14 +138,16 @@ fun TerminalScreen(
             }
         },
         bottomBar = {
-            if (activeSession != null) {
+            if (activeSession != null && currentInputMode != TerminalInputMode.HIDDEN) {
                 TerminalAccessoryBar(
+                    currentMode = currentInputMode,
+                    onModeChange = { newMode -> currentInputMode = newMode },
                     isCtrlActive = isCtrlActive,
                     onToggleCtrl = { isCtrlActive = !isCtrlActive },
                     isAltActive = isAltActive,
                     onToggleAlt = { isAltActive = !isAltActive },
                     onSendKey = { key -> activeSession.write(key) },
-                    onToggleKeyboard = {
+                    onRequestShowKeyboard = {
                         try {
                             terminalFocusRequester.requestFocus()
                             keyboardController?.show()
@@ -168,8 +173,40 @@ fun TerminalScreen(
                     onConsumeCtrl = { isCtrlActive = false },
                     isAltActive = isAltActive,
                     onConsumeAlt = { isAltActive = false },
-                    externalFocusRequester = terminalFocusRequester
+                    externalFocusRequester = terminalFocusRequester,
+                    onTapTerminal = {
+                        if (currentInputMode == TerminalInputMode.HIDDEN) {
+                            currentInputMode = TerminalInputMode.IME
+                        }
+                    }
                 )
+
+                // 当模式为 HIDDEN 时，在右下角悬浮一个黑曜石风格的极简键盘唤醒胶囊
+                if (currentInputMode == TerminalInputMode.HIDDEN) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                currentInputMode = TerminalInputMode.IME
+                                terminalFocusRequester.requestFocus()
+                                keyboardController?.show()
+                            },
+                        shape = CircleShape,
+                        color = ObsidianSurfaceContainerHigh.copy(alpha = 0.9f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.Keyboard, contentDescription = "Open Keyboard", tint = ObsidianPrimary, modifier = Modifier.size(16.dp))
+                            Text("键盘", color = ObsidianTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
             } else {
                 Box(
                     modifier = Modifier.fillMaxSize(),
