@@ -44,7 +44,7 @@ fun TerminalScreen(
     var showAddComboDialog by remember { mutableStateOf(false) }
     var showPortForwardingDialog by remember { mutableStateOf(false) }
 
-    // 会话在线运行计时器 (Stitch Screen 4 Telemetry)
+    // 会话在线运行计时器 (TeamX Telemetry)
     var uptimeSeconds by remember { mutableLongStateOf(42L) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -82,7 +82,7 @@ fun TerminalScreen(
     Scaffold(
         topBar = {
             Surface(color = ObsidianSurfaceContainerLow) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     // Header Bar with Session Tabs
                     Row(
                         modifier = Modifier
@@ -169,7 +169,7 @@ fun TerminalScreen(
                         }
                     }
 
-                    // Stitch Screen 4 Telemetry Strip
+                    // Session Telemetry Strip
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

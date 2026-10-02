@@ -567,6 +567,7 @@ fun EditHostDialog(
 
                                     withContext(Dispatchers.IO) {
                                         try {
+                                            com.termius.clone.TermiusApplication.setupBouncyCastle()
                                             val client = SSHClient()
                                             client.addHostKeyVerifier(PromiscuousVerifier())
                                             val start = System.currentTimeMillis()

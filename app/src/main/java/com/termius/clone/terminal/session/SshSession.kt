@@ -65,8 +65,9 @@ class SshSession(
                 _sessionState.value = SessionState.CONNECTING
                 _statusMessage.value = "正在连接到 ${host.hostname}:${host.port}..."
 
+                com.termius.clone.TermiusApplication.setupBouncyCastle()
                 val client = SSHClient()
-                // 允许未知主机指纹（工业级 Termius 行为：首次连接记录并接受）
+                // 允许未知主机指纹（首次连接记录并接受）
                 client.addHostKeyVerifier(PromiscuousVerifier())
                 client.connect(host.hostname, host.port)
                 sshClient = client
@@ -146,7 +147,7 @@ class SshSession(
                 val errMsg = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
                 _statusMessage.value = "连接失败: $errMsg"
                 terminalBuffer.clearScreen(2)
-                emulator.processInput("\r\n\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m\r\n\r\n\u001B[33m提示: 请检查主机 IP、端口以及密码/私钥是否配置正确。\u001B[0m\r\n")
+                emulator.processInput("\r\n\u001B[31m[TeamX Mobile] 连接失败: $errMsg\u001B[0m\r\n\r\n\u001B[33m提示: 请检查主机 IP、端口以及密码/私钥是否配置正确。\u001B[0m\r\n")
                 _renderTick.value = System.currentTimeMillis()
             }
         }

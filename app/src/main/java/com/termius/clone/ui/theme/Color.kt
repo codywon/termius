@@ -2,7 +2,7 @@ package com.termius.clone.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Stitch "Obsidian Shell" Design System Theme Palette
+// "Obsidian Shell" Design System Theme Palette
 val ObsidianBackground = Color(0xFF0B141C)
 val ObsidianSurface = Color(0xFF0B141C)
 val ObsidianSurfaceContainerLowest = Color(0xFF060F16)

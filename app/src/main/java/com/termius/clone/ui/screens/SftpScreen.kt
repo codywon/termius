@@ -95,7 +95,7 @@ fun SftpScreen(
     Scaffold(
         topBar = {
             Surface(color = ObsidianSurfaceContainerLow) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

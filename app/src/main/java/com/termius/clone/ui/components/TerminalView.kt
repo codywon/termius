@@ -184,10 +184,11 @@ fun TerminalView(
 
                             // 绘制自定义背景色
                             if (cell.bgColor != Color.Unspecified && cell.bgColor != theme.background) {
+                                val bgWidth = if (cell.isWideChar) charWidth * 2f else charWidth + 0.5f
                                 drawRect(
                                     color = cell.bgColor,
                                     topLeft = Offset(xPos, yPos),
-                                    size = Size(charWidth + 0.5f, charHeight)
+                                    size = Size(bgWidth, charHeight)
                                 )
                             }
 

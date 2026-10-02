@@ -66,8 +66,8 @@ fun HostListScreen(
     Scaffold(
         topBar = {
             Surface(color = ObsidianSurfaceContainerLow) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    // Header Bar (TermX Mobile Branding & Sync status)
+                Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
+                    // Header Bar (TeamX Mobile Branding & Sync status)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -89,7 +89,7 @@ fun HostListScreen(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "TermX Mobile",
+                                text = "TeamX Mobile",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp,
                                 color = ObsidianTextPrimary
@@ -216,7 +216,7 @@ fun HostListScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredHosts, key = { it.id }) { host ->
-                        StitchHostCard(
+                        TeamXHostCard(
                             host = host,
                             onConnect = {
                                 try {
@@ -277,7 +277,7 @@ fun HostListScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun StitchHostCard(
+fun TeamXHostCard(
     host: HostEntity,
     onConnect: () -> Unit,
     onEdit: () -> Unit,

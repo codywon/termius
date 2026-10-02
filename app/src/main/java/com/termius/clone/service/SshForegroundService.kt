@@ -61,7 +61,7 @@ class SshForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TermX Mobile 正在后台运行")
+            .setContentTitle("TeamX Mobile 正在后台运行")
             .setContentText("保持活跃的 SSH 连接数: $sessionCount")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)

@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            TermiusCloneTheme {
+            com.termius.clone.ui.theme.TeamXTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = ObsidianBackground

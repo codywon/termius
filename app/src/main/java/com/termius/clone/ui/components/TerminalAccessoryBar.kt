@@ -94,7 +94,7 @@ fun TerminalAccessoryBar(
             .fillMaxWidth()
             .background(ObsidianSurfaceContainerLowest)
     ) {
-        // Active Port Forwarding Banner (From Stitch Screen 4)
+        // Active Port Forwarding Banner
         if (activeTunnel != null) {
             Surface(
                 color = ObsidianSurfaceContainerLow,
@@ -152,7 +152,7 @@ fun TerminalAccessoryBar(
             }
         }
 
-        // Auxiliary Header & Mode Segment Switcher (From Stitch Screen 4)
+        // Auxiliary Header & Mode Segment Switcher
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -247,7 +247,7 @@ fun TerminalAccessoryBar(
                         }
                     }
 
-                    // Row 2: Stitch Quick Combos & Snippets Strip
+                    // Row 2: Quick Combos & Snippets Strip
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -304,7 +304,7 @@ fun TerminalAccessoryBar(
             }
 
             AccessoryMode.DPAD -> {
-                // Tactile D-Pad Navigation Dock (From Stitch Screen 4)
+                // Tactile D-Pad Navigation Dock
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -456,7 +456,7 @@ fun TerminalAccessoryBar(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Horizontal Quick Access Ribbon (From Stitch Screen 4)
+                    // Horizontal Quick Access Ribbon
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

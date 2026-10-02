@@ -29,6 +29,7 @@ class SftpClientManager {
     private var sftpClient: SFTPClient? = null
 
     suspend fun connect(host: HostEntity, identity: IdentityEntity? = null) = withContext(Dispatchers.IO) {
+        com.termius.clone.TermiusApplication.setupBouncyCastle()
         val client = SSHClient()
         client.addHostKeyVerifier(PromiscuousVerifier())
         client.connect(host.hostname, host.port)

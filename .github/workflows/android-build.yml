@@ -1,4 +1,4 @@
-name: Build and Release TermX Android APK
+name: Build and Release TeamX Mobile APK
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble TermX APKs
+    name: Assemble TeamX APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -40,26 +40,26 @@ jobs:
           mkdir -p release-artifacts
           TAG_NAME="${{ github.ref_name }}"
           if [ -z "$TAG_NAME" ] || [ "$TAG_NAME" = "main" ]; then
-            TAG_NAME="v1.0.1"
+            TAG_NAME="v1.0.0"
           fi
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-artifacts/TermX-Mobile-${TAG_NAME}-release.apk
+            cp app/build/outputs/apk/release/app-release.apk release-artifacts/TeamX-Mobile-${TAG_NAME}-release.apk
           fi
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/TermX-Mobile-${TAG_NAME}-debug.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/TeamX-Mobile-${TAG_NAME}-debug.apk
           fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TermX-Debug-APK
+          name: TeamX-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TermX-Release-APK
+          name: TeamX-Release-APK
           path: release-artifacts/*.apk
           retention-days: 30
 
@@ -67,25 +67,28 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: TermX Mobile ${{ github.ref_name }} (Android 原生 Termius 高保真复刻版)
+          name: TeamX Mobile ${{ github.ref_name }}
           body: |
-            ## 🎉 TermX Mobile ${{ github.ref_name }} 正式发布！
+            ## 🎉 TeamX Mobile ${{ github.ref_name }} 正式发布！
             
-            基于 Google Stitch 设计原型（[Stitch Project 12105989460024767953](https://stitch.withgoogle.com/projects/12105989460024767953)）打造的 **Android 原生 Termius 高保真复刻版**，采用 Kotlin + Jetpack Compose (Material 3) 现代纯原生架构。
+            基于现代纯原生架构打造的 **TeamX Mobile** Android SSH 客户端与终端工具，采用 Kotlin + Jetpack Compose (Material 3)。
 
             ### 🚀 核心特性：
-            - **Obsidian Shell 黑曜石极客暗黑主题**：`#0B141C` 沉浸底色，`#67DF70` 翡翠荧光绿，`#A2C9FF` 冰蓝次强调色。
-            - **触觉 4-Way D-Pad 导航控制器 (Screen 4)**：专为 Vim / Nano / Htop / Tmux 打造的触觉摇杆控制器与居中 ENTER 回车盘。
+            - **现代极客暗黑主题**：`#0B141C` 沉浸底色，`#67DF70` 翡翠荧光绿，`#A2C9FF` 冰蓝次强调色。
+            - **沉浸式状态栏适配**：顶部状态栏安全避让，彻底解决水滴/挖孔屏与 Tab 标签栏重合问题。
+            - **中文等宽渲染引擎**：全面支持中文字符与全角符号排版，彻底解决汉字重叠与错位。
+            - **现代算法全套支持**：集成高版本 BouncyCastle 提供者，原生支持 `X25519`、`Ed25519`、`curve25519-sha256`。
+            - **触觉 4-Way D-Pad 导航控制器**：专为 Vim / Nano / Htop / Tmux 打造的触觉摇杆控制器与居中 ENTER 回车盘。
             - **三模软键盘配件条 (Keys / D-Pad / Quick)**：经典控制键、触觉方向盘、快捷运维脚本注入。
             - **Port Forwarding 端口转发与 SSH 隧道调度**：支持本地端口转发（Local Port Forwarding）与实时状态监控。
-            - **Hosts & Clusters 主机管理**：云同步指示灯、分类 Chips 标签过滤、实时搜索与资产卡片。
-            - **Host Connection Config 配置中心**：别名、颜色选择器、IP 快速粘贴、预设端口芯片、三模认证与握手诊断。
+            - **Hosts & Clusters 主机管理**：分类 Chips 标签过滤、实时搜索与资产卡片。
+            - **Host Connection Config 配置中心**：软键盘自动避让防遮挡、密码明文切换、三模认证与握手诊断。
             - **SFTP 文件浏览器**：逐级面包屑导航、文件上传与下载。
             - **Keychain 安全钥匙串**：AES-GCM 本地加密与 RSA/ED25519 密钥对生成。
             
             ### 📱 安装包下载：
-            - **Release 正式版 APK**：下载附件中的 `TermX-Mobile-v1.0.0-release.apk`
-            - **Debug 调试版 APK**：下载附件中的 `TermX-Mobile-v1.0.0-debug.apk`
+            - **Release 正式版 APK**：下载附件中的 `TeamX-Mobile-${{ github.ref_name }}-release.apk`
+            - **Debug 调试版 APK**：下载附件中的 `TeamX-Mobile-${{ github.ref_name }}-debug.apk`
           files: release-artifacts/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -27,10 +27,13 @@ private val ObsidianColorScheme = darkColorScheme(
 )
 
 @Composable
-fun TermiusCloneTheme(content: @Composable () -> Unit) {
+fun TeamXTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = ObsidianColorScheme,
         typography = Typography,
         content = content
     )
 }
+
+@Composable
+fun TermiusCloneTheme(content: @Composable () -> Unit) = TeamXTheme(content)

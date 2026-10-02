@@ -103,7 +103,11 @@ class TerminalBuffer(
     }
 
     fun writeChar(c: Char) {
-        if (cursorCol >= cols) {
+        val wide = isWide(c)
+
+        if (wide && cursorCol >= cols - 1) {
+            newLine()
+        } else if (cursorCol >= cols) {
             newLine()
         }
 
@@ -115,14 +119,31 @@ class TerminalBuffer(
         cell.isBold = currentBold
         cell.isUnderline = currentUnderline
         cell.isInverse = currentInverse
-        cell.isWideChar = isWide(c)
+        cell.isWideChar = wide
 
         cursorCol++
+
+        // 宽字符占用两个字符宽度，第二单元格置空占位，避免后续字符覆写
+        if (wide && cursorCol < cols) {
+            val followCell = line.cells[cursorCol]
+            followCell.reset()
+            followCell.char = ' '
+            followCell.bgColor = cell.bgColor
+            followCell.isWideChar = false
+            cursorCol++
+        }
     }
 
     private fun isWide(c: Char): Boolean {
         val code = c.code
-        return (code in 0x4E00..0x9FFF) || (code in 0x3400..0x4DBF) || (code in 0x20000..0x2A6DF)
+        return (code in 0x4E00..0x9FFF) ||       // CJK 统一表意文字
+               (code in 0x3400..0x4DBF) ||       // CJK 扩展 A
+               (code in 0x20000..0x2A6DF) ||     // CJK 扩展 B
+               (code in 0xF900..0xFAFF) ||       // CJK 兼容表意文字
+               (code in 0x3000..0x303F) ||       // CJK 符号和标点（全角空格、逗号、顿号等）
+               (code in 0xFF01..0xFF60) ||       // 全角 ASCII 变体（！、：、？、（、）等）
+               (code in 0xFFE0..0xFFE6) ||       // 全角符号
+               (code in 0xAC00..0xD7AF)          // 韩文音节
     }
 
     fun newLine() {
