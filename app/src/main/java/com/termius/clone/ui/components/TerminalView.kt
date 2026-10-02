@@ -158,61 +158,69 @@ fun TerminalView(
             val screen = buffer.currentScreen
 
             drawIntoCanvas { canvas ->
-                val nativeCanvas = canvas.nativeCanvas
+                try {
+                    val nativeCanvas = canvas.nativeCanvas
 
-                for (r in 0 until rows) {
-                    val line = if (scrollOffsetLines > 0 && !buffer.isUsingAltScreen) {
-                        val historyIndex = totalHistory - scrollOffsetLines + r
-                        if (historyIndex in 0 until totalHistory) {
-                            history[historyIndex]
+                    for (r in 0 until rows) {
+                        val line = if (scrollOffsetLines > 0 && !buffer.isUsingAltScreen) {
+                            val historyIndex = totalHistory - scrollOffsetLines + r
+                            if (historyIndex in 0 until totalHistory) {
+                                history.getOrNull(historyIndex)
+                            } else {
+                                val screenRow = historyIndex - totalHistory
+                                if (screenRow in 0 until rows) screen.getOrNull(screenRow) else null
+                            }
                         } else {
-                            val screenRow = historyIndex - totalHistory
-                            if (screenRow in 0 until rows) screen[screenRow] else null
-                        }
-                    } else {
-                        if (r in 0 until rows) screen[r] else null
-                    } ?: continue
+                            screen.getOrNull(r)
+                        } ?: continue
 
-                    val yPos = r * charHeight
+                        val yPos = r * charHeight
+                        val cells = line.cells
+                        val limitCols = minOf(cols, cells.size)
 
-                    for (c in 0 until cols) {
-                        val cell = line.cells[c]
-                        val xPos = c * charWidth
+                        for (c in 0 until limitCols) {
+                            val cell = cells.getOrNull(c) ?: continue
+                            val xPos = c * charWidth
 
-                        // 绘制自定义背景色
-                        if (cell.bgColor != Color.Unspecified && cell.bgColor != theme.background) {
-                            drawRect(
-                                color = cell.bgColor,
-                                topLeft = Offset(xPos, yPos),
-                                size = Size(charWidth + 0.5f, charHeight)
-                            )
-                        }
+                            // 绘制自定义背景色
+                            if (cell.bgColor != Color.Unspecified && cell.bgColor != theme.background) {
+                                drawRect(
+                                    color = cell.bgColor,
+                                    topLeft = Offset(xPos, yPos),
+                                    size = Size(charWidth + 0.5f, charHeight)
+                                )
+                            }
 
-                        // 绘制字符
-                        if (cell.char != ' ' && cell.char.code > 0) {
-                            textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else theme.foreground).toArgb()
-                            textPaint.isFakeBoldText = cell.isBold
-                            textPaint.isUnderlineText = cell.isUnderline
+                            // 绘制字符
+                            if (cell.char != ' ' && cell.char.code > 0) {
+                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else theme.foreground).toArgb()
+                                textPaint.isFakeBoldText = cell.isBold
+                                textPaint.isUnderlineText = cell.isUnderline
 
-                            nativeCanvas.drawText(
-                                cell.char.toString(),
-                                xPos,
-                                yPos + baselineOffset,
-                                textPaint
-                            )
+                                nativeCanvas.drawText(
+                                    cell.char.toString(),
+                                    xPos,
+                                    yPos + baselineOffset,
+                                    textPaint
+                                )
+                            }
                         }
                     }
-                }
 
-                // 绘制终端光标 (如果未滚动且光标可见)
-                if (scrollOffsetLines == 0 && buffer.isCursorVisible) {
-                    val cursorX = buffer.cursorCol * charWidth
-                    val cursorY = buffer.cursorRow * charHeight
-                    drawRect(
-                        color = theme.cursor.copy(alpha = 0.7f),
-                        topLeft = Offset(cursorX, cursorY),
-                        size = Size(charWidth, charHeight)
-                    )
+                    // 绘制终端光标 (如果未滚动且光标可见)
+                    if (scrollOffsetLines == 0 && buffer.isCursorVisible) {
+                        val safeCol = buffer.cursorCol.coerceIn(0, maxOf(0, cols - 1))
+                        val safeRow = buffer.cursorRow.coerceIn(0, maxOf(0, rows - 1))
+                        val cursorX = safeCol * charWidth
+                        val cursorY = safeRow * charHeight
+                        drawRect(
+                            color = theme.cursor.copy(alpha = 0.7f),
+                            topLeft = Offset(cursorX, cursorY),
+                            size = Size(charWidth, charHeight)
+                        )
+                    }
+                } catch (e: Throwable) {
+                    e.printStackTrace()
                 }
             }
         }

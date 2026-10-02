@@ -55,14 +55,23 @@ object SessionManager {
     }
 
     private fun updateForegroundService(context: Context) {
-        val count = _sessions.value.size
-        val intent = Intent(context, SshForegroundService::class.java).apply {
-            putExtra(SshForegroundService.EXTRA_SESSION_COUNT, count)
-        }
-        if (count > 0) {
-            context.startForegroundService(intent)
-        } else {
-            context.stopService(intent)
+        try {
+            val count = _sessions.value.size
+            val intent = Intent(context, SshForegroundService::class.java).apply {
+                putExtra(SshForegroundService.EXTRA_SESSION_COUNT, count)
+            }
+            if (count > 0) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } else {
+                context.stopService(intent)
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+            // 避免因任何后台限制或厂商系统拦截导致的崩溃
         }
     }
 }

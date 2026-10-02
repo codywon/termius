@@ -219,12 +219,25 @@ fun HostListScreen(
                         StitchHostCard(
                             host = host,
                             onConnect = {
-                                val identity = identities.find { it.id == host.identityId }
-                                SessionManager.openSession(context, host, identity)
-                                scope.launch {
-                                    db.hostDao().updateLastConnected(host.id, System.currentTimeMillis())
+                                try {
+                                    val identity = identities.find { it.id == host.identityId }
+                                    SessionManager.openSession(context, host, identity)
+                                    scope.launch {
+                                        try {
+                                            db.hostDao().updateLastConnected(host.id, System.currentTimeMillis())
+                                        } catch (e: Throwable) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                    onNavigateToTerminal()
+                                } catch (e: Throwable) {
+                                    e.printStackTrace()
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "启动连接失败: ${e.localizedMessage ?: e.message}",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
                                 }
-                                onNavigateToTerminal()
                             },
                             onEdit = {
                                 hostToEdit = host

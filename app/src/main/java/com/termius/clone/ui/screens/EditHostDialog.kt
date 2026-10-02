@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -55,8 +56,10 @@ fun EditHostDialog(
     var hostname by remember { mutableStateOf(hostToEdit?.hostname ?: "") }
     var portText by remember { mutableStateOf(hostToEdit?.port?.toString() ?: "22") }
     var username by remember { mutableStateOf(hostToEdit?.username ?: "ubuntu") }
-    var authType by remember { mutableStateOf(hostToEdit?.authType ?: AuthType.KEY) }
+    // 默认认证方式设为 PASSWORD，避免用户未填私钥保存导致的连接失败
+    var authType by remember { mutableStateOf(hostToEdit?.authType ?: AuthType.PASSWORD) }
     var password by remember { mutableStateOf(hostToEdit?.password ?: "") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
     var privateKey by remember { mutableStateOf(hostToEdit?.privateKey ?: "") }
     var passphrase by remember { mutableStateOf(hostToEdit?.passphrase ?: "") }
     var selectedIdentityId by remember { mutableStateOf(hostToEdit?.identityId) }
@@ -73,11 +76,14 @@ fun EditHostDialog(
     var handshakeSuccess by remember { mutableStateOf(false) }
 
     val presetColors = listOf("#67DF70", "#A2C9FF", "#D6ACFF", "#FABC45", "#FF6E6E")
-    val presetTags = listOf("AWS", "Production", "Docker", "Staging", "K8s")
+    val presetTags = listOf("All", "Production", "Docker", "Staging", "AWS", "K8s")
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
         Scaffold(
             topBar = {
@@ -85,6 +91,7 @@ fun EditHostDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .statusBarsPadding()
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -106,19 +113,30 @@ fun EditHostDialog(
                         }
                         Button(
                             onClick = {
+                                val trimmedHost = hostname.trim()
+                                if (trimmedHost.isBlank()) {
+                                    Toast.makeText(context, "请输入主机 IP 或域名！", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+
+                                if (authType == AuthType.KEY && privateKey.isBlank()) {
+                                    Toast.makeText(context, "当前选择 SSH Key 认证，请粘贴私钥或切换为 Password 认证！", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
+
                                 val port = portText.toIntOrNull() ?: 22
-                                val finalLabel = if (label.isBlank()) hostname else label
+                                val finalLabel = if (label.isBlank()) trimmedHost else label.trim()
                                 val host = (hostToEdit ?: HostEntity(
                                     label = finalLabel,
-                                    hostname = hostname
+                                    hostname = trimmedHost
                                 )).copy(
                                     label = finalLabel,
-                                    hostname = hostname,
+                                    hostname = trimmedHost,
                                     port = port,
-                                    username = username,
+                                    username = username.trim().ifBlank { "root" },
                                     authType = authType,
                                     password = password,
-                                    privateKey = privateKey,
+                                    privateKey = privateKey.trim(),
                                     passphrase = passphrase,
                                     identityId = selectedIdentityId,
                                     groupName = groupName,
@@ -136,14 +154,18 @@ fun EditHostDialog(
                     }
                 }
             },
-            containerColor = ObsidianBackground
+            containerColor = ObsidianBackground,
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
         ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    .imePadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Section 1: Connection Profile
@@ -200,8 +222,13 @@ fun EditHostDialog(
                         // Tags Selection
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Cluster Group / Tags:", fontSize = 12.sp, color = ObsidianTextSecondary)
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                presetTags.forEach { tag ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                presetTags.take(4).forEach { tag ->
                                     val isSelected = groupName == tag
                                     FilterChip(
                                         selected = isSelected,
@@ -234,8 +261,8 @@ fun EditHostDialog(
                         OutlinedTextField(
                             value = hostname,
                             onValueChange = { hostname = it.trim() },
-                            label = { Text("Hostname / IP Address") },
-                            placeholder = { Text("54.210.38.12 or api.example.com") },
+                            label = { Text("Hostname / IP Address *") },
+                            placeholder = { Text("192.168.1.100 or api.server.com") },
                             trailingIcon = {
                                 IconButton(onClick = {
                                     val clipText = clipboard.getText()?.text
@@ -264,7 +291,7 @@ fun EditHostDialog(
                         ) {
                             OutlinedTextField(
                                 value = portText,
-                                onValueChange = { portText = it },
+                                onValueChange = { portText = it.filter { c -> c.isDigit() } },
                                 label = { Text("Port") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
@@ -290,7 +317,7 @@ fun EditHostDialog(
                     }
                 }
 
-                // Section 3: Authentication & Credentials
+                // Section 3: Authentication & Credentials (密码与私钥)
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = ObsidianSurfaceContainerLow,
@@ -303,24 +330,28 @@ fun EditHostDialog(
                             Text("Authentication & Credentials", fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontSize = 14.sp)
                         }
 
-                        // Auth type segmented buttons
+                        // Auth type chips
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             FilterChip(
-                                selected = authType == AuthType.KEY,
-                                onClick = { authType = AuthType.KEY },
-                                label = { Text("SSH Key (Rec.)", fontSize = 12.sp) },
+                                selected = authType == AuthType.PASSWORD,
+                                onClick = { authType = AuthType.PASSWORD },
+                                label = { Text("Password", fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
                                     selectedLabelColor = ObsidianPrimary
                                 )
                             )
                             FilterChip(
-                                selected = authType == AuthType.PASSWORD,
-                                onClick = { authType = AuthType.PASSWORD },
-                                label = { Text("Password", fontSize = 12.sp) }
+                                selected = authType == AuthType.KEY,
+                                onClick = { authType = AuthType.KEY },
+                                label = { Text("SSH Key", fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
+                                    selectedLabelColor = ObsidianPrimary
+                                )
                             )
                             FilterChip(
                                 selected = authType == AuthType.IDENTITY_REF,
@@ -333,7 +364,7 @@ fun EditHostDialog(
                             value = username,
                             onValueChange = { username = it },
                             label = { Text("Username") },
-                            placeholder = { Text("ubuntu / root") },
+                            placeholder = { Text("root or ubuntu") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -351,7 +382,16 @@ fun EditHostDialog(
                                     value = password,
                                     onValueChange = { password = it },
                                     label = { Text("Password") },
-                                    visualTransformation = PasswordVisualTransformation(),
+                                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                    trailingIcon = {
+                                        IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                            Icon(
+                                                imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = "Toggle password",
+                                                tint = ObsidianSecondary
+                                            )
+                                        }
+                                    },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -367,8 +407,18 @@ fun EditHostDialog(
                                 OutlinedTextField(
                                     value = privateKey,
                                     onValueChange = { privateKey = it },
-                                    label = { Text("Private Key (OpenSSH / PEM / Ed25519)") },
+                                    label = { Text("Private Key (OpenSSH / PEM / Ed25519) *") },
                                     placeholder = { Text("-----BEGIN OPENSSH PRIVATE KEY-----\n...") },
+                                    trailingIcon = {
+                                        IconButton(onClick = {
+                                            val clipText = clipboard.getText()?.text
+                                            if (!clipText.isNullOrBlank()) {
+                                                privateKey = clipText.trim()
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.ContentPaste, contentDescription = "Paste Key", tint = ObsidianPrimary)
+                                        }
+                                    },
                                     minLines = 3,
                                     maxLines = 6,
                                     shape = RoundedCornerShape(8.dp),
@@ -485,7 +535,7 @@ fun EditHostDialog(
                                     Text("Heartbeat Keep-Alive:", color = ObsidianTextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                                     OutlinedTextField(
                                         value = keepAliveSec,
-                                        onValueChange = { keepAliveSec = it },
+                                        onValueChange = { keepAliveSec = it.filter { c -> c.isDigit() } },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         singleLine = true,
                                         shape = RoundedCornerShape(6.dp),
@@ -509,9 +559,10 @@ fun EditHostDialog(
                     Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Button(
                             onClick = {
+                                val trimmedTarget = hostname.trim()
                                 scope.launch {
                                     isTestingHandshake = true
-                                    handshakeResult = "Initiating SSH handshake with $hostname..."
+                                    handshakeResult = "Initiating SSH handshake with $trimmedTarget..."
                                     handshakeSuccess = false
 
                                     withContext(Dispatchers.IO) {
@@ -519,7 +570,7 @@ fun EditHostDialog(
                                             val client = SSHClient()
                                             client.addHostKeyVerifier(PromiscuousVerifier())
                                             val start = System.currentTimeMillis()
-                                            client.connect(hostname, portText.toIntOrNull() ?: 22)
+                                            client.connect(trimmedTarget, portText.toIntOrNull() ?: 22)
                                             val ping = System.currentTimeMillis() - start
                                             client.disconnect()
                                             client.close()
@@ -561,6 +612,9 @@ fun EditHostDialog(
                         }
                     }
                 }
+
+                // 底部键盘额外防遮挡垫高区
+                Spacer(modifier = Modifier.height(180.dp))
             }
         }
     }

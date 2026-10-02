@@ -3,9 +3,11 @@ package com.termius.clone.service
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.termius.clone.MainActivity
 import com.termius.clone.R
 
@@ -19,14 +21,31 @@ class SshForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        try {
+            createNotificationChannel()
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val count = intent?.getIntExtra(EXTRA_SESSION_COUNT, 1) ?: 1
-        val notification = buildNotification(count)
-        startForeground(NOTIFICATION_ID, notification)
-        return START_STICKY
+        try {
+            val count = intent?.getIntExtra(EXTRA_SESSION_COUNT, 1) ?: 1
+            val notification = buildNotification(count)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -42,7 +61,7 @@ class SshForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("OpenTermius 正在后台运行")
+            .setContentTitle("TermX Mobile 正在后台运行")
             .setContentText("保持活跃的 SSH 连接数: $sessionCount")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)

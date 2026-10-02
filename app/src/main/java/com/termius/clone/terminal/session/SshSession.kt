@@ -85,6 +85,9 @@ class SshSession(
                         client.authPassword(username, host.password)
                     }
                     AuthType.KEY -> {
+                        if (host.privateKey.isBlank()) {
+                            throw IllegalArgumentException("SSH 私钥为空，请在主机设置中粘贴有效的私钥内容或切换为密码认证！")
+                        }
                         val keyProvider: KeyProvider = if (host.passphrase.isNotEmpty()) {
                             client.loadKeys(host.privateKey, null, PasswordUtils.createOneOff(host.passphrase.toCharArray()))
                         } else {
@@ -137,12 +140,13 @@ class SshSession(
                 // 启动读取协程
                 startReadingLoop()
 
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
                 _sessionState.value = SessionState.ERROR
-                _statusMessage.value = "连接失败: ${e.localizedMessage ?: e.message}"
+                val errMsg = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
+                _statusMessage.value = "连接失败: $errMsg"
                 terminalBuffer.clearScreen(2)
-                emulator.processInput("\r\n\u001B[31m[OpenTermius] 连接错误: ${e.message}\u001B[0m\r\n")
+                emulator.processInput("\r\n\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m\r\n\r\n\u001B[33m提示: 请检查主机 IP、端口以及密码/私钥是否配置正确。\u001B[0m\r\n")
                 _renderTick.value = System.currentTimeMillis()
             }
         }
