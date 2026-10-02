@@ -4,13 +4,17 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -24,7 +28,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.terminal.engine.TerminalKeyCodes
 import com.termius.clone.terminal.session.SshSession
@@ -36,16 +44,21 @@ fun TerminalView(
     onConsumeCtrl: () -> Unit,
     isAltActive: Boolean,
     onConsumeAlt: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    externalFocusRequester: FocusRequester? = null
 ) {
     // 监听重新渲染 tick
     val renderTick by session.renderTick.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val focusRequester = remember { FocusRequester() }
+    val internalFocusRequester = remember { FocusRequester() }
+    val focusRequester = externalFocusRequester ?: internalFocusRequester
 
     var fontSizeSp by remember { mutableFloatStateOf(13f) }
     var scrollOffsetLines by remember { mutableIntStateOf(0) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
+
+    // 用于承载系统 IME 输入法的隐藏输入框状态
+    var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
 
     val density = LocalDensity.current
     val textPaint = remember(fontSizeSp) {
@@ -74,7 +87,9 @@ fun TerminalView(
     }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        try {
+            focusRequester.requestFocus()
+        } catch (_: Exception) {}
     }
 
     Box(
@@ -82,13 +97,15 @@ fun TerminalView(
             .fillMaxSize()
             .background(session.terminalBuffer.theme.background)
             .onSizeChanged { viewSize = it }
-            .focusRequester(focusRequester)
-            .focusable()
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
-                        focusRequester.requestFocus()
-                        keyboardController?.show()
+                        try {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
                     }
                 )
             }
@@ -106,46 +123,82 @@ fun TerminalView(
                     }
                 }
             }
-            .onKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyDown) {
-                    val nativeEvent = keyEvent.nativeKeyEvent
-                    when (nativeEvent.keyCode) {
-                        android.view.KeyEvent.KEYCODE_DEL -> {
-                            session.write(TerminalKeyCodes.BACKSPACE)
-                            return@onKeyEvent true
-                        }
-                        android.view.KeyEvent.KEYCODE_ENTER -> {
-                            session.write(TerminalKeyCodes.ENTER)
-                            return@onKeyEvent true
-                        }
-                        android.view.KeyEvent.KEYCODE_TAB -> {
-                            session.write(TerminalKeyCodes.TAB)
-                            return@onKeyEvent true
-                        }
-                        android.view.KeyEvent.KEYCODE_ESCAPE -> {
-                            session.write(TerminalKeyCodes.ESC)
-                            return@onKeyEvent true
-                        }
-                    }
-
-                    val unicodeChar = nativeEvent.unicodeChar
-                    if (unicodeChar > 0) {
-                        val char = unicodeChar.toChar()
-                        if (isCtrlActive) {
-                            session.write(TerminalKeyCodes.getCtrlCode(char))
-                            onConsumeCtrl()
-                        } else if (isAltActive) {
-                            session.write(TerminalKeyCodes.getAltSequence(char))
-                            onConsumeAlt()
-                        } else {
-                            session.write(char.toString())
-                        }
-                        return@onKeyEvent true
-                    }
-                }
-                false
-            }
     ) {
+        // 关键：透明真实输入框，承接 Android 系统 IME 键盘交互
+        BasicTextField(
+            value = textFieldValue,
+            onValueChange = { newValue ->
+                val newText = newValue.text
+                if (newText.isNotEmpty()) {
+                    if (isCtrlActive && newText.length == 1) {
+                        session.write(TerminalKeyCodes.getCtrlCode(newText[0]))
+                        onConsumeCtrl()
+                    } else if (isAltActive && newText.length == 1) {
+                        session.write(TerminalKeyCodes.getAltSequence(newText[0]))
+                        onConsumeAlt()
+                    } else {
+                        session.write(newText)
+                    }
+                    textFieldValue = TextFieldValue("")
+                } else {
+                    textFieldValue = newValue
+                }
+            },
+            modifier = Modifier
+                .size(1.dp)
+                .alpha(0.01f)
+                .focusRequester(focusRequester)
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        val nativeEvent = keyEvent.nativeKeyEvent
+                        when (nativeEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DEL -> {
+                                session.write(TerminalKeyCodes.BACKSPACE)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_ENTER -> {
+                                session.write(TerminalKeyCodes.ENTER)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_TAB -> {
+                                session.write(TerminalKeyCodes.TAB)
+                                return@onKeyEvent true
+                            }
+                            android.view.KeyEvent.KEYCODE_ESCAPE -> {
+                                session.write(TerminalKeyCodes.ESC)
+                                return@onKeyEvent true
+                            }
+                        }
+
+                        val unicodeChar = nativeEvent.unicodeChar
+                        if (unicodeChar > 0) {
+                            val char = unicodeChar.toChar()
+                            if (isCtrlActive) {
+                                session.write(TerminalKeyCodes.getCtrlCode(char))
+                                onConsumeCtrl()
+                            } else if (isAltActive) {
+                                session.write(TerminalKeyCodes.getAltSequence(char))
+                                onConsumeAlt()
+                            } else {
+                                session.write(char.toString())
+                            }
+                            return@onKeyEvent true
+                        }
+                    }
+                    false
+                },
+            keyboardOptions = KeyboardOptions(
+                autoCorrect = false,
+                keyboardType = KeyboardType.Ascii,
+                imeAction = ImeAction.None
+            ),
+            keyboardActions = KeyboardActions(
+                onAny = {
+                    session.write(TerminalKeyCodes.ENTER)
+                }
+            )
+        )
+
         Canvas(modifier = Modifier.fillMaxSize()) {
             val unusedTick = renderTick // 订阅触发 Compose 刷新
             val buffer = session.terminalBuffer

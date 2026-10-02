@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.FileMode
+import net.schmizz.sshj.sftp.FilePermission
 import net.schmizz.sshj.sftp.RemoteResourceInfo
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
@@ -27,6 +28,9 @@ class SftpClientManager {
 
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
+
+    val isConnected: Boolean
+        get() = sshClient?.isConnected == true && sftpClient != null
 
     suspend fun connect(host: HostEntity, identity: IdentityEntity? = null) = withContext(Dispatchers.IO) {
         com.termius.clone.TermiusApplication.setupBouncyCastle()
@@ -80,7 +84,7 @@ class SftpClientManager {
                 isDirectory = isDir,
                 size = info.attributes.size,
                 mtime = info.attributes.mtime * 1000L,
-                permissions = info.attributes.permissions.toString()
+                permissions = formatPermissions(isDir, info.attributes.permissions)
             )
         }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
     }
@@ -95,8 +99,57 @@ class SftpClientManager {
         client.put(localFile.absolutePath, remotePath)
     }
 
+    suspend fun rename(oldPath: String, newPath: String) = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        client.rename(oldPath, newPath)
+    }
+
     suspend fun deleteFile(remotePath: String) = withContext(Dispatchers.IO) {
-        sftpClient?.rm(remotePath)
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        client.rm(remotePath)
+    }
+
+    suspend fun deleteDirectory(remotePath: String) = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        client.rmdir(remotePath)
+    }
+
+    suspend fun createDirectory(remotePath: String) = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        client.mkdirs(remotePath)
+    }
+
+    suspend fun createEmptyFile(remotePath: String) = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        val tempFile = File.createTempFile("sftp_new_", ".tmp")
+        try {
+            tempFile.writeText("")
+            client.put(tempFile.absolutePath, remotePath)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    suspend fun readTextFile(remotePath: String): String = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        val tempFile = File.createTempFile("sftp_read_", ".tmp")
+        try {
+            client.get(remotePath, tempFile.absolutePath)
+            tempFile.readText(Charsets.UTF_8)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    suspend fun writeTextFile(remotePath: String, content: String) = withContext(Dispatchers.IO) {
+        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+        val tempFile = File.createTempFile("sftp_save_", ".tmp")
+        try {
+            tempFile.writeText(content, Charsets.UTF_8)
+            client.put(tempFile.absolutePath, remotePath)
+        } finally {
+            tempFile.delete()
+        }
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
@@ -106,6 +159,24 @@ class SftpClientManager {
             sshClient?.close()
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            sftpClient = null
+            sshClient = null
         }
+    }
+
+    private fun formatPermissions(isDir: Boolean, perms: Set<FilePermission>?): String {
+        if (perms == null) return if (isDir) "drwxr-xr-x" else "-rw-r--r--"
+        val sb = java.lang.StringBuilder(if (isDir) "d" else "-")
+        sb.append(if (perms.contains(FilePermission.USR_R)) 'r' else '-')
+        sb.append(if (perms.contains(FilePermission.USR_W)) 'w' else '-')
+        sb.append(if (perms.contains(FilePermission.USR_X)) 'x' else '-')
+        sb.append(if (perms.contains(FilePermission.GRP_R)) 'r' else '-')
+        sb.append(if (perms.contains(FilePermission.GRP_W)) 'w' else '-')
+        sb.append(if (perms.contains(FilePermission.GRP_X)) 'x' else '-')
+        sb.append(if (perms.contains(FilePermission.OTH_R)) 'r' else '-')
+        sb.append(if (perms.contains(FilePermission.OTH_W)) 'w' else '-')
+        sb.append(if (perms.contains(FilePermission.OTH_X)) 'x' else '-')
+        return sb.toString()
     }
 }

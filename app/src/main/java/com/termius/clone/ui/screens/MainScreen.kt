@@ -39,41 +39,10 @@ fun MainScreen(
 
     Scaffold(
         bottomBar = {
-            Column {
-                // Floating Active Terminal Session Capsule
-                AnimatedVisibility(visible = activeSessions.isNotEmpty() && currentTab != MainTab.TERMINAL) {
-                    Surface(
-                        color = ObsidianSurfaceContainerHighest,
-                        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = onNavigateToTerminal
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .background(ObsidianPrimary, CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Active Terminal: ${activeSessions.size} connected session(s)",
-                                color = ObsidianTextPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text("Resume >", color = ObsidianPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                NavigationBar(
-                    containerColor = ObsidianSurfaceContainerLow,
-                    tonalElevation = 0.dp
-                ) {
+            NavigationBar(
+                containerColor = ObsidianSurfaceContainerLow,
+                tonalElevation = 0.dp
+            ) {
                     MainTab.entries.forEach { tab ->
                         val isSelected = currentTab == tab
                         NavigationBarItem(

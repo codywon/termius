@@ -56,11 +56,11 @@ fun PortForwardingDialog(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
+                                .size(34.dp)
                                 .background(ObsidianPrimary.copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
@@ -73,13 +73,13 @@ fun PortForwardingDialog(
                         }
                         Column {
                             Text(
-                                "Port Forwarding Tunnels",
+                                "端口转发 (Port Forwarding)",
                                 color = ObsidianTextPrimary,
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                if (activeSession != null) "Binding to: ${activeSession.host.label}" else "No active SSH session bound",
+                                if (activeSession != null) "绑定至: ${activeSession.host.label}" else "未绑定活动 SSH 会话",
                                 color = ObsidianTextSecondary,
                                 fontSize = 11.sp
                             )
@@ -93,22 +93,38 @@ fun PortForwardingDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Tunnel Rules List
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(rules, key = { it.id }) { rule ->
-                        TunnelItemCard(
-                            rule = rule,
-                            onToggle = {
-                                TunnelManager.toggleTunnel(rule.id, activeSession?.getClient())
-                            },
-                            onDelete = {
-                                TunnelManager.removeRule(rule.id)
-                            }
-                        )
+                if (rules.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .background(ObsidianSurfaceContainer, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.ShareLocation, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(36.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("暂无配置的隧道转发规则", color = ObsidianTextSecondary, fontSize = 13.sp)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(rules, key = { it.id }) { rule ->
+                            TunnelItemCard(
+                                rule = rule,
+                                onToggle = {
+                                    TunnelManager.toggleTunnel(rule.id, activeSession?.getClient())
+                                },
+                                onDelete = {
+                                    TunnelManager.removeRule(rule.id)
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -127,7 +143,7 @@ fun PortForwardingDialog(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("+ New Tunnel", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("+ 新建规则", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     Button(
@@ -136,7 +152,7 @@ fun PortForwardingDialog(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary)
                     ) {
-                        Text("Done", color = ObsidianOnPrimary, fontWeight = FontWeight.Bold)
+                        Text("完成", color = ObsidianOnPrimary, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -173,8 +189,7 @@ fun TunnelItemCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(
@@ -195,18 +210,6 @@ fun TunnelItemCard(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Surface(
-                        color = ObsidianSecondary.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            rule.type.name,
-                            color = ObsidianSecondary,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -224,13 +227,16 @@ fun TunnelItemCard(
                     Text(
                         rule.description,
                         color = ObsidianTextMuted,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 Switch(
                     checked = rule.isRunning,
                     onCheckedChange = { onToggle() },
@@ -257,14 +263,12 @@ fun CreateTunnelRuleDialog(
     var name by remember { mutableStateOf("") }
     var localPort by remember { mutableStateOf("8080") }
     var remoteHost by remember { mutableStateOf("127.0.0.1") }
-    var remotePort by remember { mutableStateOf("3000") }
+    var remotePort by remember { mutableStateOf("80") }
     var description by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text("Create Tunnel Rule", color = ObsidianTextPrimary, fontWeight = FontWeight.Bold)
-        },
+        title = { Text("新建端口转发规则", color = ObsidianTextPrimary, fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -273,9 +277,10 @@ fun CreateTunnelRuleDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Rule Name") },
-                    placeholder = { Text("e.g. NextJS Dev Server") },
+                    label = { Text("规则别名") },
+                    placeholder = { Text("如 Web Server") },
                     singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -286,17 +291,19 @@ fun CreateTunnelRuleDialog(
                     OutlinedTextField(
                         value = localPort,
                         onValueChange = { localPort = it },
-                        label = { Text("Local Port") },
+                        label = { Text("本地端口") },
                         placeholder = { Text("8080") },
                         singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = remotePort,
                         onValueChange = { remotePort = it },
-                        label = { Text("Remote Port") },
-                        placeholder = { Text("3000") },
+                        label = { Text("远程端口") },
+                        placeholder = { Text("80") },
                         singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -304,18 +311,19 @@ fun CreateTunnelRuleDialog(
                 OutlinedTextField(
                     value = remoteHost,
                     onValueChange = { remoteHost = it },
-                    label = { Text("Remote Host Target") },
+                    label = { Text("目标远程主机") },
                     placeholder = { Text("127.0.0.1") },
                     singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Description (Optional)") },
-                    placeholder = { Text("Access web portal locally") },
+                    label = { Text("备注说明 (选填)") },
                     singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -324,27 +332,26 @@ fun CreateTunnelRuleDialog(
             Button(
                 onClick = {
                     val lPort = localPort.toIntOrNull() ?: 8080
-                    val rPort = remotePort.toIntOrNull() ?: 3000
-                    val ruleName = name.ifBlank { "Tunnel $lPort->$rPort" }
-                    onConfirm(
-                        TunnelRule(
-                            name = ruleName,
-                            type = TunnelType.LOCAL,
-                            localPort = lPort,
-                            remoteHost = remoteHost.ifBlank { "127.0.0.1" },
-                            remotePort = rPort,
-                            description = description
-                        )
+                    val rPort = remotePort.toIntOrNull() ?: 80
+                    val rule = TunnelRule(
+                        name = if (name.isNotBlank()) name else "Tunnel $lPort",
+                        type = TunnelType.LOCAL,
+                        localPort = lPort,
+                        remoteHost = if (remoteHost.isNotBlank()) remoteHost else "127.0.0.1",
+                        remotePort = rPort,
+                        isRunning = false,
+                        description = description
                     )
+                    onConfirm(rule)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary)
+                colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = ObsidianOnPrimary)
             ) {
-                Text("Create Tunnel", color = ObsidianOnPrimary, fontWeight = FontWeight.Bold)
+                Text("添加", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = ObsidianTextMuted)
+                Text("取消", color = ObsidianTextSecondary)
             }
         },
         containerColor = ObsidianSurfaceContainerLow

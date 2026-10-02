@@ -22,40 +22,7 @@ data class ActiveTunnelState(
 object TunnelManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val _rules = MutableStateFlow<List<TunnelRule>>(
-        listOf(
-            TunnelRule(
-                id = "rule-1",
-                name = "Web API Gateway",
-                type = TunnelType.LOCAL,
-                localPort = 8080,
-                remoteHost = "127.0.0.1",
-                remotePort = 3000,
-                isRunning = true,
-                description = "Forward local 8080 to remote backend container"
-            ),
-            TunnelRule(
-                id = "rule-2",
-                name = "MySQL DB Tunnel",
-                type = TunnelType.LOCAL,
-                localPort = 3307,
-                remoteHost = "127.0.0.1",
-                remotePort = 3306,
-                isRunning = false,
-                description = "Secure access to internal MySQL database"
-            ),
-            TunnelRule(
-                id = "rule-3",
-                name = "Redis Cache Inspector",
-                type = TunnelType.LOCAL,
-                localPort = 6380,
-                remoteHost = "127.0.0.1",
-                remotePort = 6379,
-                isRunning = false,
-                description = "Direct localhost connection to remote Redis"
-            )
-        )
-    )
+    private val _rules = MutableStateFlow<List<TunnelRule>>(emptyList())
     val rules: StateFlow<List<TunnelRule>> = _rules.asStateFlow()
 
     private val serverSockets = ConcurrentHashMap<String, ServerSocket>()
