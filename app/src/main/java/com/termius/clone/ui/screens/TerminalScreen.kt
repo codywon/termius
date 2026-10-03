@@ -29,6 +29,7 @@ import com.termius.clone.ui.components.TerminalAccessoryBar
 import com.termius.clone.ui.components.TerminalInputMode
 import com.termius.clone.ui.components.TerminalView
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.Strings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -226,7 +227,7 @@ fun TerminalScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(Icons.Default.Keyboard, contentDescription = "Open Keyboard", tint = theme.primary, modifier = Modifier.size(16.dp))
-                            Text(if (com.termius.clone.ui.theme.Strings.isZh) "键盘" else "Keyboard", color = theme.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text(if (Strings.isZh) "键盘" else "Keyboard", color = theme.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -235,7 +236,7 @@ fun TerminalScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "暂无活跃终端会话" else "No active terminal sessions", color = theme.textMuted)
+                    Text(if (Strings.isZh) "暂无活跃终端会话" else "No active terminal sessions", color = theme.textMuted)
                 }
             }
         }
@@ -246,14 +247,14 @@ fun TerminalScreen(
             onDismissRequest = { showDisconnectDialog = false },
             title = {
                 Text(
-                    text = if (com.termius.clone.ui.theme.Strings.isZh) "断开连接" else "Disconnect",
+                    text = if (Strings.isZh) "断开连接" else "Disconnect",
                     fontWeight = FontWeight.Bold,
                     color = theme.textPrimary
                 )
             },
             text = {
                 Text(
-                    text = if (com.termius.clone.ui.theme.Strings.isZh) {
+                    text = if (Strings.isZh) {
                         "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？"
                     } else {
                         "Are you sure you want to disconnect from ${activeSession.host.label} (${activeSession.host.hostname})?"
@@ -274,12 +275,12 @@ fun TerminalScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White)
                 ) {
-                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "断开" else "Disconnect", fontWeight = FontWeight.Bold)
+                    Text(if (Strings.isZh) "断开" else "Disconnect", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectDialog = false }) {
-                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "取消" else "Cancel", color = theme.textSecondary)
+                    Text(if (Strings.isZh) "取消" else "Cancel", color = theme.textSecondary)
                 }
             },
             containerColor = theme.surfaceContainerLow
