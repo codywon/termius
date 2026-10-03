@@ -70,14 +70,19 @@ fun TerminalScreen(
                 color = theme.surfaceContainerLow,
                 shadowElevation = if (theme.isDark) 0.dp else 1.dp
             ) {
-                Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isLandscape) Modifier else Modifier.statusBarsPadding())
+                ) {
                     // Header Bar with Session Tabs (Clean TermX Mobile Style, compact in landscape)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(if (isLandscape) 34.dp else 46.dp)
                             .padding(
                                 horizontal = 4.dp,
-                                vertical = if (isLandscape) 1.dp else 4.dp
+                                vertical = if (isLandscape) 0.dp else 4.dp
                             ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {

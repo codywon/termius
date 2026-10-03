@@ -93,6 +93,194 @@ fun TerminalAccessoryBar(
         return
     }
 
+    // 关键优化：横屏输入法模式下，为了给终端争取极致的可视高度 (避免被软键盘和上下两层功能条挤满)
+    // 将模式切换栏与常用辅助按键彻底合并为单行紧凑栏 (高度仅 34dp，参考网易 UU 远程和 Termius 最佳实践)
+    if (isLandscape && currentMode == TerminalInputMode.IME) {
+        Surface(
+            color = theme.surfaceContainerLow,
+            modifier = modifier
+                .fillMaxWidth()
+                .imePadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. 左侧三模微型切换胶囊 (紧凑型，高 26dp)
+                Row(
+                    modifier = Modifier
+                        .height(26.dp)
+                        .background(theme.surfaceContainerHigh, RoundedCornerShape(6.dp))
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(theme.primary.copy(alpha = 0.25f))
+                            .clickable {
+                                onModeChange(TerminalInputMode.IME)
+                                onRequestShowKeyboard()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Keyboard,
+                            contentDescription = "输入法",
+                            tint = theme.primary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable {
+                                keyboardController?.hide()
+                                onModeChange(TerminalInputMode.SHORTCUTS)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.FlashOn,
+                            contentDescription = "快捷键",
+                            tint = theme.textMuted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable {
+                                keyboardController?.hide()
+                                onModeChange(TerminalInputMode.PC_KEYBOARD)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Laptop,
+                            contentDescription = "电脑键盘",
+                            tint = theme.textMuted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                // 细垂直分割线
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 5.dp)
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(theme.outlineVariant.copy(alpha = 0.5f))
+                )
+
+                // 2. 中间横滑按键列表
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AccessoryButton(label = "ESC", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.ESC) })
+                    AccessoryButton(label = "TAB", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.TAB) })
+                    AccessoryButton(label = "⌫", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
+                    AccessoryButton(
+                        label = "CTRL",
+                        height = 26.dp,
+                        fontSize = 10.sp,
+                        isActive = isCtrlActive,
+                        activeBg = ObsidianPrimary.copy(alpha = 0.25f),
+                        activeBorder = ObsidianPrimary,
+                        onClick = onToggleCtrl
+                    )
+                    AccessoryButton(
+                        label = "ALT",
+                        height = 26.dp,
+                        fontSize = 10.sp,
+                        isActive = isAltActive,
+                        activeBg = ObsidianPrimary.copy(alpha = 0.25f),
+                        activeBorder = ObsidianPrimary,
+                        onClick = onToggleAlt
+                    )
+                    AccessoryButton(label = "/", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("/") })
+                    AccessoryButton(label = "-", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("-") })
+                    AccessoryButton(label = "|", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("|") })
+                    AccessoryButton(label = "~", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("~") })
+                    AccessoryButton(label = ":", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(":") })
+                    AccessoryButton(label = "$", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("$") })
+
+                    // 方向键
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_UP) }
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_DOWN) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_LEFT) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_RIGHT) }
+
+                    // Ctrl+C 中断
+                    AccessoryButton(label = "Ctrl+C", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, onClick = { onSendKey("\u0003") })
+
+                    // PASTE 剪贴板
+                    Surface(
+                        modifier = Modifier
+                            .height(26.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable {
+                                val clip = clipboardManager.getText()?.text
+                                if (!clip.isNullOrEmpty()) onSendKey(clip)
+                            },
+                        shape = RoundedCornerShape(6.dp),
+                        color = ObsidianSurfaceContainerHigh,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = ObsidianTextPrimary, modifier = Modifier.size(11.dp))
+                            Text("PASTE", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+
+                // 细垂直分割线
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 3.dp)
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(theme.outlineVariant.copy(alpha = 0.5f))
+                )
+
+                // 3. 右侧收起键盘图标
+                IconButton(
+                    onClick = {
+                        keyboardController?.hide()
+                        onModeChange(TerminalInputMode.HIDDEN)
+                    },
+                    modifier = Modifier.size(26.dp)
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardHide,
+                        contentDescription = "收起键盘",
+                        tint = ObsidianTextMuted,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()

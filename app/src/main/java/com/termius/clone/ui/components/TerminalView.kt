@@ -94,7 +94,8 @@ fun TerminalView(
     var zoomPivot by remember { mutableStateOf(Offset.Zero) }
 
     var scrollOffsetLines by remember { mutableIntStateOf(0) }
-    var scrollAccumulator by remember { mutableFloatStateOf(0f) }
+    var scrollOffsetX by remember { mutableFloatStateOf(0f) }
+    var scrollAccumulatorY by remember { mutableFloatStateOf(0f) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
 
     // 关键哨兵字符：确保系统输入法在按退格键时永远有字符可删，彻底解决软键盘回删不起作用的业界难题
@@ -120,18 +121,35 @@ fun TerminalView(
     }
     val baselineOffset = remember(textPaint) { -textPaint.fontMetrics.ascent }
 
-    // 自动重算行与列并向 SSH PTY 发送尺寸更新 (加入 250ms 防抖，避免缩放途中的网络与重绘风暴)
+    // 行业最佳实践 (参考 Termius / ConnectBot)：
+    // 虚拟终端列数保底至少 80 列，避免远程命令 (如 docker ps, kubectl, ps aux) 将长表格和字段截断丢弃
     LaunchedEffect(viewSize, charWidth, charHeight) {
         delay(250)
         try {
             if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
-                val cols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
+                val fittedCols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
+                val cols = maxOf(80, fittedCols)
                 val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
                 session.resize(cols, rows, viewSize.width, viewSize.height)
                 scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
             }
         } catch (e: Throwable) {
             e.printStackTrace()
+        }
+    }
+
+    // 计算当前内容超出视口的最大水平平移距离
+    val totalContentWidth = remember(session.terminalBuffer.cols, charWidth) {
+        session.terminalBuffer.cols * charWidth
+    }
+    val maxScrollX = if (viewSize.width > 0 && totalContentWidth > viewSize.width) {
+        totalContentWidth - viewSize.width
+    } else 0f
+
+    // 当缩放或视口变化导致 maxScrollX 减小时，修正水平偏移
+    LaunchedEffect(maxScrollX) {
+        if (scrollOffsetX > maxScrollX) {
+            scrollOffsetX = maxScrollX
         }
     }
 
@@ -148,14 +166,12 @@ fun TerminalView(
             .fillMaxSize()
             .background(terminalTheme.background)
             .onSizeChanged { viewSize = it }
-            .pointerInput(charHeight) {
+            .pointerInput(charHeight, maxScrollX) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var hasOperated = false
                     var isPinching = false
                     var totalMovement = 0f
-
-                    var pinchAccumulated = 1f
 
                     do {
                         val event = awaitPointerEvent()
@@ -174,27 +190,34 @@ fun TerminalView(
                             gestureZoom = nextZoom
                             event.changes.forEach { it.consume() }
                         } else if (!isPinching) {
-                            // 2. 仅当单指且未曾进入双指状态时，才处理上下滑动回溯
+                            // 2. 单指滑动：同时支持上下历史回溯与左右水平平移浏览长文本/表格 (参考 Termius / ConnectBot)
                             val pan = event.calculatePan()
                             val moveDelta = abs(pan.y) + abs(pan.x)
                             totalMovement += moveDelta
 
-                            if (totalMovement > 8f) {
+                            if (totalMovement > 6f) {
                                 hasOperated = true
                             }
 
-                            if (hasOperated && charHeight > 0f) {
-                                // 手指向下拉 (pan.y > 0) -> 翻看上方过往历史 (增大 offset)
-                                // 手指向上推 (pan.y < 0) -> 滑回最新输出行 (减小 offset)
-                                scrollAccumulator += pan.y
-                                val deltaLines = (scrollAccumulator / charHeight).toInt()
-                                if (deltaLines != 0) {
-                                    val maxScroll = session.terminalBuffer.history.size
-                                    if (maxScroll > 0) {
-                                        scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                            if (hasOperated) {
+                                // 垂直方向：向上推或向下拉滚动行
+                                if (charHeight > 0f && abs(pan.y) > 0.5f) {
+                                    scrollAccumulatorY += pan.y
+                                    val deltaLines = (scrollAccumulatorY / charHeight).toInt()
+                                    if (deltaLines != 0) {
+                                        val maxScroll = session.terminalBuffer.history.size
+                                        if (maxScroll > 0) {
+                                            scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                        }
+                                        scrollAccumulatorY -= deltaLines * charHeight
                                     }
-                                    scrollAccumulator -= deltaLines * charHeight
                                 }
+
+                                // 水平方向：向左滑动平移查看长行文本、超宽表格右侧内容
+                                if (maxScrollX > 0f && abs(pan.x) > 0.5f) {
+                                    scrollOffsetX = (scrollOffsetX - pan.x).coerceIn(0f, maxScrollX)
+                                }
+
                                 event.changes.forEach { it.consume() }
                             }
                         }
@@ -202,7 +225,7 @@ fun TerminalView(
 
                     // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵
                     if (isPinching) {
-                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(9f, 26f)
+                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(8f, 26f)
                         gestureZoom = 1f
                         localFontSizeSp = finalSize
                         ThemeManager.setTerminalFontSize(finalSize)
@@ -332,9 +355,10 @@ fun TerminalView(
             // 1. 先用终端配色背景完整铺满整个画布，消除任何由于尺寸变动或空白区域导致的杂色缝隙
             drawRect(color = defaultBg, size = size)
 
-            drawIntoCanvas { canvas ->
-                try {
-                    buffer.withLock {
+            translate(left = -scrollOffsetX, top = 0f) {
+                drawIntoCanvas { canvas ->
+                    try {
+                        buffer.withLock {
                         val rows = buffer.rows
                         val cols = buffer.cols
                         val history = buffer.history
@@ -473,6 +497,38 @@ fun TerminalView(
                 }
             }
         }
+    }
+
+        // 超宽文本/表格的水平漫游滚动指示条 (参考 Termius / ConnectBot 最佳实践)
+        if (maxScrollX > 0f && viewSize.width > 0) {
+            val totalW = totalContentWidth
+            val viewW = viewSize.width.toFloat()
+            val thumbRatio = (viewW / totalW).coerceIn(0.12f, 0.9f)
+            val thumbWidthDp = (viewW / density.density * thumbRatio).dp
+            val trackRange = viewW * (1f - thumbRatio)
+            val thumbOffset = if (maxScrollX > 0f) (scrollOffsetX / maxScrollX) * trackRange else 0f
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(Color.Black.copy(alpha = 0.2f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(thumbWidthDp)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            translationX = thumbOffset
+                        }
+                        .background(
+                            color = terminalTheme.foreground.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(1.5.dp)
+                        )
+                )
+            }
+        }
 
         // 一键回到底部悬浮圆形按钮 (右下方，带圆圈向下箭头，完全不遮挡终端顶部输出)
         AnimatedVisibility(
@@ -492,6 +548,7 @@ fun TerminalView(
                     .size(46.dp)
                     .clickable {
                         scrollOffsetLines = 0
+                        scrollOffsetX = 0f
                         try {
                             focusRequester.requestFocus()
                             keyboardController?.show()
