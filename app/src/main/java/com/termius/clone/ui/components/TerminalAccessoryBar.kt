@@ -180,7 +180,7 @@ fun TerminalAccessoryBar(
                         .padding(horizontal = 5.dp)
                         .width(1.dp)
                         .height(18.dp)
-                        .background(theme.outlineVariant.copy(alpha = 0.5f))
+                        .background(ObsidianOutlineVariant.copy(alpha = 0.5f))
                 )
 
                 // 2. 中间横滑按键列表
@@ -258,7 +258,7 @@ fun TerminalAccessoryBar(
                         .padding(horizontal = 3.dp)
                         .width(1.dp)
                         .height(18.dp)
-                        .background(theme.outlineVariant.copy(alpha = 0.5f))
+                        .background(ObsidianOutlineVariant.copy(alpha = 0.5f))
                 )
 
                 // 3. 右侧收起键盘图标
