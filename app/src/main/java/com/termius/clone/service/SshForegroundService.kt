@@ -182,10 +182,13 @@ class SshForegroundService : Service() {
                         Log.d(TAG, "Screen ON detected, verifying active SSH sessions")
                         serviceScope.launch {
                             SessionManager.sessions.value.forEach { session ->
-                                if (session.state.value == com.termius.clone.terminal.session.SessionState.CONNECTED) {
-                                    // 亮屏瞬间探测网络
+                                if (session.sessionState.value == com.termius.clone.terminal.session.SessionState.CONNECTED) {
+                                    // 亮屏瞬间探测网络连接状态
                                     try {
-                                        session.getClient()?.transport?.sendIgnore()
+                                        val connected = session.getClient()?.isConnected ?: false
+                                        if (!connected) {
+                                            Log.w(TAG, "Session ${session.host.label} disconnected while screen was off")
+                                        }
                                     } catch (_: Exception) {}
                                 }
                             }
