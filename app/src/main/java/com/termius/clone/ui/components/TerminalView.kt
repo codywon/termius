@@ -144,6 +144,8 @@ fun TerminalView(
                     var isPinching = false
                     var totalMovement = 0f
 
+                    var pinchAccumulated = 1f
+
                     do {
                         val event = awaitPointerEvent()
                         val pointerCount = event.changes.size
@@ -153,9 +155,12 @@ fun TerminalView(
                             isPinching = true
                             hasOperated = true
                             val zoom = event.calculateZoom()
-                            if (zoom != 1f) {
-                                val updatedSize = (localFontSizeSp * zoom).coerceIn(9f, 26f)
+                            pinchAccumulated *= zoom
+                            // 平滑节流：累积变动超过 4% 时更新一次本地字号预览，消除每一微小触摸事件触发全局重绘的严重卡顿
+                            if (abs(pinchAccumulated - 1f) > 0.04f) {
+                                val updatedSize = (localFontSizeSp * pinchAccumulated).coerceIn(9f, 26f)
                                 localFontSizeSp = updatedSize
+                                pinchAccumulated = 1f
                             }
                             event.changes.forEach { it.consume() }
                         } else if (!isPinching) {
@@ -187,9 +192,9 @@ fun TerminalView(
 
                     // 手势完全释放：若发生了捏合缩放，在此处单次持久化存储到全局并对齐到 0.5sp
                     if (isPinching) {
-                        val roundedSize = (Math.round(localFontSizeSp * 2f) / 2f).coerceIn(9f, 26f)
-                        localFontSizeSp = roundedSize
-                        ThemeManager.setTerminalFontSize(roundedSize)
+                        val finalSize = (Math.round(localFontSizeSp * pinchAccumulated * 2f) / 2f).coerceIn(9f, 26f)
+                        localFontSizeSp = finalSize
+                        ThemeManager.setTerminalFontSize(finalSize)
                     } else if (!hasOperated) {
                         // 若用户无明显滑动或捏合，判定为单指点击屏幕：唤起输入法并聚焦
                         try {
@@ -328,34 +333,99 @@ fun TerminalView(
                         val cells = line.cells
                         val limitCols = minOf(cols, cells.size)
 
+                        // 1. 批量合并绘制连续自定义背景色 (减少 80% drawRect 调用)
+                        var bgStartCol = -1
+                        var currentBg = Color.Unspecified
                         for (c in 0 until limitCols) {
                             val cell = cells.getOrNull(c) ?: continue
-                            val xPos = c * charWidth
-
-                            // 绘制自定义背景色
-                            if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) {
-                                val bgWidth = if (cell.isWideChar) charWidth * 2f else charWidth + 0.5f
-                                drawRect(
-                                    color = cell.bgColor,
-                                    topLeft = Offset(xPos, yPos),
-                                    size = Size(bgWidth, charHeight)
-                                )
+                            val cellBg = if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) cell.bgColor else Color.Unspecified
+                            if (cellBg != currentBg) {
+                                if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                                    drawRect(
+                                        color = currentBg,
+                                        topLeft = Offset(bgStartCol * charWidth, yPos),
+                                        size = Size((c - bgStartCol) * charWidth + 0.5f, charHeight)
+                                    )
+                                }
+                                currentBg = cellBg
+                                bgStartCol = if (cellBg != Color.Unspecified) c else -1
                             }
+                        }
+                        if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                            drawRect(
+                                color = currentBg,
+                                topLeft = Offset(bgStartCol * charWidth, yPos),
+                                size = Size((limitCols - bgStartCol) * charWidth + 0.5f, charHeight)
+                            )
+                        }
 
-                            // 绘制字符
-                            if (cell.char != ' ' && cell.char.code > 0) {
-                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
-                                textPaint.isFakeBoldText = cell.isBold
-                                textPaint.isUnderlineText = cell.isUnderline
+                        // 2. 文本按连续相同样式批量绘制 (Run-Length Text Batching)，消除每字符 String 对象分配与 90% JNI 调用
+                        var textStartCol = -1
+                        val textBuffer = StringBuilder()
+                        var currentRunFg = Color.Unspecified
+                        var currentRunBold = false
+                        var currentRunUnderline = false
 
+                        fun flushTextRun() {
+                            if (textBuffer.isNotEmpty() && textStartCol >= 0) {
+                                textPaint.color = (if (currentRunFg != Color.Unspecified) currentRunFg else defaultFg).toArgb()
+                                textPaint.isFakeBoldText = currentRunBold
+                                textPaint.isUnderlineText = currentRunUnderline
                                 nativeCanvas.drawText(
-                                    cell.char.toString(),
-                                    xPos,
+                                    textBuffer.toString(),
+                                    textStartCol * charWidth,
                                     yPos + baselineOffset,
                                     textPaint
                                 )
+                                textBuffer.clear()
+                                textStartCol = -1
                             }
                         }
+
+                        for (c in 0 until limitCols) {
+                            val cell = cells.getOrNull(c) ?: continue
+                            val ch = cell.char
+                            if (ch == ' ' || ch.code == 0) {
+                                flushTextRun()
+                                continue
+                            }
+
+                            if (cell.isWideChar) {
+                                flushTextRun()
+                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
+                                textPaint.isFakeBoldText = cell.isBold
+                                textPaint.isUnderlineText = cell.isUnderline
+                                nativeCanvas.drawText(
+                                    ch.toString(),
+                                    c * charWidth,
+                                    yPos + baselineOffset,
+                                    textPaint
+                                )
+                                continue
+                            }
+
+                            val cellFg = cell.fgColor
+                            val cellBold = cell.isBold
+                            val cellUnderline = cell.isUnderline
+
+                            if (textStartCol < 0) {
+                                textStartCol = c
+                                currentRunFg = cellFg
+                                currentRunBold = cellBold
+                                currentRunUnderline = cellUnderline
+                                textBuffer.append(ch)
+                            } else if (cellFg == currentRunFg && cellBold == currentRunBold && cellUnderline == currentRunUnderline) {
+                                textBuffer.append(ch)
+                            } else {
+                                flushTextRun()
+                                textStartCol = c
+                                currentRunFg = cellFg
+                                currentRunBold = cellBold
+                                currentRunUnderline = cellUnderline
+                                textBuffer.append(ch)
+                            }
+                        }
+                        flushTextRun()
                     }
 
                     // 绘制终端光标 (如果未滚动且光标可见)

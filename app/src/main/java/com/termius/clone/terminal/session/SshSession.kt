@@ -243,6 +243,7 @@ class SshSession(
             } finally {
                 _sessionState.value = SessionState.DISCONNECTED
                 _statusMessage.value = "已断开连接"
+                scope.cancel()
             }
         }
     }

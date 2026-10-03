@@ -59,6 +59,20 @@ fun SettingsScreen() {
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
 
+    // 交互优化：从系统设置或授权弹窗返回时自动刷新电池优化状态
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     val theme = LocalAppTheme.current
 
     Surface(
@@ -319,42 +333,46 @@ fun SettingsScreen() {
                 )
                 DividerLine()
 
-                // 电池优化
+                // 电池优化 (问号帮助紧挨标题，右侧保留纯粹胶囊状态)
                 val badgeColor = if (isIgnoringBattery) theme.primary else ObsidianWarning
                 SettingsItem(
                     title = Strings.batteryOptimizationTitle,
+                    titleExtra = {
+                        IconButton(
+                            onClick = { showBatteryGuideDialog = true },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HelpOutline,
+                                contentDescription = "Help",
+                                tint = ObsidianTextMuted,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    },
                     subtitle = Strings.batteryOptimizationDesc,
                     onClick = {
                         BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
                         isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
                     },
                     trailingContent = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = badgeColor.copy(alpha = 0.12f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = badgeColor.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Box(modifier = Modifier.size(5.dp).background(badgeColor, CircleShape))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
-                                        fontSize = 11.sp,
-                                        color = badgeColor,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = { showBatteryGuideDialog = true },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(16.dp))
+                                Box(modifier = Modifier.size(5.dp).background(badgeColor, CircleShape))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
+                                    fontSize = 11.sp,
+                                    color = badgeColor,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
                     }
@@ -719,6 +737,7 @@ private fun SettingsSectionHeader(title: String) {
 private fun SettingsItem(
     title: String,
     subtitle: String? = null,
+    titleExtra: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
@@ -738,12 +757,18 @@ private fun SettingsItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = ObsidianTextPrimary
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = ObsidianTextPrimary
+                )
+                if (titleExtra != null) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    titleExtra()
+                }
+            }
             if (!subtitle.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
