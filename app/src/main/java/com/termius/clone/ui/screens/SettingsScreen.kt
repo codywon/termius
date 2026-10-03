@@ -267,6 +267,7 @@ fun SettingsScreen() {
                                         }
                                     }
                                 }
+                            }
                             Spacer(modifier = Modifier.height(16.dp))
                             HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
                             Spacer(modifier = Modifier.height(12.dp))
