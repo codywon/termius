@@ -1,6 +1,7 @@
 package com.termius.clone.ui.screens
 
 import android.widget.Toast
+import kotlin.math.abs
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -327,7 +328,7 @@ fun SettingsScreen() {
 
                                 val fontPresets = listOf(11f, 13f, 15f, 17f, 20f)
                                 fontPresets.forEach { size ->
-                                    val isSelected = Math.abs(ThemeManager.terminalFontSizeSp - size) < 0.4f
+                                    val isSelected = abs(ThemeManager.terminalFontSizeSp - size) < 0.4f
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = if (isSelected) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainerHigh,

@@ -3,6 +3,7 @@ package com.termius.clone.ui.theme
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
@@ -91,10 +92,12 @@ object ThemeManager {
     private const val KEY_FONT_SIZE = "terminal_font_size_sp"
     const val DEFAULT_FONT_SIZE = 13f
 
+    private var prefs: SharedPreferences? = null
+
     var currentTheme by mutableStateOf(AppTheme.EMERALD)
         private set
 
-    var terminalFontSizeSp by mutableFloatStateOf(DEFAULT_FONT_SIZE)
+    var terminalFontSizeSp: Float by mutableFloatStateOf(DEFAULT_FONT_SIZE)
         private set
 
     fun init(context: Context) {
