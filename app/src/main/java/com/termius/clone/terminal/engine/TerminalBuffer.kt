@@ -85,12 +85,14 @@ class TerminalBuffer(
 
     // 主屏幕缓冲区
     var mainScreen: Array<TerminalLine> = Array(rows) { TerminalLine(cols) }
-        private set
     // 备用屏幕缓冲区 (用于 vim, htop, less, tmux 等交互应用)
     var altScreen: Array<TerminalLine> = Array(rows) { TerminalLine(cols) }
-        private set
     // 回退历史缓冲区
     val history: ArrayDeque<TerminalLine> = ArrayDeque()
+
+    fun resetAltScreen() = synchronized(lock) {
+        altScreen = Array(rows) { TerminalLine(cols) }
+    }
 
     @Volatile
     var isUsingAltScreen = false
