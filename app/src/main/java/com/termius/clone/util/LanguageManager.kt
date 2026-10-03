@@ -118,4 +118,23 @@ object Strings {
     val terminalFontSizeDesc: String get() = if (isZh) "调节代码字符字号，终端内亦支持双指捏合缩放" else "Adjust font size or pinch to zoom in terminal"
     val fontPreviewLabel: String get() = if (isZh) "字体效果预览" else "Font Preview"
     val scrollbackNotice: String get() = if (isZh) "支持双指/单指上下滑动翻看历史输出" else "Two-finger / one-finger swipe to view history"
+
+    // SFTP 远程文件管理
+    val sftpTitle: String get() = if (isZh) "SFTP 文件管理" else "SFTP Manager"
+    val sftpSubtitle: String get() = if (isZh) "远程服务器文件互传与在线编辑" else "Remote file transfer & editor"
+    val selectHostPrompt: String get() = if (isZh) "选择服务器建立 SFTP 会话:" else "Select a server to launch SFTP:"
+    val parentDirectory: String get() = if (isZh) ".. 返回上级目录" else ".. Parent Directory"
+    val emptyDirectory: String get() = if (isZh) "当前目录为空" else "Directory is empty"
+    val uploadFile: String get() = if (isZh) "上传本地文件" else "Upload Local File"
+    val createFolder: String get() = if (isZh) "新建文件夹" else "New Folder"
+    val createFile: String get() = if (isZh) "新建空白文件" else "New Blank File"
+    val refresh: String get() = if (isZh) "刷新目录" else "Refresh"
+    val disconnect: String get() = if (isZh) "断开 SFTP" else "Disconnect"
+    val viewEditFile: String get() = if (isZh) "查看 / 在线编辑" else "View / Edit"
+    val downloadToPhone: String get() = if (isZh) "下载到手机 (Downloads)" else "Download to Phone"
+    val rename: String get() = if (isZh) "重命名" else "Rename"
+    val copyRemotePath: String get() = if (isZh) "复制远程完整路径" else "Copy Full Path"
+    val deleteItem: String get() = if (isZh) "永久删除" else "Delete"
+    val saveSuccess: String get() = if (isZh) "文件保存成功" else "Saved successfully"
+    val downloadSuccess: String get() = if (isZh) "下载成功，已保存至手机“下载”目录" else "Downloaded to phone Downloads folder"
 }
