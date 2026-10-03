@@ -31,6 +31,7 @@ import com.termius.clone.ui.components.AppUpdateDialog
 import com.termius.clone.ui.components.UpdateUiState
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.AppUpdateManager
+import com.termius.clone.util.Strings
 import com.termius.clone.util.UpdateCheckResult
 import kotlinx.coroutines.launch
 

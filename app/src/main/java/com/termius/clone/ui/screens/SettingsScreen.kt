@@ -462,10 +462,51 @@ fun SettingsScreen() {
         }
     }
 
-    // 更新对话框
+    // 在线自动升级对话框 (支持多镜像并发测速与最优路径流式下载)
     AppUpdateDialog(
         state = updateUiState,
-        onDismiss = { updateUiState = UpdateUiState.Idle }
+        onStartDownload = { info ->
+            scope.launch {
+                updateUiState = UpdateUiState.Downloading(
+                    info = info,
+                    progress = 0f,
+                    downloadedBytes = 0L,
+                    totalBytes = info.fileSize,
+                    speedText = "测速竞选...",
+                    channelName = "优选节点中..."
+                )
+                val result = AppUpdateManager.downloadApk(context, info) { progress, downloaded, total, speed, channel ->
+                    updateUiState = UpdateUiState.Downloading(info, progress, downloaded, total, speed, channel)
+                }
+                result.onSuccess { apkFile ->
+                    if (AppUpdateManager.canInstallPackages(context)) {
+                        updateUiState = UpdateUiState.ReadyToInstall(apkFile, info)
+                        AppUpdateManager.installApk(context, apkFile)
+                    } else {
+                        updateUiState = UpdateUiState.PermissionRequired(apkFile, info)
+                    }
+                }.onFailure { err ->
+                    updateUiState = UpdateUiState.Error(err.message ?: "下载失败", info)
+                }
+            }
+        },
+        onInstall = { file ->
+            if (AppUpdateManager.canInstallPackages(context)) {
+                AppUpdateManager.installApk(context, file)
+            } else {
+                val currentInfo = (updateUiState as? UpdateUiState.ReadyToInstall)?.info
+                if (currentInfo != null) {
+                    updateUiState = UpdateUiState.PermissionRequired(file, currentInfo)
+                }
+            }
+        },
+        onIgnore = { tagName ->
+            AppUpdateManager.ignoreVersion(context, tagName)
+            updateUiState = UpdateUiState.Idle
+        },
+        onDismiss = {
+            updateUiState = UpdateUiState.Idle
+        }
     )
 
     // 添加凭据对话框 (默认用户名设为 root)
