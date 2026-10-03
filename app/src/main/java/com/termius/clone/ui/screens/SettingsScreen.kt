@@ -267,46 +267,174 @@ fun SettingsScreen() {
                                         }
                                     }
                                 }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // 终端字体大小调节
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = Strings.terminalFontSizeTitle,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = ObsidianTextPrimary
+                                    )
+                                    Text(
+                                        text = Strings.terminalFontSizeDesc,
+                                        fontSize = 11.sp,
+                                        color = ObsidianTextMuted
+                                    )
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = theme.primary.copy(alpha = 0.15f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.5f))
+                                ) {
+                                    Text(
+                                        text = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = theme.primary,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 字体快捷档位 Chips 与 +/- 微调
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                FilledTonalIconButton(
+                                    onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp - 1f) },
+                                    modifier = Modifier.size(32.dp),
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = theme.surfaceContainerHigh,
+                                        contentColor = ObsidianTextPrimary
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Decrease", modifier = Modifier.size(16.dp))
+                                }
+
+                                val fontPresets = listOf(11f, 13f, 15f, 17f, 20f)
+                                fontPresets.forEach { size ->
+                                    val isSelected = Math.abs(ThemeManager.terminalFontSizeSp - size) < 0.4f
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isSelected) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainerHigh,
+                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
+                                        onClick = { ThemeManager.setTerminalFontSize(size) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "${size.toInt()} SP",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) theme.primary else ObsidianTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+
+                                FilledTonalIconButton(
+                                    onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp + 1f) },
+                                    modifier = Modifier.size(32.dp),
+                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                        containerColor = theme.surfaceContainerHigh,
+                                        contentColor = ObsidianTextPrimary
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Increase", modifier = Modifier.size(16.dp))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 实时效果预览盒
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = ObsidianSurfaceContainerLowest,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = "${Strings.fontPreviewLabel}:",
+                                        fontSize = 10.sp,
+                                        color = ObsidianTextMuted
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "root@teamx:~# docker ps\nweb-proxy   Up 18h   0.0.0.0:443",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = ThemeManager.terminalFontSizeSp.sp,
+                                        lineHeight = (ThemeManager.terminalFontSizeSp * 1.35f).sp,
+                                        color = theme.primary
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
-                // 3. 语言切换区块
+                // 3. 语言切换区块 (解决卡片大小不对称与挤压折行问题)
                 item {
                     SettingsCard(title = Strings.sectionLanguage, icon = Icons.Default.Language) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             AppLanguage.entries.forEach { lang ->
                                 val isSelected = LanguageManager.currentLanguage == lang
                                 Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) theme.primary.copy(alpha = 0.15f) else theme.surfaceContainerHigh,
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) theme.primary.copy(alpha = 0.12f) else theme.surfaceContainerHigh,
                                     border = androidx.compose.foundation.BorderStroke(
                                         width = if (isSelected) 1.5.dp else 1.dp,
                                         color = if (isSelected) theme.primary else ObsidianOutlineVariant
                                     ),
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
                                         .clickable { LanguageManager.setLanguage(lang) }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = lang.titleZh,
+                                                fontSize = 14.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = ObsidianTextPrimary
+                                            )
+                                            Text(
+                                                text = lang.titleEn,
+                                                fontSize = 11.sp,
+                                                color = ObsidianTextMuted
+                                            )
+                                        }
+
                                         RadioButton(
                                             selected = isSelected,
                                             onClick = { LanguageManager.setLanguage(lang) },
-                                            colors = RadioButtonDefaults.colors(selectedColor = theme.primary)
+                                            colors = RadioButtonDefaults.colors(
+                                                selectedColor = theme.primary,
+                                                unselectedColor = ObsidianTextMuted
+                                            )
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Column {
-                                            Text(lang.titleZh, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary)
-                                            Text(lang.titleEn, fontSize = 10.sp, color = ObsidianTextMuted)
-                                        }
                                     }
                                 }
                             }

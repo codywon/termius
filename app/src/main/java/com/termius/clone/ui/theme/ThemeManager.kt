@@ -88,9 +88,13 @@ object ThemeManager {
     private const val PREFS_NAME = "teamx_theme_prefs"
     private const val KEY_THEME = "current_theme_id"
 
-    private var prefs: SharedPreferences? = null
+    private const val KEY_FONT_SIZE = "terminal_font_size_sp"
+    const val DEFAULT_FONT_SIZE = 13f
 
     var currentTheme by mutableStateOf(AppTheme.EMERALD)
+        private set
+
+    var terminalFontSizeSp by mutableFloatStateOf(DEFAULT_FONT_SIZE)
         private set
 
     fun init(context: Context) {
@@ -98,11 +102,18 @@ object ThemeManager {
             prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val savedId = prefs?.getString(KEY_THEME, AppTheme.EMERALD.id) ?: AppTheme.EMERALD.id
             currentTheme = AppTheme.fromId(savedId)
+            terminalFontSizeSp = prefs?.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SIZE) ?: DEFAULT_FONT_SIZE
         }
     }
 
     fun setTheme(theme: AppTheme) {
         currentTheme = theme
         prefs?.edit()?.putString(KEY_THEME, theme.id)?.apply()
+    }
+
+    fun setTerminalFontSize(sizeSp: Float) {
+        val coerced = (Math.round(sizeSp * 2f) / 2f).coerceIn(9f, 26f) // 0.5 步进平滑吸附
+        terminalFontSizeSp = coerced
+        prefs?.edit()?.putFloat(KEY_FONT_SIZE, coerced)?.apply()
     }
 }

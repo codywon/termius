@@ -2,17 +2,30 @@ package com.termius.clone.ui.components
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -24,10 +37,13 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -36,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.terminal.engine.TerminalKeyCodes
 import com.termius.clone.terminal.session.SshSession
+import com.termius.clone.ui.theme.ThemeManager
+import kotlin.math.abs
 
 @Composable
 fun TerminalView(
@@ -54,8 +72,10 @@ fun TerminalView(
     val internalFocusRequester = remember { FocusRequester() }
     val focusRequester = externalFocusRequester ?: internalFocusRequester
 
-    var fontSizeSp by remember { mutableFloatStateOf(13f) }
+    // 动态获取全局配置的终端字体大小 (支持设置页与双指手势联动)
+    val fontSizeSp = ThemeManager.terminalFontSizeSp
     var scrollOffsetLines by remember { mutableIntStateOf(0) }
+    var scrollAccumulator by remember { mutableFloatStateOf(0f) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
 
     // 用于承载系统 IME 输入法的隐藏输入框状态
@@ -98,9 +118,57 @@ fun TerminalView(
             .fillMaxSize()
             .background(session.terminalBuffer.theme.background)
             .onSizeChanged { viewSize = it }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = {
+            .pointerInput(charHeight) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var isMultiTouch = false
+                    var totalMovement = 0f
+                    var hasDragged = false
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val canceled = event.changes.any { it.isConsumed }
+                        if (canceled) break
+
+                        val pointerCount = event.changes.size
+                        if (pointerCount >= 2) {
+                            // 双指缩放手势：动态缩放终端字体大小
+                            isMultiTouch = true
+                            hasDragged = true
+                            val zoomChange = event.calculateZoom()
+                            if (zoomChange != 1f) {
+                                val currentSize = ThemeManager.terminalFontSizeSp
+                                val newSize = (currentSize * zoomChange).coerceIn(9f, 26f)
+                                ThemeManager.setTerminalFontSize(newSize)
+                            }
+                            event.changes.forEach { it.consume() }
+                        } else if (pointerCount == 1 && !isMultiTouch) {
+                            // 单指拖拽手势：平滑滚动回退历史
+                            val change = event.changes.first()
+                            val pan = change.positionChange()
+                            totalMovement += abs(pan.y) + abs(pan.x)
+
+                            if (totalMovement > 10f) {
+                                hasDragged = true
+                            }
+
+                            if (hasDragged && charHeight > 0f) {
+                                // 手指向下拉 (pan.y > 0) -> 回溯上方历史 (scrollOffsetLines 增大)
+                                // 手指向上推 (pan.y < 0) -> 滑回最新内容 (scrollOffsetLines 减小)
+                                scrollAccumulator += pan.y
+                                val deltaLines = (scrollAccumulator / charHeight).toInt()
+                                if (deltaLines != 0) {
+                                    val maxScroll = session.terminalBuffer.history.size
+                                    scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                    scrollAccumulator -= deltaLines * charHeight
+                                }
+                                change.consume()
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
+
+                    // 如果未发生明显拖动或缩放，判定为单指点击屏幕：唤起输入法
+                    if (!hasDragged) {
                         try {
                             onTapTerminal?.invoke()
                             focusRequester.requestFocus()
@@ -108,20 +176,6 @@ fun TerminalView(
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    // 双指缩放调整字体大小
-                    if (zoom != 1f) {
-                        fontSizeSp = (fontSizeSp * zoom).coerceIn(9f, 24f)
-                    }
-                    // 纵向拖动滚动回退历史
-                    if (pan.y != 0f && charHeight > 0) {
-                        val linesScrolled = (pan.y / charHeight).toInt()
-                        val maxScroll = session.terminalBuffer.history.size
-                        scrollOffsetLines = (scrollOffsetLines - linesScrolled).coerceIn(0, maxScroll)
                     }
                 }
             }
@@ -148,7 +202,7 @@ fun TerminalView(
             },
             modifier = Modifier
                 .size(1.dp)
-                .alpha(0.01f)
+                .alpha(0f)
                 .focusRequester(focusRequester)
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type == KeyEventType.KeyDown) {
@@ -277,6 +331,50 @@ fun TerminalView(
                     }
                 } catch (e: Throwable) {
                     e.printStackTrace()
+                }
+            }
+        }
+
+        // 历史回溯悬浮小胶囊 (顶部中央极简半透明提示，绝不遮挡底部键盘与配件条)
+        AnimatedVisibility(
+            visible = scrollOffsetLines > 0,
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 10.dp)
+        ) {
+            val appTheme = ThemeManager.currentTheme
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = appTheme.surfaceContainerHigh.copy(alpha = 0.95f),
+                border = BorderStroke(1.dp, appTheme.primary.copy(alpha = 0.7f)),
+                shadowElevation = 8.dp,
+                modifier = Modifier.clickable {
+                    scrollOffsetLines = 0
+                    try {
+                        focusRequester.requestFocus()
+                        keyboardController?.show()
+                    } catch (_: Exception) {}
+                }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.ArrowDownward,
+                        contentDescription = "To Bottom",
+                        tint = appTheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "历史输出 (-${scrollOffsetLines}行) • 回到底部",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = appTheme.primary
+                    )
                 }
             }
         }

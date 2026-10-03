@@ -97,4 +97,9 @@ object Strings {
     // 凭据弹窗
     val identitiesCount: String get() = if (isZh) "条已保存的身份凭据" else "saved identities"
     val manageVault: String get() = if (isZh) "管理保险库" else "Manage Vault"
+
+    // 终端字体
+    val terminalFontSizeTitle: String get() = if (isZh) "终端字体大小" else "Terminal Font Size"
+    val terminalFontSizeDesc: String get() = if (isZh) "调整终端代码字符缩放，在终端内亦支持双指捏合缩放" else "Adjust terminal text scale or pinch to zoom in terminal"
+    val fontPreviewLabel: String get() = if (isZh) "实时预览" else "Live Preview"
 }
