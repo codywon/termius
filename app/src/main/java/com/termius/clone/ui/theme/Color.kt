@@ -32,6 +32,7 @@ val ObsidianTextMuted = Color(0xFF879484)
 val ObsidianOutline = Color(0xFF3E4A3C)
 val ObsidianOutlineVariant = Color(0xFF29313A)
 val ObsidianError = Color(0xFFFFB4AB)
+val ObsidianWarning = Color(0xFFFABC45) // Amber Warning Accent
 
 // Terminal 16 Colors (Obsidian Shell Optimized)
 val TerminalBlack = Color(0xFF060F16)
