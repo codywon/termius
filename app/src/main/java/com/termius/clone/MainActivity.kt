@@ -8,9 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.termius.clone.ui.screens.MainScreen
@@ -60,7 +59,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = theme.background
                 ) {
-                    var currentRoute by remember { mutableStateOf("main") }
+                    var currentRoute by rememberSaveable { mutableStateOf("main") }
 
                     when (currentRoute) {
                         "main" -> MainScreen(

@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -94,8 +95,46 @@ fun HostListScreen(
                             text = Strings.appTitle,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
-                            color = ObsidianTextPrimary
+                            color = theme.textPrimary
                         )
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        // 当后台有活跃/已连接的会话时，提供醒目的【活跃终端 (X) ➔】快捷直达入口
+                        if (sessions.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = theme.primary.copy(alpha = if (theme.isDark) 0.20f else 0.12f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.45f)),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable(onClick = onNavigateToTerminal)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .background(Color(0xFF22C55E), CircleShape)
+                                    )
+                                    Text(
+                                        text = "活跃终端 (${sessions.size})",
+                                        color = theme.primary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = "Go to terminal",
+                                        tint = theme.primary,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // 搜索输入框 (紧凑极简)

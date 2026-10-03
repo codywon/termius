@@ -23,8 +23,23 @@ object SessionManager {
     fun openSession(
         context: Context,
         host: HostEntity,
-        identity: IdentityEntity? = null
+        identity: IdentityEntity? = null,
+        forceNew: Boolean = false
     ): SshSession {
+        // 如果已经存在该主机的会话标签，直接切过去，杜绝重复生成多个同名标签
+        if (!forceNew) {
+            val existing = _sessions.value.find { it.host.id == host.id }
+            if (existing != null) {
+                _currentSessionId.value = existing.id
+                // 若处于断开或错误状态，自动唤醒重连
+                if (existing.sessionState.value == SessionState.DISCONNECTED || existing.sessionState.value == SessionState.ERROR) {
+                    existing.reconnect()
+                }
+                updateForegroundService(context)
+                return existing
+            }
+        }
+
         val session = SshSession(host = host, identity = identity)
         _sessions.value = _sessions.value + session
         _currentSessionId.value = session.id
