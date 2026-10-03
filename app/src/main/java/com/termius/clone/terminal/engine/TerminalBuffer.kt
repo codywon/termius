@@ -105,6 +105,13 @@ class TerminalBuffer(
     @Volatile
     var isCursorVisible = true
 
+    @Volatile
+    private var wrapPending = false
+
+    fun resetWrapPending() {
+        wrapPending = false
+    }
+
     // 当前绘制样式
     var currentFgColor: Color = Color.Unspecified
     var currentBgColor: Color = Color.Unspecified
@@ -183,14 +190,14 @@ class TerminalBuffer(
     fun writeChar(c: Char) = synchronized(lock) {
         val wide = isWide(c)
 
+        // 1. 如果此前已经写到行末 (Wrap Pending)，或者宽字符在最后一列放不下，立即换行折到下一行
+        if (wrapPending || (wide && cursorCol >= cols - 1)) {
+            newLine()
+            wrapPending = false
+        }
+
         cursorCol = cursorCol.coerceIn(0, (cols - 1).coerceAtLeast(0))
         cursorRow = cursorRow.coerceIn(0, (rows - 1).coerceAtLeast(0))
-
-        if (wide && cursorCol >= cols - 1) {
-            newLine()
-        } else if (cursorCol >= cols) {
-            newLine()
-        }
 
         val screen = if (isUsingAltScreen) altScreen else mainScreen
         val line = screen.getOrNull(cursorRow) ?: return@synchronized
@@ -216,7 +223,16 @@ class TerminalBuffer(
             }
             cursorCol++
         }
-        cursorCol = cursorCol.coerceIn(0, (cols - 1).coerceAtLeast(0))
+
+        // 关键 VT100 / xterm 自动折行规范：
+        // 当写入达到或超出这一行最后一列时，标记 wrapPending = true，光标保留在最后一列；
+        // 当下一个字符到来时才真正换行！彻底杜绝旧版在最后一列死循环反复覆盖字符的恶性 Bug！
+        if (cursorCol >= cols) {
+            cursorCol = cols - 1
+            wrapPending = true
+        } else {
+            wrapPending = false
+        }
     }
 
     private fun isWide(c: Char): Boolean {
@@ -233,6 +249,7 @@ class TerminalBuffer(
 
     fun newLine() = synchronized(lock) {
         cursorCol = 0
+        wrapPending = false
         if (cursorRow < rows - 1) {
             cursorRow++
         } else {
@@ -317,6 +334,7 @@ class TerminalBuffer(
     fun setCursorPosition(r: Int, c: Int) = synchronized(lock) {
         cursorRow = (r - 1).coerceIn(0, (rows - 1).coerceAtLeast(0))
         cursorCol = (c - 1).coerceIn(0, (cols - 1).coerceAtLeast(0))
+        wrapPending = false
     }
 
     fun resetAttributes() = synchronized(lock) {

@@ -40,7 +40,10 @@ class TerminalEmulator(val buffer: TerminalBuffer) {
     private fun handleNormal(c: Char) {
         when (c) {
             '\u001B' -> state = State.ESC
-            '\r' -> buffer.cursorCol = 0
+            '\r' -> {
+                buffer.cursorCol = 0
+                buffer.resetWrapPending()
+            }
             '\n' -> buffer.newLine()
             '\b' -> {
                 if (buffer.cursorCol > 0) buffer.cursorCol--

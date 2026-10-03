@@ -123,13 +123,14 @@ fun TerminalView(
     val baselineOffset = remember(textPaint) { -textPaint.fontMetrics.ascent }
 
     // 行业最佳实践 (参考 Termius / ConnectBot)：
-    // 虚拟终端列数保底至少 80 列，避免远程命令 (如 docker ps, kubectl, ps aux) 将长表格和字段截断丢弃
+    // 虚拟终端列数保底至少 140 列 (标准宽屏宽度)，确保远程命令 (如 docker ps, kubectl, ps aux) 
+    // 将所有列 (包括 STATUS, PORTS, NAMES 等) 全部完整输出，避免 Linux 工具主动将右侧表格截断丢弃
     LaunchedEffect(viewSize, charWidth, charHeight) {
         delay(250)
         try {
             if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
                 val fittedCols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
-                val cols = maxOf(80, fittedCols)
+                val cols = maxOf(140, fittedCols)
                 val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
                 session.resize(cols, rows, viewSize.width, viewSize.height)
                 scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
@@ -259,6 +260,7 @@ fun TerminalView(
                     } else {
                         val insertedText = newText.replace(sentinel, "")
                         if (insertedText.isNotEmpty()) {
+                            if (scrollOffsetX > 0f) scrollOffsetX = 0f
                             if (isCtrlActive && insertedText.length == 1) {
                                 session.write(TerminalKeyCodes.getCtrlCode(insertedText[0]))
                                 onConsumeCtrl()
@@ -287,6 +289,7 @@ fun TerminalView(
                                 return@onKeyEvent true
                             }
                             android.view.KeyEvent.KEYCODE_ENTER -> {
+                                if (scrollOffsetX > 0f) scrollOffsetX = 0f
                                 session.write(TerminalKeyCodes.ENTER)
                                 return@onKeyEvent true
                             }
