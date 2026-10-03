@@ -38,7 +38,7 @@ class SshSession(
     val terminalBuffer = TerminalBuffer(
         cols = initialCols,
         rows = initialRows,
-        theme = TerminalThemes.getThemeByName(host.terminalTheme)
+        theme = if (host.terminalTheme.isNotBlank()) TerminalThemes.getThemeByName(host.terminalTheme) else com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
     )
     val emulator = TerminalEmulator(terminalBuffer)
 

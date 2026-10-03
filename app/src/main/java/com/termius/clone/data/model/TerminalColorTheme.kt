@@ -120,8 +120,10 @@ object TerminalThemes {
     )
 
     fun getThemeById(id: String): TerminalThemeColors {
-        return allThemes.find { it.id == id } ?: ClassicDark
+        return allThemes.find { it.id.equals(id, ignoreCase = true) || it.nameZh.equals(id, ignoreCase = true) || it.nameEn.equals(id, ignoreCase = true) } ?: ClassicDark
     }
+
+    fun getThemeByName(name: String): TerminalThemeColors = getThemeById(name)
 
     // 兼容历史引用
     val ObsidianShell get() = ClassicDark
