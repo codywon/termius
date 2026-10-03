@@ -42,7 +42,7 @@ object SessionManager {
 
     fun closeSession(context: Context, id: String) {
         val session = _sessions.value.find { it.id == id }
-        session?.disconnect()
+        session?.destroy()
 
         val remaining = _sessions.value.filter { it.id != id }
         _sessions.value = remaining

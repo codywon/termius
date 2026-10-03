@@ -100,7 +100,13 @@ fun TerminalScreen(
                                     border = if (isSelected) {
                                         androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
                                     } else null,
-                                    onClick = { SessionManager.selectSession(session.id) }
+                                    onClick = {
+                                        if (isSelected && (sessionState == SessionState.DISCONNECTED || sessionState == SessionState.ERROR)) {
+                                            session.reconnect()
+                                        } else {
+                                            SessionManager.selectSession(session.id)
+                                        }
+                                    }
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -152,8 +158,27 @@ fun TerminalScreen(
                         }
 
                         if (activeSession != null) {
-                            IconButton(onClick = { showDisconnectDialog = true }) {
-                                Icon(Icons.Default.PowerSettingsNew, contentDescription = "断开连接", tint = Color(0xFFEF4444).copy(alpha = 0.88f))
+                            val activeState by activeSession.sessionState.collectAsState()
+                            val isConnected = activeState == SessionState.CONNECTED ||
+                                    activeState == SessionState.CONNECTING ||
+                                    activeState == SessionState.AUTHENTICATING
+
+                            if (isConnected) {
+                                IconButton(onClick = { showDisconnectDialog = true }) {
+                                    Icon(
+                                        Icons.Default.PowerSettingsNew,
+                                        contentDescription = if (Strings.isZh) "断开连接" else "Disconnect",
+                                        tint = Color(0xFFEF4444).copy(alpha = 0.88f)
+                                    )
+                                }
+                            } else {
+                                IconButton(onClick = { activeSession.reconnect() }) {
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        contentDescription = if (Strings.isZh) "重新连接" else "Reconnect",
+                                        tint = Color(0xFF22C55E)
+                                    )
+                                }
                             }
                         }
                     }
@@ -190,6 +215,8 @@ fun TerminalScreen(
                 .background(termTheme.background)
         ) {
             if (activeSession != null) {
+                val activeState by activeSession.sessionState.collectAsState()
+
                 TerminalView(
                     session = activeSession,
                     isCtrlActive = isCtrlActive,
@@ -203,6 +230,35 @@ fun TerminalScreen(
                         }
                     }
                 )
+
+                // 当会话断开或发生错误时，在顶部提供平滑的一键快速重连微胶囊
+                if (activeState == SessionState.DISCONNECTED || activeState == SessionState.ERROR) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 10.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { activeSession.reconnect() },
+                        shape = RoundedCornerShape(16.dp),
+                        color = theme.surfaceContainerHigh.copy(alpha = 0.95f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.45f)),
+                        shadowElevation = 4.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFF22C55E), modifier = Modifier.size(15.dp))
+                            Text(
+                                text = if (Strings.isZh) "连接已断开 · 点击快速重连" else "Disconnected · Tap to reconnect",
+                                color = theme.textPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
 
                 // 当模式为 HIDDEN 时，在右下角悬浮一个极简键盘唤醒胶囊
                 if (currentInputMode == TerminalInputMode.HIDDEN) {
@@ -247,7 +303,7 @@ fun TerminalScreen(
             onDismissRequest = { showDisconnectDialog = false },
             title = {
                 Text(
-                    text = if (Strings.isZh) "断开连接" else "Disconnect",
+                    text = if (Strings.isZh) "断开会话" else "Disconnect Session",
                     fontWeight = FontWeight.Bold,
                     color = theme.textPrimary
                 )
@@ -255,9 +311,9 @@ fun TerminalScreen(
             text = {
                 Text(
                     text = if (Strings.isZh) {
-                        "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？"
+                        "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？断开后可随时点击顶栏刷新按钮重新连接。"
                     } else {
-                        "Are you sure you want to disconnect from ${activeSession.host.label} (${activeSession.host.hostname})?"
+                        "Are you sure you want to disconnect from ${activeSession.host.label} (${activeSession.host.hostname})? You can reconnect anytime."
                     },
                     color = theme.textPrimary,
                     fontSize = 13.sp
@@ -266,21 +322,29 @@ fun TerminalScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        showDisconnectDialog = false
+                        activeSession.disconnect()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White)
+                ) {
+                    Text(if (Strings.isZh) "断开连接" else "Disconnect", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
                         val sid = activeSession.id
                         showDisconnectDialog = false
                         SessionManager.closeSession(context, sid)
                         if (sessions.size <= 1) {
                             onNavigateBack()
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White)
-                ) {
-                    Text(if (Strings.isZh) "断开" else "Disconnect", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDisconnectDialog = false }) {
-                    Text(if (Strings.isZh) "取消" else "Cancel", color = theme.textSecondary)
+                    }) {
+                        Text(if (Strings.isZh) "关闭标签" else "Close Tab", color = theme.textMuted)
+                    }
+                    TextButton(onClick = { showDisconnectDialog = false }) {
+                        Text(if (Strings.isZh) "取消" else "Cancel", color = theme.textSecondary)
+                    }
                 }
             },
             containerColor = theme.surfaceContainerLow
