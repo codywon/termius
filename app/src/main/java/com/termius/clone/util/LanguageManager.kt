@@ -91,15 +91,15 @@ object Strings {
     val keepalivePingDesc: String get() = if (isZh) "定时发送心跳包，防止网络空闲时连接超时中断" else "Periodically ping to prevent timeouts"
     val wakeLockStatus: String get() = if (isZh) "后台服务常驻" else "Background Service"
     val wakeLockStatusDesc: String get() = if (isZh) "息屏时保持 CPU 与 Wi-Fi 活跃，防止后台网络断开" else "Keep CPU & Wi-Fi active when screen off"
-    val runningStatus: String get() = if (isZh) "服务运行中" else "Running"
+    val runningStatus: String get() = if (isZh) "运行中" else "Running"
 
     // 电池后台优化
-    val batteryOptimizationTitle: String get() = if (isZh) "系统电池优化 (后台保活核心)" else "Battery Optimization"
-    val batteryOptimizationDesc: String get() = if (isZh) "将应用加入系统电池优化白名单，避免手机息屏被系统强制休眠" else "Exempt from battery optimization to keep SSH alive in background"
-    val batteryOptimizedTag: String get() = if (isZh) "受限 (易休眠)" else "Restricted"
-    val batteryIgnoredTag: String get() = if (isZh) "无限制 (已开启)" else "Unrestricted"
-    val batteryOptimizeBtn: String get() = if (isZh) "一键开启无限制后台" else "Exempt from Optimization"
-    val batteryGuideBtn: String get() = if (isZh) "系统保活指南" else "Keepalive Guide"
+    val batteryOptimizationTitle: String get() = if (isZh) "电池后台优化" else "Battery Optimization"
+    val batteryOptimizationDesc: String get() = if (isZh) "加入电池优化白名单，防止息屏被系统强制休眠" else "Exempt from battery optimization to keep SSH alive"
+    val batteryOptimizedTag: String get() = if (isZh) "受限" else "Restricted"
+    val batteryIgnoredTag: String get() = if (isZh) "无限制" else "Unrestricted"
+    val batteryOptimizeBtn: String get() = if (isZh) "一键解除限制" else "Exempt from Optimization"
+    val batteryGuideBtn: String get() = if (isZh) "保活指南" else "Keepalive Guide"
 
     val sectionAbout: String get() = if (isZh) "关于 TermX Mobile" else "About TermX Mobile"
     val poweredBy: String get() = "Powered by codywon"

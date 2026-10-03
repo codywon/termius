@@ -14,9 +14,9 @@ data class TerminalThemeColors(
 object TerminalThemes {
     val ObsidianShell = TerminalThemeColors(
         name = "Obsidian Shell",
-        background = ObsidianBackground,
-        foreground = ObsidianTextPrimary,
-        cursor = ObsidianPrimary,
+        background = Color(0xFF0B141C),
+        foreground = Color(0xFFDAE3EE),
+        cursor = Color(0xFF67DF70),
         palette = listOf(
             TerminalBlack, TerminalRed, TerminalGreen, TerminalYellow,
             TerminalBlue, TerminalMagenta, TerminalCyan, TerminalWhite,
@@ -51,10 +51,24 @@ object TerminalThemes {
         )
     )
 
+    val PaperLight = TerminalThemeColors(
+        name = "Paper Light",
+        background = Color(0xFFF6F8FA),
+        foreground = Color(0xFF1F2328),
+        cursor = Color(0xFF0969DA),
+        palette = listOf(
+            Color(0xFF24292F), Color(0xFFCF222E), Color(0xFF1A7F37), Color(0xFF9A6700),
+            Color(0xFF0969DA), Color(0xFF8250DF), Color(0xFF1B7C83), Color(0xFF57606A),
+            Color(0xFF6E7781), Color(0xFFA40E26), Color(0xFF116329), Color(0xFF7D4E00),
+            Color(0xFF0550AE), Color(0xFF6639BA), Color(0xFF114B5F), Color(0xFF24292F)
+        )
+    )
+
     fun getThemeByName(name: String): TerminalThemeColors {
         return when (name) {
             "Dracula" -> Dracula
             "Monokai" -> Monokai
+            "Paper Light" -> PaperLight
             else -> ObsidianShell
         }
     }

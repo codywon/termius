@@ -49,6 +49,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             TermXTheme {
                 val theme = LocalAppTheme.current
+
+                androidx.compose.runtime.SideEffect {
+                    val controller = WindowCompat.getInsetsController(window, window.decorView)
+                    controller.isAppearanceLightStatusBars = !theme.isDark
+                    controller.isAppearanceLightNavigationBars = !theme.isDark
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = theme.background

@@ -1,16 +1,17 @@
 package com.termius.clone.ui.theme
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// "Obsidian Shell" Design System Theme Palette
-val ObsidianBackground = Color(0xFF0B141C)
-val ObsidianSurface = Color(0xFF0B141C)
-val ObsidianSurfaceContainerLowest = Color(0xFF060F16)
-val ObsidianSurfaceContainerLow = Color(0xFF141C24)
-val ObsidianSurfaceContainer = Color(0xFF182028)
-val ObsidianSurfaceContainerHigh = Color(0xFF222B33)
-val ObsidianSurfaceContainerHighest = Color(0xFF2D363E)
-val ObsidianSurfaceBright = Color(0xFF313A43)
+// "Obsidian Shell" / "TermX" Design System Theme Palette (深浅色动态自适应)
+val ObsidianBackground: Color @Composable get() = LocalAppTheme.current.background
+val ObsidianSurface: Color @Composable get() = LocalAppTheme.current.background
+val ObsidianSurfaceContainerLowest: Color @Composable get() = if (LocalAppTheme.current.isDark) Color(0xFF060F16) else Color(0xFFFFFFFF)
+val ObsidianSurfaceContainerLow: Color @Composable get() = LocalAppTheme.current.surfaceContainerLow
+val ObsidianSurfaceContainer: Color @Composable get() = LocalAppTheme.current.surfaceContainer
+val ObsidianSurfaceContainerHigh: Color @Composable get() = LocalAppTheme.current.surfaceContainerHigh
+val ObsidianSurfaceContainerHighest: Color @Composable get() = if (LocalAppTheme.current.isDark) Color(0xFF2D363E) else Color(0xFFD8DEE4)
+val ObsidianSurfaceBright: Color @Composable get() = if (LocalAppTheme.current.isDark) Color(0xFF313A43) else Color(0xFFEAEFF2)
 
 val ObsidianPrimary = Color(0xFF67DF70) // Emerald Green Neon Accent
 val ObsidianPrimaryContainer = Color(0xFF3FB950)
@@ -26,11 +27,11 @@ val ObsidianTertiary = Color(0xFFFABC45) // Amber Accent
 val ObsidianTertiaryContainer = Color(0xFFD19821)
 val ObsidianOnTertiary = Color(0xFF422C00)
 
-val ObsidianTextPrimary = Color(0xFFDAE3EE) // on-surface
-val ObsidianTextSecondary = Color(0xFFBDCAB8) // on-surface-variant
-val ObsidianTextMuted = Color(0xFF879484)
-val ObsidianOutline = Color(0xFF3E4A3C)
-val ObsidianOutlineVariant = Color(0xFF29313A)
+val ObsidianTextPrimary: Color @Composable get() = LocalAppTheme.current.textPrimary
+val ObsidianTextSecondary: Color @Composable get() = LocalAppTheme.current.textSecondary
+val ObsidianTextMuted: Color @Composable get() = LocalAppTheme.current.textMuted
+val ObsidianOutline: Color @Composable get() = LocalAppTheme.current.outline
+val ObsidianOutlineVariant: Color @Composable get() = if (LocalAppTheme.current.isDark) Color(0xFF29313A) else Color(0xFFD0D7DE)
 val ObsidianError = Color(0xFFFFB4AB)
 val ObsidianWarning = Color(0xFFFABC45) // Amber Warning Accent
 

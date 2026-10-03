@@ -15,6 +15,7 @@ enum class AppTheme(
     val id: String,
     val titleZh: String,
     val titleEn: String,
+    val isDark: Boolean,
     val primary: Color,
     val primaryContainer: Color,
     val background: Color,
@@ -28,6 +29,7 @@ enum class AppTheme(
         id = "emerald",
         titleZh = "黑曜石翡翠",
         titleEn = "Obsidian Emerald",
+        isDark = true,
         primary = Color(0xFF67DF70),
         primaryContainer = Color(0xFF1B4D20),
         background = Color(0xFF0B141C),
@@ -41,6 +43,7 @@ enum class AppTheme(
         id = "ice_blue",
         titleZh = "极客冰蓝",
         titleEn = "Cyber Ice Blue",
+        isDark = true,
         primary = Color(0xFF38BDF8),
         primaryContainer = Color(0xFF0E436B),
         background = Color(0xFF0B1320),
@@ -54,6 +57,7 @@ enum class AppTheme(
         id = "amber",
         titleZh = "复古琥珀",
         titleEn = "Cyber Amber",
+        isDark = true,
         primary = Color(0xFFFBBF24),
         primaryContainer = Color(0xFF5B3E05),
         background = Color(0xFF14120C),
@@ -67,6 +71,7 @@ enum class AppTheme(
         id = "neon_purple",
         titleZh = "赛博霓虹紫",
         titleEn = "Cyberpunk Purple",
+        isDark = true,
         primary = Color(0xFFC084FC),
         primaryContainer = Color(0xFF4C1D95),
         background = Color(0xFF130D1D),
@@ -75,7 +80,25 @@ enum class AppTheme(
         surfaceContainerHigh = Color(0xFF372754),
         outline = Color(0xFF583B82),
         previewGradient = listOf(Color(0xFFC084FC), Color(0xFF9333EA))
+    ),
+    LIGHT_PAPER(
+        id = "light_paper",
+        titleZh = "纯白明眸",
+        titleEn = "Paper Light",
+        isDark = false,
+        primary = Color(0xFF0969DA),
+        primaryContainer = Color(0xFFDDF4FF),
+        background = Color(0xFFF6F8FA),
+        surfaceContainerLow = Color(0xFFFFFFFF),
+        surfaceContainer = Color(0xFFEAEEF2),
+        surfaceContainerHigh = Color(0xFFE1E4E8),
+        outline = Color(0xFFD0D7DE),
+        previewGradient = listOf(Color(0xFF0969DA), Color(0xFF54A0FF))
     );
+
+    val textPrimary: Color get() = if (isDark) Color(0xFFDAE3EE) else Color(0xFF1F2328)
+    val textSecondary: Color get() = if (isDark) Color(0xFFBDCAB8) else Color(0xFF57606A)
+    val textMuted: Color get() = if (isDark) Color(0xFF879484) else Color(0xFF8C959F)
 
     companion object {
         fun fromId(id: String): AppTheme = entries.find { it.id == id } ?: EMERALD

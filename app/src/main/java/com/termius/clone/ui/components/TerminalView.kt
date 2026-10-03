@@ -5,6 +5,8 @@ import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -16,6 +18,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -53,7 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.terminal.engine.TerminalKeyCodes
 import com.termius.clone.terminal.session.SshSession
+import com.termius.clone.ui.theme.LocalAppTheme
 import com.termius.clone.ui.theme.ThemeManager
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 @Composable
@@ -73,8 +78,14 @@ fun TerminalView(
     val internalFocusRequester = remember { FocusRequester() }
     val focusRequester = externalFocusRequester ?: internalFocusRequester
 
-    // 动态获取全局配置的终端字体大小 (支持设置页与双指手势联动)
-    val fontSizeSp = ThemeManager.terminalFontSizeSp
+    val appTheme = LocalAppTheme.current
+
+    // 本地响应式终端字号 (在双指捏合缩放时仅在内存平滑变动，手势释放时才提交持久化，彻底根除卡顿迟滞)
+    var localFontSizeSp by remember { mutableFloatStateOf(ThemeManager.terminalFontSizeSp) }
+    LaunchedEffect(ThemeManager.terminalFontSizeSp) {
+        localFontSizeSp = ThemeManager.terminalFontSizeSp
+    }
+
     var scrollOffsetLines by remember { mutableIntStateOf(0) }
     var scrollAccumulator by remember { mutableFloatStateOf(0f) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
@@ -83,10 +94,10 @@ fun TerminalView(
     var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
 
     val density = LocalDensity.current
-    val textPaint = remember(fontSizeSp) {
+    val textPaint = remember(localFontSizeSp) {
         Paint().apply {
             isAntiAlias = true
-            textSize = fontSizeSp * density.density
+            textSize = localFontSizeSp * density.density
             typeface = Typeface.MONOSPACE
             style = Paint.Style.FILL
         }
@@ -99,8 +110,9 @@ fun TerminalView(
     }
     val baselineOffset = remember(textPaint) { -textPaint.fontMetrics.ascent }
 
-    // 自动重算行与列并向 SSH PTY 发送尺寸更新
+    // 自动重算行与列并向 SSH PTY 发送尺寸更新 (加入 250ms 防抖，避免缩放途中的网络与重绘风暴)
     LaunchedEffect(viewSize, charWidth, charHeight) {
+        delay(250)
         if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
             val cols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
             val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
@@ -117,7 +129,7 @@ fun TerminalView(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(session.terminalBuffer.theme.background)
+            .background(if (appTheme.isDark) session.terminalBuffer.theme.background else appTheme.background)
             .onSizeChanged { viewSize = it }
             .pointerInput(charHeight) {
                 awaitEachGesture {
@@ -128,23 +140,21 @@ fun TerminalView(
 
                     do {
                         val event = awaitPointerEvent()
-                        val canceled = event.changes.any { it.isConsumed }
-                        if (canceled) break
-
                         val pointerCount = event.changes.size
-                        val zoom = if (pointerCount >= 2) event.calculateZoom() else 1f
-                        val pan = event.calculatePan()
 
-                        // 1. 双指显著捏合手势检测 (间距比例变化率超过 4%) -> 缩放终端字体大小
-                        if (pointerCount >= 2 && abs(zoom - 1f) > 0.04f) {
+                        if (pointerCount >= 2) {
+                            // 1. 双指状态：立即锁定为捏合缩放模式，绝不误触单指滚动，顺滑跟手 (120Hz 极速响应)
                             isPinching = true
                             hasOperated = true
-                            val currentSize = ThemeManager.terminalFontSizeSp
-                            val newSize = (currentSize * zoom).coerceIn(9f, 26f)
-                            ThemeManager.setTerminalFontSize(newSize)
+                            val zoom = event.calculateZoom()
+                            if (zoom != 1f) {
+                                val updatedSize = (localFontSizeSp * zoom).coerceIn(9f, 26f)
+                                localFontSizeSp = updatedSize
+                            }
                             event.changes.forEach { it.consume() }
                         } else if (!isPinching) {
-                            // 2. 双指平移滑动 或 单指滑动：统一支持平滑回溯翻看终端历史记录
+                            // 2. 仅当单指且未曾进入双指状态时，才处理上下滑动回溯
+                            val pan = event.calculatePan()
                             val moveDelta = abs(pan.y) + abs(pan.x)
                             totalMovement += moveDelta
 
@@ -169,8 +179,13 @@ fun TerminalView(
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 3. 若用户无明显滑动或捏合，判定为单指点击屏幕：唤起输入法并聚焦
-                    if (!hasOperated) {
+                    // 手势完全释放：若发生了捏合缩放，在此处单次持久化存储到全局并对齐到 0.5sp
+                    if (isPinching) {
+                        val roundedSize = (Math.round(localFontSizeSp * 2f) / 2f).coerceIn(9f, 26f)
+                        localFontSizeSp = roundedSize
+                        ThemeManager.setTerminalFontSize(roundedSize)
+                    } else if (!hasOperated) {
+                        // 若用户无明显滑动或捏合，判定为单指点击屏幕：唤起输入法并聚焦
                         try {
                             onTapTerminal?.invoke()
                             focusRequester.requestFocus()
@@ -268,6 +283,10 @@ fun TerminalView(
             val totalHistory = history.size
             val screen = buffer.currentScreen
 
+            val defaultBg = if (appTheme.isDark) theme.background else appTheme.background
+            val defaultFg = if (appTheme.isDark) theme.foreground else appTheme.textPrimary
+            val defaultCursor = if (appTheme.isDark) theme.cursor else appTheme.primary
+
             drawIntoCanvas { canvas ->
                 try {
                     val nativeCanvas = canvas.nativeCanvas
@@ -294,7 +313,7 @@ fun TerminalView(
                             val xPos = c * charWidth
 
                             // 绘制自定义背景色
-                            if (cell.bgColor != Color.Unspecified && cell.bgColor != theme.background) {
+                            if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) {
                                 val bgWidth = if (cell.isWideChar) charWidth * 2f else charWidth + 0.5f
                                 drawRect(
                                     color = cell.bgColor,
@@ -305,7 +324,7 @@ fun TerminalView(
 
                             // 绘制字符
                             if (cell.char != ' ' && cell.char.code > 0) {
-                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else theme.foreground).toArgb()
+                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
                                 textPaint.isFakeBoldText = cell.isBold
                                 textPaint.isUnderlineText = cell.isUnderline
 
@@ -326,7 +345,7 @@ fun TerminalView(
                         val cursorX = safeCol * charWidth
                         val cursorY = safeRow * charHeight
                         drawRect(
-                            color = theme.cursor.copy(alpha = 0.7f),
+                            color = defaultCursor.copy(alpha = 0.7f),
                             topLeft = Offset(cursorX, cursorY),
                             size = Size(charWidth, charHeight)
                         )
@@ -337,45 +356,36 @@ fun TerminalView(
             }
         }
 
-        // 历史回溯悬浮小胶囊 (顶部中央极简半透明提示，绝不遮挡底部键盘与配件条)
+        // 一键回到底部悬浮圆形按钮 (右下方，带圆圈向下箭头，完全不遮挡终端顶部输出)
         AnimatedVisibility(
             visible = scrollOffsetLines > 0,
-            enter = fadeIn() + slideInVertically { -it / 2 },
-            exit = fadeOut() + slideOutVertically { -it / 2 },
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 10.dp)
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 16.dp)
         ) {
-            val appTheme = ThemeManager.currentTheme
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = CircleShape,
                 color = appTheme.surfaceContainerHigh.copy(alpha = 0.95f),
-                border = BorderStroke(1.dp, appTheme.primary.copy(alpha = 0.7f)),
+                border = BorderStroke(1.5.dp, appTheme.primary),
                 shadowElevation = 8.dp,
-                modifier = Modifier.clickable {
-                    scrollOffsetLines = 0
-                    try {
-                        focusRequester.requestFocus()
-                        keyboardController?.show()
-                    } catch (_: Exception) {}
-                }
+                modifier = Modifier
+                    .size(46.dp)
+                    .clickable {
+                        scrollOffsetLines = 0
+                        try {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        } catch (_: Exception) {}
+                    }
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.ArrowDownward,
-                        contentDescription = "To Bottom",
+                        contentDescription = "回到底部",
                         tint = appTheme.primary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "历史输出 (-${scrollOffsetLines}行) • 回到底部",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = appTheme.primary
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }

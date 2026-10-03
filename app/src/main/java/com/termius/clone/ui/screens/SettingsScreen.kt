@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -227,7 +228,9 @@ fun SettingsScreen() {
                             )
 
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 AppTheme.entries.forEach { appTheme ->
@@ -235,31 +238,39 @@ fun SettingsScreen() {
                                     val title = if (LanguageManager.currentLanguage == AppLanguage.ZH) appTheme.titleZh else appTheme.titleEn
 
                                     Surface(
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(12.dp),
                                         color = if (isSelected) appTheme.primary.copy(alpha = 0.15f) else theme.surfaceContainerHigh,
                                         border = androidx.compose.foundation.BorderStroke(
                                             width = if (isSelected) 2.dp else 1.dp,
                                             color = if (isSelected) appTheme.primary else ObsidianOutlineVariant
                                         ),
                                         modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(10.dp))
+                                            .width(96.dp)
+                                            .clip(RoundedCornerShape(12.dp))
                                             .clickable { ThemeManager.setTheme(appTheme) }
                                     ) {
                                         Column(
-                                            modifier = Modifier.padding(8.dp),
+                                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
-                                            // 主题颜色小圆圈
+                                            // 主题颜色渐变圆圈
                                             Box(
                                                 modifier = Modifier
                                                     .size(28.dp)
-                                                    .background(appTheme.primary, CircleShape)
-                                                    .border(2.dp, ObsidianSurfaceContainerLowest, CircleShape),
+                                                    .background(
+                                                        brush = androidx.compose.ui.graphics.Brush.linearGradient(appTheme.previewGradient),
+                                                        shape = CircleShape
+                                                    )
+                                                    .border(1.5.dp, if (isSelected) appTheme.primary else ObsidianOutlineVariant, CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 if (isSelected) {
-                                                    Icon(Icons.Default.Check, contentDescription = null, tint = ObsidianBackground, modifier = Modifier.size(16.dp))
+                                                    Icon(
+                                                        Icons.Default.Check,
+                                                        contentDescription = null,
+                                                        tint = if (appTheme.isDark) Color.Black else Color.White,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
                                                 }
                                             }
                                             Spacer(modifier = Modifier.height(6.dp))
@@ -475,11 +486,12 @@ fun SettingsScreen() {
                             HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
 
                             // 后台常驻服务状态
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Box(
                                             modifier = Modifier
@@ -489,22 +501,30 @@ fun SettingsScreen() {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(Strings.wakeLockStatus, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = ObsidianTextPrimary)
                                     }
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(Strings.wakeLockStatusDesc, fontSize = 11.sp, color = ObsidianTextMuted)
-                                }
 
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = theme.primary.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        text = Strings.runningStatus,
-                                        fontSize = 11.sp,
-                                        color = theme.primary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
+                                    // 紧凑圆润胶囊 Badge
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = theme.primary.copy(alpha = 0.12f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                        ) {
+                                            Box(modifier = Modifier.size(6.dp).background(theme.primary, CircleShape))
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = Strings.runningStatus,
+                                                fontSize = 11.sp,
+                                                color = theme.primary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
                                 }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(Strings.wakeLockStatusDesc, fontSize = 11.sp, color = ObsidianTextMuted)
                             }
 
                             HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
@@ -513,45 +533,56 @@ fun SettingsScreen() {
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                Icons.Default.BatteryChargingFull,
-                                                contentDescription = null,
-                                                tint = if (isIgnoringBattery) theme.primary else ObsidianWarning,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = Strings.batteryOptimizationTitle,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = ObsidianTextPrimary
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.BatteryChargingFull,
+                                            contentDescription = null,
+                                            tint = if (isIgnoringBattery) theme.primary else ObsidianWarning,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = Strings.batteryOptimizationDesc,
-                                            fontSize = 11.sp,
-                                            color = ObsidianTextMuted
+                                            text = Strings.batteryOptimizationTitle,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = ObsidianTextPrimary
                                         )
                                     }
 
+                                    // 紧凑圆润胶囊 Badge (如 ● 无限制 或 ● 受限)
+                                    val badgeColor = if (isIgnoringBattery) theme.primary else ObsidianWarning
                                     Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = if (isIgnoringBattery) theme.primary.copy(alpha = 0.15f) else ObsidianWarning.copy(alpha = 0.15f)
+                                        shape = RoundedCornerShape(50),
+                                        color = badgeColor.copy(alpha = 0.12f),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
                                     ) {
-                                        Text(
-                                            text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
-                                            fontSize = 11.sp,
-                                            color = if (isIgnoringBattery) theme.primary else ObsidianWarning,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                        ) {
+                                            Box(modifier = Modifier.size(6.dp).background(badgeColor, CircleShape))
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
+                                                fontSize = 11.sp,
+                                                color = badgeColor,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                // 描述文字独占整行，彻底告别文字挤压与换行排版混乱
+                                Text(
+                                    text = Strings.batteryOptimizationDesc,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextMuted,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
 
                                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -566,7 +597,10 @@ fun SettingsScreen() {
                                                 isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
                                             },
                                             modifier = Modifier.weight(1f),
-                                            colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = theme.primary,
+                                                contentColor = if (theme.isDark) ObsidianOnPrimary else Color.White
+                                            ),
                                             contentPadding = PaddingValues(vertical = 6.dp)
                                         ) {
                                             Text(Strings.batteryOptimizeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
