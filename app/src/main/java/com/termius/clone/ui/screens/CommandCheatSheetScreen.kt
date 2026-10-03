@@ -144,34 +144,16 @@ fun CommandCheatSheetScreen() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(theme.primary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                                .border(1.dp, theme.primary.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.MenuBook, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
-                        }
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = Strings.cheatsheetTitle,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = ObsidianTextPrimary
-                            )
-                            Text(
-                                text = Strings.cheatsheetSubtitle,
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary
-                            )
-                        }
+                        Text(
+                            text = Strings.cheatsheetTitle,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = ObsidianTextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
 
                         IconButton(onClick = { showAddDialog = true }) {
                             Icon(Icons.Default.Add, contentDescription = Strings.addCustomCommand, tint = theme.primary)
@@ -432,12 +414,12 @@ private fun AddCommandDialog(
                 enabled = title.isNotBlank() && command.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
             ) {
-                Text("保存")
+                Text(Strings.save)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", color = ObsidianTextSecondary)
+                Text(Strings.cancel, color = ObsidianTextSecondary)
             }
         },
         containerColor = theme.surfaceContainerLow

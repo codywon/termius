@@ -36,8 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.termius.clone.data.local.AppDatabase
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.sftp.SftpClientManager
@@ -70,7 +68,7 @@ fun SftpScreen(
     var isLoading by remember { mutableStateOf(false) }
     var isConnected by remember { mutableStateOf(false) }
 
-    // 对话框与操作状态
+    // 弹窗与交互状态
     var showActionMenuFor by remember { mutableStateOf<SftpItem?>(null) }
     var editingItem by remember { mutableStateOf<SftpItem?>(null) }
     var editingContent by remember { mutableStateOf("") }
@@ -99,14 +97,13 @@ fun SftpScreen(
                 items = list
                 currentPath = path
             } catch (e: Exception) {
-                Toast.makeText(context, "加载目录失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, if (Strings.isZh) "加载目录失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
                 isLoading = false
             }
         }
     }
 
-    // 上传文件选取器
     val uploadFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -119,7 +116,7 @@ fun SftpScreen(
 
                     withContext(Dispatchers.IO) {
                         val inputStream = context.contentResolver.openInputStream(uri)
-                            ?: throw IllegalStateException("无法打开所选文件")
+                            ?: throw IllegalStateException(if (Strings.isZh) "无法读取所选文件" else "Cannot open selected file")
                         val tempFile = File(context.cacheDir, fileName)
                         tempFile.outputStream().use { out ->
                             inputStream.copyTo(out)
@@ -130,10 +127,10 @@ fun SftpScreen(
                             tempFile.delete()
                         }
                     }
-                    Toast.makeText(context, "文件上传成功: $fileName", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (Strings.isZh) "文件上传成功: $fileName" else "Uploaded: $fileName", Toast.LENGTH_SHORT).show()
                     loadDir(currentPath)
                 } catch (e: Exception) {
-                    Toast.makeText(context, "上传失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, if (Strings.isZh) "上传失败: ${e.message}" else "Upload failed: ${e.message}", Toast.LENGTH_LONG).show()
                 } finally {
                     isLoading = false
                 }
@@ -151,7 +148,7 @@ fun SftpScreen(
                 selectedHost = host
                 loadDir("/")
             } catch (e: Exception) {
-                Toast.makeText(context, "SFTP 连接失败: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (Strings.isZh) "SFTP 连接失败: ${e.message}" else "Connection failed: ${e.message}", Toast.LENGTH_LONG).show()
                 isConnected = false
             } finally {
                 isLoading = false
@@ -168,7 +165,7 @@ fun SftpScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val theme = LocalAppTheme.current
 
-    // 智能返回键拦截：编辑时退出编辑；子目录时返回上一级；根目录时断开连接
+    // 返回键分级拦截：编辑中退出编辑 ➜ 子目录返回上一级 ➜ 根目录断开连接
     BackHandler(enabled = isConnected) {
         if (editingItem != null) {
             keyboardController?.hide()
@@ -186,6 +183,7 @@ fun SftpScreen(
         }
     }
 
+    // 在线文件编辑全屏界面
     if (editingItem != null) {
         val targetItem = editingItem!!
         Surface(
@@ -208,7 +206,7 @@ fun SftpScreen(
                             keyboardController?.hide()
                             editingItem = null
                         }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = ObsidianTextPrimary)
+                            Icon(Icons.Default.Close, contentDescription = Strings.close, tint = ObsidianTextPrimary)
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -231,7 +229,7 @@ fun SftpScreen(
                         }
 
                         IconButton(onClick = { keyboardController?.hide() }) {
-                            Icon(Icons.Default.KeyboardHide, contentDescription = "Hide Keyboard", tint = ObsidianTextSecondary)
+                            Icon(Icons.Default.KeyboardHide, contentDescription = null, tint = ObsidianTextSecondary)
                         }
 
                         Button(
@@ -245,7 +243,7 @@ fun SftpScreen(
                                         editingItem = null
                                         loadDir(currentPath)
                                     } catch (e: Exception) {
-                                        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (Strings.isZh) "保存失败: ${e.message}" else "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
                                         isSavingEdit = false
                                     }
@@ -266,7 +264,7 @@ fun SftpScreen(
                                     strokeWidth = 2.dp
                                 )
                             } else {
-                                Text("保存", fontWeight = FontWeight.Bold)
+                                Text(Strings.save, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -284,7 +282,7 @@ fun SftpScreen(
                         unfocusedBorderColor = Color.Transparent,
                         focusedTextColor = ObsidianTextPrimary,
                         unfocusedTextColor = ObsidianTextPrimary,
-                        cursorColor = ObsidianPrimary
+                        cursorColor = theme.primary
                     ),
                     textStyle = androidx.compose.ui.text.TextStyle(
                         fontFamily = FontFamily.Monospace,
@@ -305,7 +303,7 @@ fun SftpScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (isConnected) {
@@ -317,7 +315,7 @@ fun SftpScreen(
                                     items = emptyList()
                                 }
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ObsidianTextPrimary)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = Strings.close, tint = ObsidianTextPrimary)
                             }
                         }
 
@@ -327,21 +325,23 @@ fun SftpScreen(
                                 .padding(start = if (isConnected) 0.dp else 12.dp)
                         ) {
                             Text(
-                                text = if (isConnected) "SFTP: ${selectedHost?.label}" else Strings.sftpTitle,
+                                text = if (isConnected) (selectedHost?.label ?: "SFTP") else Strings.sftpTitle,
                                 fontWeight = FontWeight.Bold,
                                 color = ObsidianTextPrimary,
-                                fontSize = 16.sp
+                                fontSize = 17.sp
                             )
-                            Text(
-                                text = if (isConnected) "${selectedHost?.username}@${selectedHost?.hostname}:${selectedHost?.port}" else Strings.sftpSubtitle,
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            if (isConnected) {
+                                Text(
+                                    text = "${selectedHost?.username}@${selectedHost?.hostname}:${selectedHost?.port}",
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
 
                         if (isConnected) {
-                            // 新建/上传操作菜单
+                            // 新建/上传下拉菜单
                             Box {
                                 IconButton(onClick = { showHeaderMenu = true }) {
                                     Icon(Icons.Default.AddCircleOutline, contentDescription = "Actions", tint = theme.primary)
@@ -399,7 +399,7 @@ fun SftpScreen(
                         }
                     }
 
-                    // 分段式交互面包屑导航栏 (Termius 旗舰级分级可点秒跳)
+                    // 分段式面包屑导航栏
                     if (isConnected) {
                         Surface(
                             color = theme.surfaceContainer,
@@ -409,10 +409,10 @@ fun SftpScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState())
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 1. 根目录 /
+                                // 根目录 /
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
                                     color = if (currentPath == "/") theme.primary.copy(alpha = 0.2f) else Color.Transparent,
@@ -426,7 +426,7 @@ fun SftpScreen(
                                     ) {
                                         Icon(
                                             Icons.Default.Folder,
-                                            contentDescription = "Root",
+                                            contentDescription = null,
                                             tint = if (currentPath == "/") theme.primary else ObsidianSecondary,
                                             modifier = Modifier.size(15.dp)
                                         )
@@ -441,7 +441,7 @@ fun SftpScreen(
                                     }
                                 }
 
-                                // 2. 家目录 (~) 快捷直达
+                                // 用户家目录快捷直达 (~)
                                 val userHome = if (selectedHost?.username == "root") "/root" else "/home/${selectedHost?.username ?: "user"}"
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
@@ -460,7 +460,7 @@ fun SftpScreen(
                                     )
                                 }
 
-                                // 3. 逐级路径段 (如 var / log / nginx)
+                                // 逐级目录分段
                                 val segments = currentPath.split("/").filter { it.isNotEmpty() }
                                 segments.forEachIndexed { index, seg ->
                                     Text(
@@ -504,53 +504,64 @@ fun SftpScreen(
                 .padding(innerPadding)
         ) {
             if (!isConnected) {
-                // Host Selection List
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                ) {
-                    Text(Strings.selectHostPrompt, color = ObsidianTextSecondary, fontSize = 13.sp)
-                    Spacer(modifier = Modifier.height(10.dp))
+                // 主机选择列表 (扁平对标 ConnectBot)
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        text = Strings.selectHostPrompt,
+                        color = theme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 8.dp)
+                    )
+
                     if (hosts.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(Strings.noHostsTitle, color = ObsidianTextMuted)
                         }
                     } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(hosts) { host ->
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(hosts, key = { it.id }) { host ->
                                 Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = ObsidianSurfaceContainerLow,
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
+                                    color = Color.Transparent,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable { connectToHost(host) }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(14.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ObsidianSecondary, modifier = Modifier.size(24.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .background(theme.primary.copy(alpha = 0.15f), CircleShape)
+                                                .border(1.dp, theme.primary.copy(alpha = 0.4f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.FolderShared, contentDescription = null, tint = theme.primary, modifier = Modifier.size(20.dp))
+                                        }
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(host.label, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary, fontSize = 15.sp)
-                                            Text("${host.username}@${host.hostname}:${host.port}", color = ObsidianTextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                            Text(host.label.ifBlank { host.hostname }, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary, fontSize = 15.sp)
+                                            Text("sftp://${host.username}@${host.hostname}:${host.port}", color = ObsidianTextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                                         }
                                         Icon(Icons.Default.ChevronRight, contentDescription = null, tint = ObsidianTextMuted)
                                     }
                                 }
+                                HorizontalDivider(color = ObsidianOutlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp)
                             }
                         }
                     }
                 }
             } else {
-                // Remote Files List
+                // 远程文件列表
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Parent Directory item
+                    // 返回上级目录条目
                     if (currentPath != "/") {
                         Surface(
-                            color = ObsidianSurfaceContainerLow,
+                            color = theme.surfaceContainerLow,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
@@ -562,12 +573,12 @@ fun SftpScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ObsidianSecondary, modifier = Modifier.size(16.dp))
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = ObsidianSecondary, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(Strings.parentDirectory, color = ObsidianSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
-                        HorizontalDivider(color = ObsidianOutlineVariant.copy(alpha = 0.5f), thickness = 0.5.dp)
+                        HorizontalDivider(color = ObsidianOutlineVariant.copy(alpha = 0.35f), thickness = 0.5.dp)
                     }
 
                     if (items.isEmpty() && !isLoading) {
@@ -578,7 +589,7 @@ fun SftpScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(48.dp))
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(44.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(Strings.emptyDirectory, color = ObsidianTextMuted, fontSize = 13.sp)
                             }
@@ -590,7 +601,7 @@ fun SftpScreen(
                         ) {
                             items(items, key = { it.path }) { item ->
                                 Surface(
-                                    color = ObsidianBackground,
+                                    color = Color.Transparent,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .combinedClickable(
@@ -599,14 +610,13 @@ fun SftpScreen(
                                                     val next = if (currentPath.endsWith("/")) "$currentPath${item.name}" else "$currentPath/${item.name}"
                                                     loadDir(next)
                                                 } else {
-                                                    // 默认点击文件进入在线查看与编辑
                                                     scope.launch {
                                                         isLoading = true
                                                         try {
                                                             editingContent = sftpManager.readTextFile(item.path)
                                                             editingItem = item
                                                         } catch (e: Exception) {
-                                                            Toast.makeText(context, "无法读取文件 (非纯文本或权限不足): ${e.message}", Toast.LENGTH_SHORT).show()
+                                                            Toast.makeText(context, if (Strings.isZh) "无法读取该文件: ${e.message}" else "Cannot read file: ${e.message}", Toast.LENGTH_SHORT).show()
                                                         } finally {
                                                             isLoading = false
                                                         }
@@ -654,7 +664,6 @@ fun SftpScreen(
                                             )
                                         }
 
-                                        // 更多操作按钮 (下载、编辑、重命名、复制路径、删除)
                                         IconButton(onClick = { showActionMenuFor = item }) {
                                             Icon(
                                                 imageVector = Icons.Default.MoreVert,
@@ -665,7 +674,7 @@ fun SftpScreen(
                                         }
                                     }
                                 }
-                                HorizontalDivider(color = ObsidianOutlineVariant.copy(alpha = 0.4f), thickness = 0.5.dp)
+                                HorizontalDivider(color = ObsidianOutlineVariant.copy(alpha = 0.25f), thickness = 0.5.dp)
                             }
                         }
                     }
@@ -676,16 +685,16 @@ fun SftpScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f)),
+                        .background(Color.Black.copy(alpha = 0.35f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = ObsidianPrimary)
+                    CircularProgressIndicator(color = theme.primary)
                 }
             }
         }
     }
 
-    // 文件操作底栏 / 动作菜单
+    // 单项文件操作弹窗 (对标 ConnectBot 菜单样式)
     showActionMenuFor?.let { item ->
         AlertDialog(
             onDismissRequest = { showActionMenuFor = null },
@@ -717,7 +726,7 @@ fun SftpScreen(
                                         editingContent = sftpManager.readTextFile(item.path)
                                         editingItem = item
                                     } catch (e: Exception) {
-                                        Toast.makeText(context, "无法读取文件: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (Strings.isZh) "无法读取文件: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
                                         isLoading = false
                                     }
@@ -740,7 +749,7 @@ fun SftpScreen(
                                         sftpManager.downloadFile(item.path, localFile)
                                         Toast.makeText(context, "${localFile.name}\n${Strings.downloadSuccess}", Toast.LENGTH_LONG).show()
                                     } catch (e: Exception) {
-                                        Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (Strings.isZh) "下载失败: ${e.message}" else "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
                                         isLoading = false
                                     }
@@ -765,7 +774,7 @@ fun SftpScreen(
                         modifier = Modifier.clickable {
                             showActionMenuFor = null
                             clipboardManager.setText(AnnotatedString(item.path))
-                            Toast.makeText(context, "已复制路径: ${item.path}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, if (Strings.isZh) "已复制路径: ${item.path}" else "Path copied: ${item.path}", Toast.LENGTH_SHORT).show()
                         }
                     )
 
@@ -782,10 +791,10 @@ fun SftpScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showActionMenuFor = null }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },
-            containerColor = ObsidianSurfaceContainerLow
+            containerColor = theme.surfaceContainerLow
         )
     }
 
@@ -796,7 +805,7 @@ fun SftpScreen(
             title = { Text(Strings.rename, color = ObsidianTextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("输入新的名称:", color = ObsidianTextSecondary, fontSize = 12.sp)
+                    Text(if (Strings.isZh) "输入新名称:" else "New name:", color = ObsidianTextSecondary, fontSize = 12.sp)
                     OutlinedTextField(
                         value = renameInput,
                         onValueChange = { renameInput = it },
@@ -817,11 +826,11 @@ fun SftpScreen(
                                     val parentDir = File(targetItem.path).parent ?: "/"
                                     val newRemotePath = if (parentDir.endsWith("/")) "$parentDir$newName" else "$parentDir/$newName"
                                     sftpManager.rename(targetItem.path, newRemotePath)
-                                    Toast.makeText(context, "重命名成功", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "重命名成功" else "Renamed", Toast.LENGTH_SHORT).show()
                                     renamingItem = null
                                     loadDir(currentPath)
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "重命名失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "重命名失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
                                     isLoading = false
                                 }
@@ -835,15 +844,15 @@ fun SftpScreen(
                         contentColor = if (theme.isDark) Color.Black else Color.White
                     )
                 ) {
-                    Text("确定", fontWeight = FontWeight.Bold)
+                    Text(Strings.confirm, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { renamingItem = null }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },
-            containerColor = ObsidianSurfaceContainerLow
+            containerColor = theme.surfaceContainerLow
         )
     }
 
@@ -851,10 +860,11 @@ fun SftpScreen(
     deletingItem?.let { targetItem ->
         AlertDialog(
             onDismissRequest = { deletingItem = null },
-            title = { Text("确认删除", color = ObsidianError, fontWeight = FontWeight.Bold) },
+            title = { Text(if (Strings.isZh) "确认删除" else "Confirm Delete", color = ObsidianError, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    text = "确定要永久删除 ${if (targetItem.isDirectory) "文件夹" else "文件"} \"${targetItem.name}\" 吗？此操作无法撤销。",
+                    text = if (Strings.isZh) "确定要永久删除 ${if (targetItem.isDirectory) "文件夹" else "文件"} \"${targetItem.name}\" 吗？此操作无法撤销。"
+                    else "Delete ${if (targetItem.isDirectory) "folder" else "file"} \"${targetItem.name}\"? This cannot be undone.",
                     color = ObsidianTextPrimary,
                     fontSize = 13.sp
                 )
@@ -870,11 +880,11 @@ fun SftpScreen(
                                 } else {
                                     sftpManager.deleteFile(targetItem.path)
                                 }
-                                Toast.makeText(context, "已删除: ${targetItem.name}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (Strings.isZh) "已删除: ${targetItem.name}" else "Deleted: ${targetItem.name}", Toast.LENGTH_SHORT).show()
                                 deletingItem = null
                                 loadDir(currentPath)
                             } catch (e: Exception) {
-                                Toast.makeText(context, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (Strings.isZh) "删除失败: ${e.message}" else "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             } finally {
                                 isLoading = false
                             }
@@ -882,15 +892,15 @@ fun SftpScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ObsidianError, contentColor = Color.White)
                 ) {
-                    Text("删除", fontWeight = FontWeight.Bold)
+                    Text(Strings.delete, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { deletingItem = null }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },
-            containerColor = ObsidianSurfaceContainerLow
+            containerColor = theme.surfaceContainerLow
         )
     }
 
@@ -901,12 +911,12 @@ fun SftpScreen(
             title = { Text(Strings.createFolder, color = ObsidianTextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("在当前目录新建文件夹:", color = ObsidianTextSecondary, fontSize = 12.sp)
+                    Text(if (Strings.isZh) "文件夹名称:" else "Folder name:", color = ObsidianTextSecondary, fontSize = 12.sp)
                     OutlinedTextField(
                         value = createFolderName,
                         onValueChange = { createFolderName = it },
                         singleLine = true,
-                        placeholder = { Text("文件夹名称") },
+                        placeholder = { Text(if (Strings.isZh) "文件夹名称" else "Folder name") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     )
@@ -922,11 +932,11 @@ fun SftpScreen(
                                 try {
                                     val newPath = if (currentPath.endsWith("/")) "$currentPath$name" else "$currentPath/$name"
                                     sftpManager.createDirectory(newPath)
-                                    Toast.makeText(context, "文件夹创建成功", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "文件夹创建成功" else "Folder created", Toast.LENGTH_SHORT).show()
                                     showCreateFolderDialog = false
                                     loadDir(currentPath)
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "创建文件夹失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "创建文件夹失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
                                     isLoading = false
                                 }
@@ -938,15 +948,15 @@ fun SftpScreen(
                         contentColor = if (theme.isDark) Color.Black else Color.White
                     )
                 ) {
-                    Text("创建", fontWeight = FontWeight.Bold)
+                    Text(Strings.create, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateFolderDialog = false }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },
-            containerColor = ObsidianSurfaceContainerLow
+            containerColor = theme.surfaceContainerLow
         )
     }
 
@@ -957,12 +967,12 @@ fun SftpScreen(
             title = { Text(Strings.createFile, color = ObsidianTextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("在当前目录新建空白文件:", color = ObsidianTextSecondary, fontSize = 12.sp)
+                    Text(if (Strings.isZh) "文件名称:" else "File name:", color = ObsidianTextSecondary, fontSize = 12.sp)
                     OutlinedTextField(
                         value = createFileName,
                         onValueChange = { createFileName = it },
                         singleLine = true,
-                        placeholder = { Text("例如 script.sh 或 config.json") },
+                        placeholder = { Text("如 script.sh 或 config.json") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     )
@@ -978,11 +988,11 @@ fun SftpScreen(
                                 try {
                                     val newPath = if (currentPath.endsWith("/")) "$currentPath$name" else "$currentPath/$name"
                                     sftpManager.createEmptyFile(newPath)
-                                    Toast.makeText(context, "文件创建成功", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "文件创建成功" else "File created", Toast.LENGTH_SHORT).show()
                                     showCreateFileDialog = false
                                     loadDir(currentPath)
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "创建文件失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "创建文件失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
                                     isLoading = false
                                 }
@@ -994,15 +1004,15 @@ fun SftpScreen(
                         contentColor = if (theme.isDark) Color.Black else Color.White
                     )
                 ) {
-                    Text("创建", fontWeight = FontWeight.Bold)
+                    Text(Strings.create, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateFileDialog = false }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },
-            containerColor = ObsidianSurfaceContainerLow
+            containerColor = theme.surfaceContainerLow
         )
     }
 }

@@ -1,19 +1,16 @@
 package com.termius.clone.ui.screens
 
 import android.widget.Toast
-import kotlin.math.abs
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -40,6 +37,7 @@ import com.termius.clone.util.LanguageManager
 import com.termius.clone.util.Strings
 import com.termius.clone.util.UpdateCheckResult
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @Composable
 fun SettingsScreen() {
@@ -57,6 +55,8 @@ fun SettingsScreen() {
     var sshKeepaliveEnabled by remember { mutableStateOf(true) }
     var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
     var showBatteryGuideDialog by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
 
     val theme = LocalAppTheme.current
 
@@ -65,652 +65,431 @@ fun SettingsScreen() {
         color = theme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 顶部沉浸式标题栏 (紧凑无缝贴顶)
+            // 顶部极简标题栏 (参考 ConnectBot 简洁原生风)
             Surface(color = theme.surfaceContainerLow) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .background(theme.primary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                            .border(1.dp, theme.primary.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = null, tint = theme.primary, modifier = Modifier.size(20.dp))
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = Strings.settingsTitle,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = Strings.settingsSubtitle,
-                            fontSize = 11.sp,
-                            color = ObsidianTextSecondary
-                        )
-                    }
+                    Text(
+                        text = Strings.settingsTitle,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = ObsidianTextPrimary
+                    )
                 }
             }
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+            // 扁平原生分组设置列表 (对标 ConnectBot)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
             ) {
-                // 1. 凭据与钥匙串 (Vault) 区块
-                item {
-                    SettingsCard(title = Strings.sectionVault, icon = Icons.Default.VpnKey) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${identities.size} ${Strings.identitiesCount}",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = ObsidianTextPrimary
-                                    )
-                                    Text(
-                                        text = Strings.sectionVaultDesc,
-                                        fontSize = 11.sp,
-                                        color = ObsidianTextMuted
-                                    )
-                                }
+                // ---------------- 1. 界面与外观 ----------------
+                SettingsSectionHeader(title = Strings.groupAppearance)
 
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    TextButton(
-                                        onClick = { isVaultExpanded = !isVaultExpanded },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = if (isVaultExpanded) Strings.collapseLabel else Strings.viewLabel,
-                                            color = theme.primary,
-                                            fontSize = 12.sp
-                                        )
-                                    }
-
-                                    FilledTonalButton(
-                                        onClick = { showAddIdentityDialog = true },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                        colors = ButtonDefaults.filledTonalButtonColors(
-                                            containerColor = theme.primary.copy(alpha = 0.2f),
-                                            contentColor = theme.primary
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(Strings.newLabel, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-
-                            // 展开的凭据列表
-                            AnimatedVisibility(visible = isVaultExpanded) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    if (identities.isEmpty()) {
-                                        Text(
-                                            text = "暂无保存的凭据，点击右上角「新建」添加",
-                                            fontSize = 12.sp,
-                                            color = ObsidianTextMuted,
-                                            modifier = Modifier.padding(vertical = 8.dp)
-                                        )
-                                    } else {
-                                        identities.forEach { identity ->
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = ObsidianSurfaceContainerLowest,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        if (identity.privateKey.isNotEmpty()) Icons.Default.Key else Icons.Default.Password,
-                                                        contentDescription = null,
-                                                        tint = theme.primary,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Column(modifier = Modifier.weight(1f)) {
-                                                        Text(identity.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary)
-                                                        Text(
-                                                            text = "用户: ${identity.username} • ${if (identity.privateKey.isNotEmpty()) "SSH Key (${identity.keyType})" else "密码认证"}",
-                                                            fontSize = 10.sp,
-                                                            color = ObsidianTextSecondary,
-                                                            fontFamily = FontFamily.Monospace
-                                                        )
-                                                    }
-                                                    IconButton(
-                                                        onClick = {
-                                                            scope.launch { db.identityDao().deleteIdentity(identity) }
-                                                        },
-                                                        modifier = Modifier.size(24.dp)
-                                                    ) {
-                                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ObsidianError, modifier = Modifier.size(16.dp))
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 2. 外观与主题配色区块
-                item {
-                    SettingsCard(title = Strings.sectionAppearance, icon = Icons.Default.Palette) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "选择终端极客主题配色 (即时生效)",
-                                fontSize = 11.sp,
-                                color = ObsidianTextMuted,
-                                modifier = Modifier.padding(bottom = 10.dp)
-                            )
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                AppTheme.entries.forEach { appTheme ->
-                                    val isSelected = theme == appTheme
-                                    val title = if (LanguageManager.currentLanguage == AppLanguage.ZH) appTheme.titleZh else appTheme.titleEn
-
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isSelected) appTheme.primary.copy(alpha = 0.15f) else theme.surfaceContainerHigh,
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            width = if (isSelected) 2.dp else 1.dp,
-                                            color = if (isSelected) appTheme.primary else ObsidianOutlineVariant
-                                        ),
-                                        modifier = Modifier
-                                            .width(96.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable { ThemeManager.setTheme(appTheme) }
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            // 主题颜色渐变圆圈
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(28.dp)
-                                                    .background(
-                                                        brush = androidx.compose.ui.graphics.Brush.linearGradient(appTheme.previewGradient),
-                                                        shape = CircleShape
-                                                    )
-                                                    .border(1.5.dp, if (isSelected) appTheme.primary else ObsidianOutlineVariant, CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                if (isSelected) {
-                                                    Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = null,
-                                                        tint = if (appTheme.isDark) Color.Black else Color.White,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
-                                            }
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = title,
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) appTheme.primary else ObsidianTextSecondary,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(16.dp))
-                            HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // 终端字体大小调节
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = Strings.terminalFontSizeTitle,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = ObsidianTextPrimary
-                                    )
-                                    Text(
-                                        text = Strings.terminalFontSizeDesc,
-                                        fontSize = 11.sp,
-                                        color = ObsidianTextMuted
-                                    )
-                                }
-
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = theme.primary.copy(alpha = 0.15f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.5f))
-                                ) {
-                                    Text(
-                                        text = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = theme.primary,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // 字体快捷档位 Chips 与 +/- 微调
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                FilledTonalIconButton(
-                                    onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp - 1f) },
-                                    modifier = Modifier.size(32.dp),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = theme.surfaceContainerHigh,
-                                        contentColor = ObsidianTextPrimary
-                                    )
-                                ) {
-                                    Icon(Icons.Default.Remove, contentDescription = "Decrease", modifier = Modifier.size(16.dp))
-                                }
-
-                                val fontPresets = listOf(11f, 13f, 15f, 17f, 20f)
-                                fontPresets.forEach { size ->
-                                    val isSelected = abs(ThemeManager.terminalFontSizeSp - size) < 0.4f
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isSelected) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainerHigh,
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
-                                        onClick = { ThemeManager.setTerminalFontSize(size) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(vertical = 6.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "${size.toInt()} SP",
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) theme.primary else ObsidianTextSecondary
-                                            )
-                                        }
-                                    }
-                                }
-
-                                FilledTonalIconButton(
-                                    onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp + 1f) },
-                                    modifier = Modifier.size(32.dp),
-                                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                        containerColor = theme.surfaceContainerHigh,
-                                        contentColor = ObsidianTextPrimary
-                                    )
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Increase", modifier = Modifier.size(16.dp))
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // 实时效果预览盒
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = ObsidianSurfaceContainerLowest,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                    Text(
-                                        text = "${Strings.fontPreviewLabel}:",
-                                        fontSize = 10.sp,
-                                        color = ObsidianTextMuted
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "root@teamx:~# docker ps\nweb-proxy   Up 18h   0.0.0.0:443",
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = ThemeManager.terminalFontSizeSp.sp,
-                                        lineHeight = (ThemeManager.terminalFontSizeSp * 1.35f).sp,
-                                        color = theme.primary
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. 语言切换区块 (解决卡片大小不对称与挤压折行问题)
-                item {
-                    SettingsCard(title = Strings.sectionLanguage, icon = Icons.Default.Language) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AppLanguage.entries.forEach { lang ->
-                                val isSelected = LanguageManager.currentLanguage == lang
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isSelected) theme.primary.copy(alpha = 0.12f) else theme.surfaceContainerHigh,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        width = if (isSelected) 1.5.dp else 1.dp,
-                                        color = if (isSelected) theme.primary else ObsidianOutlineVariant
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable { LanguageManager.setLanguage(lang) }
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = lang.titleZh,
-                                                fontSize = 14.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = ObsidianTextPrimary
-                                            )
-                                            Text(
-                                                text = lang.titleEn,
-                                                fontSize = 11.sp,
-                                                color = ObsidianTextMuted
-                                            )
-                                        }
-
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = { LanguageManager.setLanguage(lang) },
-                                            colors = RadioButtonDefaults.colors(
-                                                selectedColor = theme.primary,
-                                                unselectedColor = ObsidianTextMuted
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 4. 连接与保活设置区块
-                item {
-                    SettingsCard(title = Strings.sectionKeepalive, icon = Icons.Default.Bolt) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            // 保活心跳开关
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(Strings.keepalivePing, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = ObsidianTextPrimary)
-                                    Text(Strings.keepalivePingDesc, fontSize = 11.sp, color = ObsidianTextMuted)
-                                }
-                                Switch(
-                                    checked = sshKeepaliveEnabled,
-                                    onCheckedChange = { sshKeepaliveEnabled = it },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = theme.primary,
-                                        checkedTrackColor = theme.primary.copy(alpha = 0.3f)
-                                    )
+                // 配色主题
+                SettingsItem(
+                    title = Strings.sectionAppearance,
+                    subtitle = if (Strings.isZh) theme.titleZh else theme.titleEn,
+                    onClick = { showThemeDialog = true },
+                    trailingContent = {
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.linearGradient(theme.previewGradient),
+                                    shape = CircleShape
                                 )
-                            }
-
-                            HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
-
-                            // 后台常驻服务状态
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .background(theme.primary, CircleShape)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(Strings.wakeLockStatus, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = ObsidianTextPrimary)
-                                    }
-
-                                    // 紧凑圆润胶囊 Badge
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = theme.primary.copy(alpha = 0.12f),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                        ) {
-                                            Box(modifier = Modifier.size(6.dp).background(theme.primary, CircleShape))
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                            Text(
-                                                text = Strings.runningStatus,
-                                                fontSize = 11.sp,
-                                                color = theme.primary,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(Strings.wakeLockStatusDesc, fontSize = 11.sp, color = ObsidianTextMuted)
-                            }
-
-                            HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
-
-                            // 电池后台优化白名单状态 (解决息屏中断核心)
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            Icons.Default.BatteryChargingFull,
-                                            contentDescription = null,
-                                            tint = if (isIgnoringBattery) theme.primary else ObsidianWarning,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = Strings.batteryOptimizationTitle,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = ObsidianTextPrimary
-                                        )
-                                    }
-
-                                    // 紧凑圆润胶囊 Badge (如 ● 无限制 或 ● 受限)
-                                    val badgeColor = if (isIgnoringBattery) theme.primary else ObsidianWarning
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = badgeColor.copy(alpha = 0.12f),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                        ) {
-                                            Box(modifier = Modifier.size(6.dp).background(badgeColor, CircleShape))
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                            Text(
-                                                text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
-                                                fontSize = 11.sp,
-                                                color = badgeColor,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-                                // 描述文字独占整行，彻底告别文字挤压与换行排版混乱
-                                Text(
-                                    text = Strings.batteryOptimizationDesc,
-                                    fontSize = 11.sp,
-                                    color = ObsidianTextMuted,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    if (!isIgnoringBattery) {
-                                        Button(
-                                            onClick = {
-                                                BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
-                                                isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = theme.primary,
-                                                contentColor = if (theme.isDark) ObsidianOnPrimary else Color.White
-                                            ),
-                                            contentPadding = PaddingValues(vertical = 6.dp)
-                                        ) {
-                                            Text(Strings.batteryOptimizeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = { showBatteryGuideDialog = true },
-                                        modifier = if (!isIgnoringBattery) Modifier.wrapContentWidth() else Modifier.fillMaxWidth(),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.Default.HelpOutline, contentDescription = null, tint = ObsidianTextSecondary, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(Strings.batteryGuideBtn, fontSize = 12.sp, color = ObsidianTextSecondary)
-                                    }
-                                }
-                            }
-                        }
+                                .border(1.dp, ObsidianOutlineVariant, CircleShape)
+                        )
                     }
-                }
+                )
+                DividerLine()
 
-                // 5. 关于与更新区块 (严格包含 Powered by codywon 与 TermX Mobile)
-                item {
-                    SettingsCard(title = Strings.sectionAbout, icon = Icons.Default.Info) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(theme.primary.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                                    .border(1.dp, theme.primary.copy(alpha = 0.6f), RoundedCornerShape(12.dp)),
-                                contentAlignment = Alignment.Center
+                // 终端字号
+                SettingsItem(
+                    title = Strings.terminalFontSizeTitle,
+                    subtitle = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
+                    trailingContent = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FilledTonalIconButton(
+                                onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp - 1f) },
+                                modifier = Modifier.size(28.dp),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = theme.surfaceContainerHigh,
+                                    contentColor = ObsidianTextPrimary
+                                )
                             ) {
-                                Icon(Icons.Default.Terminal, contentDescription = null, tint = theme.primary, modifier = Modifier.size(26.dp))
+                                Icon(Icons.Default.Remove, contentDescription = "Decrease", modifier = Modifier.size(14.dp))
                             }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "TermX Mobile",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-
-                            Spacer(modifier = Modifier.height(2.dp))
-
-                            Text(
-                                text = "Powered by codywon",
+                                text = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
                                 color = theme.primary
                             )
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
-                            Text(
-                                text = "${Strings.currentVersionLabel}: v$versionName",
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary,
-                                fontFamily = FontFamily.Monospace
-                            )
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            Button(
-                                onClick = {
-                                    if (isCheckingUpdate) return@Button
-                                    isCheckingUpdate = true
-                                    scope.launch {
-                                        Toast.makeText(context, "正在测速检测新版本...", Toast.LENGTH_SHORT).show()
-                                        when (val result = AppUpdateManager.checkUpdate(context, isManual = true)) {
-                                            is UpdateCheckResult.HasUpdate -> {
-                                                updateUiState = UpdateUiState.HasUpdate(result.info)
-                                            }
-                                            is UpdateCheckResult.NoUpdate -> {
-                                                Toast.makeText(context, "已是最新版本 (v${result.currentVersion})", Toast.LENGTH_SHORT).show()
-                                            }
-                                            is UpdateCheckResult.Error -> {
-                                                Toast.makeText(context, "检查更新失败: ${result.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                            else -> {}
-                                        }
-                                        isCheckingUpdate = false
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilledTonalIconButton(
+                                onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp + 1f) },
+                                modifier = Modifier.size(28.dp),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = theme.surfaceContainerHigh,
+                                    contentColor = ObsidianTextPrimary
+                                )
                             ) {
-                                Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (isCheckingUpdate) "检测中..." else Strings.checkUpdateBtn, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.Add, contentDescription = "Increase", modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                )
+                DividerLine()
+
+                // 界面语言
+                SettingsItem(
+                    title = Strings.sectionLanguage,
+                    subtitle = if (Strings.isZh) "简体中文" else "English",
+                    onClick = { showLanguageDialog = true },
+                    trailingContent = {
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(18.dp))
+                    }
+                )
+                DividerLine()
+
+                // ---------------- 2. 凭据管理 ----------------
+                SettingsSectionHeader(title = Strings.groupCredentials)
+
+                SettingsItem(
+                    title = Strings.sectionVault,
+                    subtitle = "${identities.size} ${Strings.identitiesCount}",
+                    onClick = { isVaultExpanded = !isVaultExpanded },
+                    trailingContent = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = { showAddIdentityDialog = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text(Strings.newLabel, fontSize = 12.sp, color = theme.primary)
+                            }
+                            Icon(
+                                if (isVaultExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = ObsidianTextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                )
+
+                // 凭据展开列表
+                AnimatedVisibility(visible = isVaultExpanded) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(theme.surfaceContainerLow)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (identities.isEmpty()) {
+                            Text(
+                                text = if (Strings.isZh) "暂无保存的凭据，点击右侧「新建」添加" else "No saved credentials. Tap New to add.",
+                                fontSize = 12.sp,
+                                color = ObsidianTextMuted,
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        } else {
+                            identities.forEach { identity ->
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = theme.surfaceContainer,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            if (identity.privateKey.isNotEmpty()) Icons.Default.Key else Icons.Default.Password,
+                                            contentDescription = null,
+                                            tint = theme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(identity.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary)
+                                            Text(
+                                                text = "${identity.username} • ${if (identity.privateKey.isNotEmpty()) "SSH Key (${identity.keyType})" else "密码"}",
+                                                fontSize = 11.sp,
+                                                color = ObsidianTextSecondary,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { scope.launch { db.identityDao().deleteIdentity(identity) } },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ObsidianError, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                DividerLine()
 
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                // ---------------- 3. 连接与保活 (对标 ConnectBot) ----------------
+                SettingsSectionHeader(title = Strings.groupConnection)
+
+                // SSH 心跳保持
+                SettingsItem(
+                    title = Strings.keepalivePing,
+                    subtitle = Strings.keepalivePingDesc,
+                    trailingContent = {
+                        Switch(
+                            checked = sshKeepaliveEnabled,
+                            onCheckedChange = { sshKeepaliveEnabled = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = theme.primary,
+                                checkedTrackColor = theme.primary.copy(alpha = 0.3f)
+                            )
+                        )
+                    }
+                )
+                DividerLine()
+
+                // 后台常驻服务
+                SettingsItem(
+                    title = Strings.wakeLockStatus,
+                    subtitle = Strings.wakeLockStatusDesc,
+                    trailingContent = {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = theme.primary.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Box(modifier = Modifier.size(5.dp).background(theme.primary, CircleShape))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = Strings.runningStatus,
+                                    fontSize = 11.sp,
+                                    color = theme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                )
+                DividerLine()
+
+                // 电池优化
+                val badgeColor = if (isIgnoringBattery) theme.primary else ObsidianWarning
+                SettingsItem(
+                    title = Strings.batteryOptimizationTitle,
+                    subtitle = Strings.batteryOptimizationDesc,
+                    onClick = {
+                        BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
+                        isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                    },
+                    trailingContent = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = badgeColor.copy(alpha = 0.12f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Box(modifier = Modifier.size(5.dp).background(badgeColor, CircleShape))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
+                                        fontSize = 11.sp,
+                                        color = badgeColor,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { showBatteryGuideDialog = true },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                )
+                DividerLine()
+
+                // ---------------- 4. 关于 ----------------
+                SettingsSectionHeader(title = Strings.groupAbout)
+
+                val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
+                SettingsItem(
+                    title = "TermX Mobile",
+                    subtitle = "v$versionName • ${Strings.poweredBy}",
+                    trailingContent = {
+                        TextButton(
+                            onClick = {
+                                if (isCheckingUpdate) return@TextButton
+                                isCheckingUpdate = true
+                                scope.launch {
+                                    Toast.makeText(context, if (Strings.isZh) "正在检查更新..." else "Checking...", Toast.LENGTH_SHORT).show()
+                                    when (val result = AppUpdateManager.checkUpdate(context, isManual = true)) {
+                                        is UpdateCheckResult.HasUpdate -> {
+                                            updateUiState = UpdateUiState.HasUpdate(result.info)
+                                        }
+                                        is UpdateCheckResult.NoUpdate -> {
+                                            Toast.makeText(context, if (Strings.isZh) "已是最新版本 (v${result.currentVersion})" else "Latest version (v${result.currentVersion})", Toast.LENGTH_SHORT).show()
+                                        }
+                                        is UpdateCheckResult.Error -> {
+                                            Toast.makeText(context, if (Strings.isZh) "检查更新失败: ${result.message}" else "Failed: ${result.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                        else -> {}
+                                    }
+                                    isCheckingUpdate = false
+                                }
+                            }
+                        ) {
+                            Text(
+                                text = if (isCheckingUpdate) (if (Strings.isZh) "检测中" else "Checking") else Strings.checkUpdateBtn,
+                                fontSize = 12.sp,
+                                color = theme.primary
+                            )
+                        }
+                    }
+                )
+                DividerLine()
+
+                Spacer(modifier = Modifier.height(30.dp))
             }
         }
     }
 
-    // 在线自动升级对话框 (支持多镜像并发测速与最优路径流式下载)
+    // 主题切换对话框
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text(Strings.sectionAppearance, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppTheme.entries.forEach { appTheme ->
+                        val isSelected = theme == appTheme
+                        val title = if (Strings.isZh) appTheme.titleZh else appTheme.titleEn
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) appTheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, appTheme.primary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ThemeManager.setTheme(appTheme)
+                                    showThemeDialog = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .background(
+                                            brush = androidx.compose.ui.graphics.Brush.linearGradient(appTheme.previewGradient),
+                                            shape = CircleShape
+                                        )
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = title,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ObsidianTextPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isSelected) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = appTheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
+    }
+
+    // 语言选择对话框
+    if (showLanguageDialog) {
+        AlertDialog(
+            onDismissRequest = { showLanguageDialog = false },
+            title = { Text(Strings.sectionLanguage, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppLanguage.entries.forEach { lang ->
+                        val isSelected = LanguageManager.currentLanguage == lang
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) theme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    LanguageManager.setLanguage(lang)
+                                    showLanguageDialog = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = lang.titleZh,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ObsidianTextPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isSelected) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showLanguageDialog = false }) {
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
+    }
+
+    // 在线升级对话框
     AppUpdateDialog(
         state = updateUiState,
         onStartDownload = { info ->
@@ -757,7 +536,7 @@ fun SettingsScreen() {
         }
     )
 
-    // 添加凭据对话框 (默认用户名设为 root)
+    // 添加凭据对话框 (默认用户名 root)
     if (showAddIdentityDialog) {
         AddIdentityDialog(
             onDismiss = { showAddIdentityDialog = false },
@@ -765,13 +544,13 @@ fun SettingsScreen() {
                 scope.launch {
                     db.identityDao().insertIdentity(identity)
                     showAddIdentityDialog = false
-                    Toast.makeText(context, "凭据已安全保存", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (Strings.isZh) "凭据已保存" else "Saved", Toast.LENGTH_SHORT).show()
                 }
             }
         )
     }
 
-    // 电池后台优化与系统保活指南弹窗
+    // 保活说明指南弹窗
     if (showBatteryGuideDialog) {
         AlertDialog(
             onDismissRequest = { showBatteryGuideDialog = false },
@@ -779,7 +558,7 @@ fun SettingsScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Shield, contentDescription = null, tint = theme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "系统后台长连接保活指南" else "Background Keepalive Guide", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(if (Strings.isZh) "系统后台保活指引" else "Keepalive Guide", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             },
             text = {
@@ -787,37 +566,29 @@ fun SettingsScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = if (LanguageManager.currentLanguage == AppLanguage.ZH)
-                            "Android 系统的电池优化策略会在手机息屏后休眠 Wi-Fi 与限制网络，导致后台 SSH 管道中断。为保证终端 24 小时后台稳定连接，请按如下指引设置："
+                        text = if (Strings.isZh)
+                            "Android 系统默认会在手机锁屏休眠后限制网络。若需保持后台长时间不掉线，请设置："
                         else
-                            "Android system battery optimizations may sleep Wi-Fi when screen is off, breaking SSH connections. Please configure as follows:",
+                            "Android locks out background connections when idle. Please allow unconstrained background execution:",
                         fontSize = 12.sp,
                         color = ObsidianTextSecondary,
-                        lineHeight = 18.sp
+                        lineHeight = 17.sp
                     )
 
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = ObsidianSurfaceContainerLowest,
-                        border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = if (LanguageManager.currentLanguage == AppLanguage.ZH) "📱 各大手机厂商配置要点：" else "📱 Key steps for OEM systems:",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = theme.primary
-                            )
-                            Text("• 小米 / 澎湃 OS：系统设置 ➜ 应用管理 ➜ TermX Mobile ➜ 省电策略选【无限制】，并开启【自启动】与【后台弹出界面】", fontSize = 11.sp, color = ObsidianTextPrimary)
-                            Text("• 华为 / 荣耀：系统设置 ➜ 电池 ➜ 应用启动管理 ➜ TermX Mobile 改为【手动管理】，勾选【允许自启动】与【允许后台活动】", fontSize = 11.sp, color = ObsidianTextPrimary)
-                            Text("• OPPO / 一加 / realme：系统设置 ➜ 电池 ➜ 耗电异常优化 ➜ TermX Mobile 选【不优化】；应用管理中允许完全后台行为", fontSize = 11.sp, color = ObsidianTextPrimary)
-                            Text("• vivo / iQOO：系统设置 ➜ 电池 ➜ 后台耗电管理 ➜ TermX Mobile 勾选【允许高耗电】", fontSize = 11.sp, color = ObsidianTextPrimary)
-                            Text("• 原生 Android / 三星：系统设置 ➜ 应用 ➜ TermX Mobile ➜ 电池 ➜ 选择【不受限制】(Unrestricted)", fontSize = 11.sp, color = ObsidianTextPrimary)
-                            Text("• 任务卡片加锁：在多任务列表长按或下拉 TermX Mobile 卡片，点击【加锁】，防止被系统一键清理", fontSize = 11.sp, color = theme.primary)
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("• 小米/澎湃：省电策略选【无限制】，开启【自启动】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 华为/荣耀：应用启动管理选【手动管理】，允许后台活动", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• OPPO/vivo：电池管理允许【高耗电】或【不优化】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 原生/三星：应用信息 ➜ 电池 ➜ 设为【不受限制】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 多任务加锁：多任务界面长按 TermX Mobile 卡片加锁", fontSize = 11.sp, color = theme.primary)
                         }
                     }
                 }
@@ -830,12 +601,12 @@ fun SettingsScreen() {
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
                 ) {
-                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "前往系统设置" else "Open App Settings")
+                    Text(if (Strings.isZh) "前往系统设置" else "Settings")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showBatteryGuideDialog = false }) {
-                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "知道了" else "Close", color = ObsidianTextSecondary)
+                    Text(Strings.close, color = ObsidianTextSecondary)
                 }
             },
             containerColor = theme.surfaceContainerLow
@@ -844,28 +615,69 @@ fun SettingsScreen() {
 }
 
 @Composable
-private fun SettingsCard(
-    title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    content: @Composable () -> Unit
-) {
+private fun SettingsSectionHeader(title: String) {
     val theme = LocalAppTheme.current
+    Text(
+        text = title,
+        color = theme.primary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)
+    )
+}
 
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = theme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+@Composable
+private fun SettingsItem(
+    title: String,
+    subtitle: String? = null,
+    onClick: (() -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null
+) {
+    val modifier = if (onClick != null) {
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 11.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 11.dp)
+    }
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ObsidianTextPrimary)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = ObsidianTextPrimary
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 12.sp,
+                    color = ObsidianTextSecondary,
+                    lineHeight = 16.sp
+                )
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            content()
+        }
+        if (trailingContent != null) {
+            Spacer(modifier = Modifier.width(12.dp))
+            trailingContent()
         }
     }
+}
+
+@Composable
+private fun DividerLine() {
+    HorizontalDivider(
+        color = ObsidianOutlineVariant.copy(alpha = 0.35f),
+        thickness = 0.5.dp
+    )
 }
 
 @Composable
@@ -874,34 +686,33 @@ private fun AddIdentityDialog(
     onSave: (IdentityEntity) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("root") } // 默认用户名 root
+    var username by remember { mutableStateOf("root") }
     var password by remember { mutableStateOf("") }
     var privateKey by remember { mutableStateOf("") }
     var passphrase by remember { mutableStateOf("") }
-    var authMode by remember { mutableStateOf(0) } // 0: Password, 1: Key
+    var authMode by remember { mutableStateOf(0) }
     val theme = LocalAppTheme.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建身份与密钥凭据", fontWeight = FontWeight.Bold, color = ObsidianTextPrimary) },
+        title = { Text(if (Strings.isZh) "新建凭据" else "New Credential", fontWeight = FontWeight.Bold, color = ObsidianTextPrimary) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("凭据标签 (如: 生产集群 Root)") },
+                    label = { Text(if (Strings.isZh) "凭据名称" else "Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("用户名 (默认: root)") },
+                    label = { Text(if (Strings.isZh) "用户名 (默认: root)" else "Username") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // 认证方式 Tab
                 TabRow(
                     selectedTabIndex = authMode,
                     containerColor = ObsidianSurfaceContainerLowest,
@@ -910,12 +721,12 @@ private fun AddIdentityDialog(
                     Tab(
                         selected = authMode == 0,
                         onClick = { authMode = 0 },
-                        text = { Text("密码认证", fontSize = 12.sp) }
+                        text = { Text(if (Strings.isZh) "密码认证" else "Password", fontSize = 12.sp) }
                     )
                     Tab(
                         selected = authMode == 1,
                         onClick = { authMode = 1 },
-                        text = { Text("SSH 私钥", fontSize = 12.sp) }
+                        text = { Text(if (Strings.isZh) "SSH 私钥" else "SSH Key", fontSize = 12.sp) }
                     )
                 }
 
@@ -923,7 +734,7 @@ private fun AddIdentityDialog(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("SSH 密码") },
+                        label = { Text(if (Strings.isZh) "密码" else "Password") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -932,14 +743,14 @@ private fun AddIdentityDialog(
                     OutlinedTextField(
                         value = privateKey,
                         onValueChange = { privateKey = it },
-                        label = { Text("私钥内容 (OpenSSH / RSA / Ed25519)") },
+                        label = { Text(if (Strings.isZh) "私钥内容 (OpenSSH / RSA / Ed25519)" else "Private Key") },
                         maxLines = 4,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text("密钥密码短语 Passphrase (选填)") },
+                        label = { Text(if (Strings.isZh) "密码短语 Passphrase (选填)" else "Passphrase") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -970,12 +781,12 @@ private fun AddIdentityDialog(
                 enabled = name.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
             ) {
-                Text("保存凭据")
+                Text(Strings.save)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", color = ObsidianTextSecondary)
+                Text(Strings.cancel, color = ObsidianTextSecondary)
             }
         },
         containerColor = theme.surfaceContainerLow

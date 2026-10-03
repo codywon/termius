@@ -5,8 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +35,7 @@ import com.termius.clone.data.model.AuthType
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.data.model.IdentityEntity
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,32 +53,30 @@ fun EditHostDialog(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
+    val theme = LocalAppTheme.current
 
     var label by remember { mutableStateOf(hostToEdit?.label ?: "") }
     var hostname by remember { mutableStateOf(hostToEdit?.hostname ?: "") }
     var portText by remember { mutableStateOf(hostToEdit?.port?.toString() ?: "22") }
     var username by remember { mutableStateOf(hostToEdit?.username ?: "root") }
-    // 默认认证方式设为 PASSWORD，避免用户未填私钥保存导致的连接失败
     var authType by remember { mutableStateOf(hostToEdit?.authType ?: AuthType.PASSWORD) }
     var password by remember { mutableStateOf(hostToEdit?.password ?: "") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var privateKey by remember { mutableStateOf(hostToEdit?.privateKey ?: "") }
     var passphrase by remember { mutableStateOf(hostToEdit?.passphrase ?: "") }
     var selectedIdentityId by remember { mutableStateOf(hostToEdit?.identityId) }
-    var groupName by remember { mutableStateOf(hostToEdit?.groupName ?: "Production") }
+    var groupName by remember { mutableStateOf(hostToEdit?.groupName ?: "") }
     var selectedColor by remember { mutableStateOf(hostToEdit?.colorTag ?: "#67DF70") }
 
     var isAdvancedExpanded by remember { mutableStateOf(false) }
     var keepAliveSec by remember { mutableStateOf("30") }
     var isBackgroundKeepAlive by remember { mutableStateOf(true) }
 
-    // Handshake 测试状态
     var isTestingHandshake by remember { mutableStateOf(false) }
     var handshakeResult by remember { mutableStateOf<String?>(null) }
     var handshakeSuccess by remember { mutableStateOf(false) }
 
     val presetColors = listOf("#67DF70", "#A2C9FF", "#D6ACFF", "#FABC45", "#FF6E6E")
-    val presetTags = listOf("All", "Production", "Docker", "Staging", "AWS", "K8s")
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -88,7 +87,7 @@ fun EditHostDialog(
     ) {
         Scaffold(
             topBar = {
-                Surface(color = ObsidianSurfaceContainerLow) {
+                Surface(color = theme.surfaceContainerLow) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -97,10 +96,14 @@ fun EditHostDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ObsidianTextPrimary)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = Strings.close, tint = ObsidianTextPrimary)
                         }
                         Text(
-                            text = if (hostToEdit == null) "New Host" else "Host Config",
+                            text = if (hostToEdit == null) {
+                                if (Strings.isZh) "添加主机" else "Add Host"
+                            } else {
+                                if (Strings.isZh) "编辑主机" else "Edit Host"
+                            },
                             fontWeight = FontWeight.Bold,
                             color = ObsidianTextPrimary,
                             fontSize = 17.sp,
@@ -110,12 +113,12 @@ fun EditHostDialog(
                             onClick = {
                                 val trimmedHost = hostname.trim()
                                 if (trimmedHost.isBlank()) {
-                                    Toast.makeText(context, "请输入主机 IP 或域名！", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (Strings.isZh) "请输入主机 IP 或域名" else "Please enter hostname/IP", Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
 
                                 if (authType == AuthType.KEY && privateKey.isBlank()) {
-                                    Toast.makeText(context, "当前选择 SSH Key 认证，请粘贴私钥或切换为 Password 认证！", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, if (Strings.isZh) "请粘贴 SSH 私钥或切换为密码认证" else "Please provide SSH private key", Toast.LENGTH_LONG).show()
                                     return@Button
                                 }
 
@@ -134,22 +137,22 @@ fun EditHostDialog(
                                     privateKey = privateKey.trim(),
                                     passphrase = passphrase,
                                     identityId = selectedIdentityId,
-                                    groupName = groupName,
+                                    groupName = groupName.trim(),
                                     colorTag = selectedColor
                                 )
                                 onSave(host)
                             },
                             enabled = hostname.isNotBlank(),
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary),
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.primary),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                         ) {
-                            Text("Save", color = ObsidianOnPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(Strings.save, color = if (theme.isDark) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
             },
-            containerColor = ObsidianBackground,
+            containerColor = theme.background,
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding()
@@ -161,43 +164,41 @@ fun EditHostDialog(
                     .imePadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Section 1: Connection Profile
+                // 主机信息
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianSurfaceContainerLow,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    shape = RoundedCornerShape(10.dp),
+                    color = theme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Dns, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Connection Profile", fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontSize = 14.sp)
-                        }
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(if (Strings.isZh) "主机信息" else "Host Info", fontWeight = FontWeight.Bold, color = theme.primary, fontSize = 13.sp)
 
                         OutlinedTextField(
                             value = label,
                             onValueChange = { label = it },
-                            label = { Text("Label / Alias") },
-                            placeholder = { Text("e.g. Prod-API-Cluster-Node1") },
+                            label = { Text(if (Strings.isZh) "别名 (选填，如: 生产服务器)" else "Label / Alias") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = ObsidianSurfaceContainer,
-                                unfocusedContainerColor = ObsidianSurfaceContainer,
-                                focusedBorderColor = ObsidianPrimary,
-                                unfocusedBorderColor = ObsidianOutlineVariant
-                            ),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        // Color selection
+                        OutlinedTextField(
+                            value = groupName,
+                            onValueChange = { groupName = it },
+                            label = { Text(if (Strings.isZh) "标签分组 (选填，如: Docker / 阿里云)" else "Group Tag (Optional)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // 标记颜色
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text("Color Tag:", fontSize = 12.sp, color = ObsidianTextSecondary)
+                            Text(if (Strings.isZh) "图标颜色:" else "Color Tag:", fontSize = 12.sp, color = ObsidianTextSecondary)
                             presetColors.forEach { hex ->
                                 val color = Color(android.graphics.Color.parseColor(hex))
                                 val isSelected = selectedColor.equals(hex, ignoreCase = true)
@@ -207,58 +208,29 @@ fun EditHostDialog(
                                         .background(color, CircleShape)
                                         .clickable { selectedColor = hex }
                                         .then(
-                                            if (isSelected) Modifier.border(2.dp, Color.White, CircleShape)
+                                            if (isSelected) Modifier.border(2.dp, theme.primary, CircleShape)
                                             else Modifier
                                         )
                                 )
                             }
                         }
-
-                        // Tags Selection
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Cluster Group / Tags:", fontSize = 12.sp, color = ObsidianTextSecondary)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                presetTags.forEach { tag ->
-                                    val isSelected = groupName == tag
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = { groupName = tag },
-                                        label = { Text(tag, fontSize = 11.sp, maxLines = 1, softWrap = false) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
-                                            selectedLabelColor = ObsidianPrimary
-                                        )
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
-                // Section 2: Network & Address
+                // 网络地址
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianSurfaceContainerLow,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    shape = RoundedCornerShape(10.dp),
+                    color = theme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Lan, contentDescription = null, tint = ObsidianSecondary, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Network & Address", fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontSize = 14.sp)
-                        }
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(if (Strings.isZh) "网络地址" else "Network", fontWeight = FontWeight.Bold, color = theme.primary, fontSize = 13.sp)
 
                         OutlinedTextField(
                             value = hostname,
                             onValueChange = { hostname = it.trim() },
-                            label = { Text("Hostname / IP Address *") },
-                            placeholder = { Text("192.168.1.100 or api.server.com") },
+                            label = { Text(if (Strings.isZh) "主机地址 (IP 或域名) *" else "Hostname / IP *") },
+                            placeholder = { Text("192.168.1.100 或 dl.codywon.top") },
                             trailingIcon = {
                                 IconButton(onClick = {
                                     val clipText = clipboard.getText()?.text
@@ -266,17 +238,11 @@ fun EditHostDialog(
                                         hostname = clipText.trim()
                                     }
                                 }) {
-                                    Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = ObsidianSecondary)
+                                    Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = theme.primary)
                                 }
                             },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = ObsidianSurfaceContainer,
-                                unfocusedContainerColor = ObsidianSurfaceContainer,
-                                focusedBorderColor = ObsidianPrimary,
-                                unfocusedBorderColor = ObsidianOutlineVariant
-                            ),
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -288,21 +254,14 @@ fun EditHostDialog(
                             OutlinedTextField(
                                 value = portText,
                                 onValueChange = { portText = it.filter { c -> c.isDigit() } },
-                                label = { Text("Port") },
+                                label = { Text(if (Strings.isZh) "端口" else "Port") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = ObsidianSurfaceContainer,
-                                    unfocusedContainerColor = ObsidianSurfaceContainer,
-                                    focusedBorderColor = ObsidianPrimary,
-                                    unfocusedBorderColor = ObsidianOutlineVariant
-                                ),
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Quick ports
-                            listOf("22", "2222", "443").forEach { p ->
+                            listOf("22", "2222", "8022").forEach { p ->
                                 SuggestionChip(
                                     onClick = { portText = p },
                                     label = { Text(p, fontSize = 11.sp) },
@@ -313,20 +272,16 @@ fun EditHostDialog(
                     }
                 }
 
-                // Section 3: Authentication & Credentials (密码与私钥)
+                // 认证信息
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianSurfaceContainerLow,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    shape = RoundedCornerShape(10.dp),
+                    color = theme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Key, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Authentication & Credentials", fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontSize = 14.sp)
-                        }
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(if (Strings.isZh) "认证方式" else "Authentication", fontWeight = FontWeight.Bold, color = theme.primary, fontSize = 13.sp)
 
-                        // Auth type chips
+                        // 认证方式选择
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -336,41 +291,35 @@ fun EditHostDialog(
                             FilterChip(
                                 selected = authType == AuthType.PASSWORD,
                                 onClick = { authType = AuthType.PASSWORD },
-                                label = { Text("Password", fontSize = 12.sp, maxLines = 1, softWrap = false) },
+                                label = { Text(if (Strings.isZh) "密码认证" else "Password", fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
-                                    selectedLabelColor = ObsidianPrimary
+                                    selectedContainerColor = theme.primary.copy(alpha = 0.2f),
+                                    selectedLabelColor = theme.primary
                                 )
                             )
                             FilterChip(
                                 selected = authType == AuthType.KEY,
                                 onClick = { authType = AuthType.KEY },
-                                label = { Text("SSH Key", fontSize = 12.sp, maxLines = 1, softWrap = false) },
+                                label = { Text(if (Strings.isZh) "SSH 密钥" else "SSH Key", fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = ObsidianPrimary.copy(alpha = 0.2f),
-                                    selectedLabelColor = ObsidianPrimary
+                                    selectedContainerColor = theme.primary.copy(alpha = 0.2f),
+                                    selectedLabelColor = theme.primary
                                 )
                             )
                             FilterChip(
                                 selected = authType == AuthType.IDENTITY_REF,
                                 onClick = { authType = AuthType.IDENTITY_REF },
-                                label = { Text("Vault Key", fontSize = 12.sp, maxLines = 1, softWrap = false) }
+                                label = { Text(if (Strings.isZh) "从凭据库选择" else "Saved Identity", fontSize = 12.sp) }
                             )
                         }
 
                         OutlinedTextField(
                             value = username,
                             onValueChange = { username = it },
-                            label = { Text("Username") },
+                            label = { Text(if (Strings.isZh) "用户名 (默认: root)" else "Username") },
                             placeholder = { Text("root") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = ObsidianSurfaceContainer,
-                                unfocusedContainerColor = ObsidianSurfaceContainer,
-                                focusedBorderColor = ObsidianPrimary,
-                                unfocusedBorderColor = ObsidianOutlineVariant
-                            ),
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -379,25 +328,19 @@ fun EditHostDialog(
                                 OutlinedTextField(
                                     value = password,
                                     onValueChange = { password = it },
-                                    label = { Text("Password") },
+                                    label = { Text(if (Strings.isZh) "登录密码" else "Password") },
                                     visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                     trailingIcon = {
                                         IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                                             Icon(
                                                 imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                                contentDescription = "Toggle password",
-                                                tint = ObsidianSecondary
+                                                contentDescription = null,
+                                                tint = ObsidianTextSecondary
                                             )
                                         }
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = ObsidianSurfaceContainer,
-                                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                                        focusedBorderColor = ObsidianPrimary,
-                                        unfocusedBorderColor = ObsidianOutlineVariant
-                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -405,7 +348,7 @@ fun EditHostDialog(
                                 OutlinedTextField(
                                     value = privateKey,
                                     onValueChange = { privateKey = it },
-                                    label = { Text("Private Key (OpenSSH / PEM / Ed25519) *") },
+                                    label = { Text(if (Strings.isZh) "私钥内容 (OpenSSH / PEM / Ed25519) *" else "Private Key *") },
                                     placeholder = { Text("-----BEGIN OPENSSH PRIVATE KEY-----\n...") },
                                     trailingIcon = {
                                         IconButton(onClick = {
@@ -414,58 +357,46 @@ fun EditHostDialog(
                                                 privateKey = clipText.trim()
                                             }
                                         }) {
-                                            Icon(Icons.Default.ContentPaste, contentDescription = "Paste Key", tint = ObsidianPrimary)
+                                            Icon(Icons.Default.ContentPaste, contentDescription = null, tint = theme.primary)
                                         }
                                     },
                                     minLines = 3,
                                     maxLines = 6,
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = ObsidianSurfaceContainer,
-                                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                                        focusedBorderColor = ObsidianPrimary,
-                                        unfocusedBorderColor = ObsidianOutlineVariant
-                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 OutlinedTextField(
                                     value = passphrase,
                                     onValueChange = { passphrase = it },
-                                    label = { Text("Passphrase (Optional)") },
+                                    label = { Text(if (Strings.isZh) "密码短语 Passphrase (选填)" else "Passphrase (Optional)") },
                                     visualTransformation = PasswordVisualTransformation(),
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = ObsidianSurfaceContainer,
-                                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                                        focusedBorderColor = ObsidianPrimary,
-                                        unfocusedBorderColor = ObsidianOutlineVariant
-                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
                             AuthType.IDENTITY_REF -> {
                                 if (identities.isEmpty()) {
-                                    Text("No identities saved in Keychain. Add one in the Keychain tab.", color = ObsidianTextMuted, fontSize = 12.sp)
+                                    Text(if (Strings.isZh) "凭据库中暂无保存的凭据，请在「设置」中添加" else "No saved credentials found in Settings.", color = ObsidianTextMuted, fontSize = 12.sp)
                                 } else {
                                     identities.forEach { ident ->
                                         Surface(
                                             shape = RoundedCornerShape(8.dp),
-                                            color = if (selectedIdentityId == ident.id) ObsidianPrimary.copy(alpha = 0.15f) else ObsidianSurfaceContainer,
-                                            border = if (selectedIdentityId == ident.id) androidx.compose.foundation.BorderStroke(1.dp, ObsidianPrimary) else null,
+                                            color = if (selectedIdentityId == ident.id) theme.primary.copy(alpha = 0.15f) else theme.surfaceContainerHigh,
+                                            border = if (selectedIdentityId == ident.id) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clickable { selectedIdentityId = ident.id }
                                         ) {
                                             Row(
-                                                modifier = Modifier.padding(12.dp),
+                                                modifier = Modifier.padding(10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(18.dp))
+                                                Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
                                                 Spacer(modifier = Modifier.width(10.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(ident.name, color = ObsidianTextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                                    Text("User: ${ident.username} • Type: ${ident.keyType}", color = ObsidianTextSecondary, fontSize = 11.sp)
+                                                    Text("用户: ${ident.username} • ${ident.keyType}", color = ObsidianTextSecondary, fontSize = 11.sp)
                                                 }
                                                 RadioButton(
                                                     selected = selectedIdentityId == ident.id,
@@ -480,13 +411,13 @@ fun EditHostDialog(
                     }
                 }
 
-                // Section 4: Advanced SSH Features Accordion
+                // 高级选项与保活
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianSurfaceContainerLow,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                    shape = RoundedCornerShape(10.dp),
+                    color = theme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -494,11 +425,7 @@ fun EditHostDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Tune, contentDescription = null, tint = ObsidianTertiary, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Advanced SSH & Keepalive", fontWeight = FontWeight.SemiBold, color = ObsidianTextPrimary, fontSize = 14.sp)
-                            }
+                            Text(if (Strings.isZh) "高级选项与保活" else "Advanced & Keepalive", fontWeight = FontWeight.Bold, color = theme.primary, fontSize = 13.sp)
                             Icon(
                                 if (isAdvancedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                                 contentDescription = null,
@@ -508,7 +435,7 @@ fun EditHostDialog(
 
                         AnimatedVisibility(visible = isAdvancedExpanded) {
                             Column(
-                                modifier = Modifier.padding(top = 12.dp),
+                                modifier = Modifier.padding(top = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Row(
@@ -516,17 +443,9 @@ fun EditHostDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("后台保活", color = ObsidianTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                        IconButton(
-                                            onClick = { Toast.makeText(context, "前台服务保活，锁屏或切后台时连接不断开", Toast.LENGTH_SHORT).show() },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(Icons.Default.HelpOutline, contentDescription = "Help", tint = ObsidianTextMuted, modifier = Modifier.size(15.dp))
-                                        }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(if (Strings.isZh) "后台常驻保持" else "Keep Alive in Background", color = ObsidianTextPrimary, fontSize = 13.sp)
+                                        Text(if (Strings.isZh) "锁屏或切后台时不断开" else "Maintain connection when locked", color = ObsidianTextSecondary, fontSize = 11.sp)
                                     }
                                     Switch(
                                         checked = isBackgroundKeepAlive,
@@ -538,17 +457,9 @@ fun EditHostDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text("心跳间隔", color = ObsidianTextSecondary, fontSize = 12.sp)
-                                        IconButton(
-                                            onClick = { Toast.makeText(context, "定期发送空包探测，防止NAT防火墙中断空闲会话", Toast.LENGTH_SHORT).show() },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(Icons.Default.HelpOutline, contentDescription = "Help", tint = ObsidianTextMuted, modifier = Modifier.size(15.dp))
-                                        }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(if (Strings.isZh) "心跳探测间隔" else "Heartbeat Interval", color = ObsidianTextPrimary, fontSize = 13.sp)
+                                        Text(if (Strings.isZh) "定时发送空包防防火墙断开" else "Prevent NAT timeout", color = ObsidianTextSecondary, fontSize = 11.sp)
                                     }
                                     OutlinedTextField(
                                         value = keepAliveSec,
@@ -556,30 +467,30 @@ fun EditHostDialog(
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         singleLine = true,
                                         shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.width(70.dp)
+                                        modifier = Modifier.width(64.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("秒", color = ObsidianTextMuted, fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (Strings.isZh) "秒" else "s", color = ObsidianTextSecondary, fontSize = 12.sp)
                                 }
                             }
                         }
                     }
                 }
 
-                // Section 5: Test Connection Handshake Banner
+                // 连接握手测试
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = if (handshakeSuccess) ObsidianPrimary.copy(alpha = 0.15f) else ObsidianSurfaceContainerHigh,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (handshakeSuccess) ObsidianPrimary else ObsidianOutlineVariant),
+                    color = if (handshakeSuccess) theme.primary.copy(alpha = 0.12f) else theme.surfaceContainer,
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, if (handshakeSuccess) theme.primary else ObsidianOutlineVariant),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Button(
                             onClick = {
                                 val trimmedTarget = hostname.trim()
                                 scope.launch {
                                     isTestingHandshake = true
-                                    handshakeResult = "Initiating SSH handshake with $trimmedTarget..."
+                                    handshakeResult = if (Strings.isZh) "正在探测 $trimmedTarget 握手..." else "Connecting to $trimmedTarget..."
                                     handshakeSuccess = false
 
                                     withContext(Dispatchers.IO) {
@@ -593,10 +504,10 @@ fun EditHostDialog(
                                             client.disconnect()
                                             client.close()
                                             handshakeSuccess = true
-                                            handshakeResult = "SSH Handshake Successful! (Ping: ${ping}ms OK)"
+                                            handshakeResult = if (Strings.isZh) "握手成功 (网络延迟: ${ping}ms)" else "Connected! (Ping: ${ping}ms)"
                                         } catch (e: Exception) {
                                             handshakeSuccess = false
-                                            handshakeResult = "Handshake failed: ${e.message}"
+                                            handshakeResult = if (Strings.isZh) "连接失败: ${e.message}" else "Failed: ${e.message}"
                                         } finally {
                                             isTestingHandshake = false
                                         }
@@ -604,35 +515,34 @@ fun EditHostDialog(
                                 }
                             },
                             enabled = hostname.isNotBlank() && !isTestingHandshake,
-                            colors = ButtonDefaults.buttonColors(containerColor = ObsidianSurfaceContainer),
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceContainerHigh),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (isTestingHandshake) {
-                                CircularProgressIndicator(color = ObsidianPrimary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(color = theme.primary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Testing Handshake...", fontSize = 13.sp, color = ObsidianTextPrimary)
+                                Text(if (Strings.isZh) "正在测试连接..." else "Testing...", fontSize = 13.sp, color = ObsidianTextPrimary)
                             } else {
-                                Icon(Icons.Default.Bolt, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Test SSH Handshake", fontSize = 13.sp, color = ObsidianTextPrimary)
+                                Text(if (Strings.isZh) "测试 SSH 连接" else "Test Connection", fontSize = 13.sp, color = ObsidianTextPrimary)
                             }
                         }
 
                         if (handshakeResult != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = handshakeResult!!,
                                 fontSize = 12.sp,
-                                color = if (handshakeSuccess) ObsidianPrimary else ObsidianError,
+                                color = if (handshakeSuccess) theme.primary else ObsidianError,
                                 fontFamily = FontFamily.Monospace
                             )
                         }
                     }
                 }
 
-                // 底部键盘额外防遮挡垫高区
-                Spacer(modifier = Modifier.height(180.dp))
+                Spacer(modifier = Modifier.height(100.dp))
             }
         }
     }

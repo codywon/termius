@@ -39,7 +39,7 @@ object LanguageManager {
 }
 
 /**
- * 界面多语言文本词典 (遵循专业、地道、优雅的中文运维用语规范)
+ * 界面多语言文本词典 (去 AI 味、简练准确、专业干脆)
  */
 object Strings {
     val isZh: Boolean get() = LanguageManager.currentLanguage == AppLanguage.ZH
@@ -50,91 +50,94 @@ object Strings {
     val tabCheatsheet: String get() = if (isZh) "速查" else "Cheatsheet"
     val tabSettings: String get() = if (isZh) "设置" else "Settings"
 
-    // 主机列表页
-    val appTitle: String get() = "TermX Mobile"
-    val searchHostsPlaceholder: String get() = if (isZh) "搜索主机名、IP 地址、标签..." else "Search hosts, IPs, tags..."
-    val allTags: String get() = if (isZh) "全部" else "All"
-    val addHost: String get() = if (isZh) "添加主机" else "Add Host"
-    val noHostsTitle: String get() = if (isZh) "暂无服务器" else "No Servers Configured"
-    val noHostsSubtitle: String get() = if (isZh) "点击下方按钮添加云服务器或内网节点" else "Tap below to add your first server"
-    val connect: String get() = if (isZh) "连接" else "Connect"
+    // 通用按钮与提示
+    val cancel: String get() = if (isZh) "取消" else "Cancel"
+    val confirm: String get() = if (isZh) "确定" else "OK"
+    val create: String get() = if (isZh) "创建" else "Create"
+    val save: String get() = if (isZh) "保存" else "Save"
+    val close: String get() = if (isZh) "关闭" else "Close"
     val edit: String get() = if (isZh) "编辑" else "Edit"
     val delete: String get() = if (isZh) "删除" else "Delete"
+    val copy: String get() = if (isZh) "复制" else "Copy"
+    val connect: String get() = if (isZh) "连接" else "Connect"
+    val copySuccess: String get() = if (isZh) "已复制到剪贴板" else "Copied to clipboard"
+
+    // 主机列表页
+    val appTitle: String get() = "TermX Mobile"
+    val searchHostsPlaceholder: String get() = if (isZh) "搜索主机..." else "Search hosts..."
+    val allTags: String get() = if (isZh) "全部" else "All"
+    val addHost: String get() = if (isZh) "添加主机" else "Add Host"
+    val noHostsTitle: String get() = if (isZh) "暂无主机" else "No Hosts"
+    val noHostsSubtitle: String get() = if (isZh) "点击右下角按钮添加服务器" else "Tap below to add a host"
     val synced: String get() = if (isZh) "本地就绪" else "Ready"
     val checkUpdates: String get() = if (isZh) "检查更新" else "Check Updates"
 
     // 运维命令速查页
-    val cheatsheetTitle: String get() = if (isZh) "运维命令速查" else "Command Cheatsheet"
-    val cheatsheetSubtitle: String get() = if (isZh) "常用 Linux 生产运维与项目管理命令" else "Common Linux & DevOps command references"
-    val searchCommandsPlaceholder: String get() = if (isZh) "搜索命令名称、用途或关键词..." else "Search commands, tags, or usage..."
-    val copySuccess: String get() = if (isZh) "命令已复制到剪贴板" else "Copied to clipboard"
+    val cheatsheetTitle: String get() = if (isZh) "运维速查" else "Cheatsheet"
+    val searchCommandsPlaceholder: String get() = if (isZh) "搜索命令..." else "Search commands..."
     val categoryAll: String get() = if (isZh) "全部" else "All"
-    val categorySystem: String get() = if (isZh) "系统监控" else "System"
-    val categoryNetwork: String get() = if (isZh) "网络与端口" else "Network"
-    val categoryDocker: String get() = if (isZh) "Docker 容器" else "Docker"
+    val categorySystem: String get() = if (isZh) "系统资源" else "System"
+    val categoryNetwork: String get() = if (isZh) "网络端口" else "Network"
+    val categoryDocker: String get() = if (isZh) "Docker" else "Docker"
     val categoryServices: String get() = if (isZh) "服务管理" else "Services"
-    val categoryDisk: String get() = if (isZh) "磁盘与文件" else "Disk & Files"
-    val categorySecurity: String get() = if (isZh) "安全与防火墙" else "Security"
-    val categoryGit: String get() = if (isZh) "Git 部署" else "Git"
-    val addCustomCommand: String get() = if (isZh) "添加常用命令" else "Add Custom Command"
+    val categoryDisk: String get() = if (isZh) "文件磁盘" else "Disk"
+    val categorySecurity: String get() = if (isZh) "安全运维" else "Security"
+    val categoryGit: String get() = if (isZh) "Git 运维" else "Git"
+    val addCustomCommand: String get() = if (isZh) "添加常用命令" else "Add Command"
 
     // 全局设置页
     val settingsTitle: String get() = if (isZh) "设置" else "Settings"
-    val settingsSubtitle: String get() = if (isZh) "偏好配置、配色主题与后台保活" else "Preferences, themes & keepalive"
-    val sectionVault: String get() = if (isZh) "SSH 凭据管理" else "Credentials & Keys"
-    val sectionVaultDesc: String get() = if (isZh) "统一管理服务器登录密码与 SSH 密钥" else "Manage server passwords and SSH keys"
-    val sectionAppearance: String get() = if (isZh) "外观与配色主题" else "Appearance & Themes"
-    val appearanceDesc: String get() = if (isZh) "选择终端界面配色方案 (即时生效)" else "Select terminal color theme"
+    val groupCredentials: String get() = if (isZh) "凭据管理" else "Credentials"
+    val groupAppearance: String get() = if (isZh) "外观与界面" else "Appearance & UI"
+    val groupConnection: String get() = if (isZh) "连接与保活" else "Connection & Keepalive"
+    val groupAbout: String get() = if (isZh) "关于" else "About"
+
+    val sectionVault: String get() = if (isZh) "SSH 凭据" else "SSH Credentials"
+    val sectionAppearance: String get() = if (isZh) "配色主题" else "Color Theme"
     val sectionLanguage: String get() = if (isZh) "界面语言" else "Language"
-    val sectionKeepalive: String get() = if (isZh) "连接与后台保活" else "Connection & Keepalive"
-    val keepalivePing: String get() = if (isZh) "SSH 心跳保持" else "SSH Keepalive Heartbeat"
-    val keepalivePingDesc: String get() = if (isZh) "定时发送心跳包，防止网络空闲时连接超时中断" else "Periodically ping to prevent timeouts"
-    val wakeLockStatus: String get() = if (isZh) "后台服务常驻" else "Background Service"
-    val wakeLockStatusDesc: String get() = if (isZh) "息屏时保持 CPU 与 Wi-Fi 活跃，防止后台网络断开" else "Keep CPU & Wi-Fi active when screen off"
+    val terminalFontSizeTitle: String get() = if (isZh) "终端字号" else "Font Size"
+
+    // 保活设置
+    val keepalivePing: String get() = if (isZh) "心跳保持" else "Keepalive Ping"
+    val keepalivePingDesc: String get() = if (isZh) "定时发送空闲心跳包，防止连接超时断开" else "Send heartbeat packets to prevent timeout"
+    val wakeLockStatus: String get() = if (isZh) "后台常驻服务" else "Background Service"
+    val wakeLockStatusDesc: String get() = if (isZh) "锁屏时保持 CPU 与网络活跃" else "Keep CPU and network active when screen is locked"
     val runningStatus: String get() = if (isZh) "运行中" else "Running"
 
     // 电池后台优化
-    val batteryOptimizationTitle: String get() = if (isZh) "电池后台优化" else "Battery Optimization"
-    val batteryOptimizationDesc: String get() = if (isZh) "加入电池优化白名单，防止息屏被系统强制休眠" else "Exempt from battery optimization to keep SSH alive"
+    val batteryOptimizationTitle: String get() = if (isZh) "电池优化" else "Battery Optimization"
+    val batteryOptimizationDesc: String get() = if (isZh) "加入系统白名单，防止后台被系统杀掉" else "Whitelist from battery optimizations to prevent disconnection"
     val batteryOptimizedTag: String get() = if (isZh) "受限" else "Restricted"
     val batteryIgnoredTag: String get() = if (isZh) "无限制" else "Unrestricted"
-    val batteryOptimizeBtn: String get() = if (isZh) "一键解除限制" else "Exempt from Optimization"
-    val batteryGuideBtn: String get() = if (isZh) "保活指南" else "Keepalive Guide"
+    val batteryOptimizeBtn: String get() = if (isZh) "解除限制" else "Whitelist"
+    val batteryGuideBtn: String get() = if (isZh) "保活说明" else "Guide"
 
-    val sectionAbout: String get() = if (isZh) "关于 TermX Mobile" else "About TermX Mobile"
     val poweredBy: String get() = "Powered by codywon"
-    val currentVersionLabel: String get() = if (isZh) "当前版本" else "Current Version"
-    val checkUpdateBtn: String get() = if (isZh) "检查新版本" else "Check for Updates"
+    val currentVersionLabel: String get() = if (isZh) "当前版本" else "Version"
+    val checkUpdateBtn: String get() = if (isZh) "检查更新" else "Check Updates"
 
-    // 凭据弹窗
-    val identitiesCount: String get() = if (isZh) "个已保存的登录凭据" else "saved credentials"
-    val manageVault: String get() = if (isZh) "管理凭据" else "Manage Credentials"
+    // 凭据相关
+    val identitiesCount: String get() = if (isZh) "个已保存凭据" else "saved credentials"
+    val manageVault: String get() = if (isZh) "管理凭据" else "Manage"
     val viewLabel: String get() = if (isZh) "查看" else "View"
     val collapseLabel: String get() = if (isZh) "收起" else "Collapse"
     val newLabel: String get() = if (isZh) "新建" else "New"
 
-    // 终端字体与手势
-    val terminalFontSizeTitle: String get() = if (isZh) "终端字体大小" else "Terminal Font Size"
-    val terminalFontSizeDesc: String get() = if (isZh) "调节代码字符字号，终端内亦支持双指捏合缩放" else "Adjust font size or pinch to zoom in terminal"
-    val fontPreviewLabel: String get() = if (isZh) "字体效果预览" else "Font Preview"
-    val scrollbackNotice: String get() = if (isZh) "支持双指/单指上下滑动翻看历史输出" else "Two-finger / one-finger swipe to view history"
-
     // SFTP 远程文件管理
     val sftpTitle: String get() = if (isZh) "SFTP 文件管理" else "SFTP Manager"
-    val sftpSubtitle: String get() = if (isZh) "远程服务器文件互传与在线编辑" else "Remote file transfer & editor"
-    val selectHostPrompt: String get() = if (isZh) "选择服务器建立 SFTP 会话:" else "Select a server to launch SFTP:"
+    val selectHostPrompt: String get() = if (isZh) "选择服务器建立连接:" else "Select a server to connect:"
     val parentDirectory: String get() = if (isZh) ".. 返回上级目录" else ".. Parent Directory"
-    val emptyDirectory: String get() = if (isZh) "当前目录为空" else "Directory is empty"
-    val uploadFile: String get() = if (isZh) "上传本地文件" else "Upload Local File"
+    val emptyDirectory: String get() = if (isZh) "目录为空" else "Directory is empty"
+    val uploadFile: String get() = if (isZh) "上传文件" else "Upload File"
     val createFolder: String get() = if (isZh) "新建文件夹" else "New Folder"
-    val createFile: String get() = if (isZh) "新建空白文件" else "New Blank File"
-    val refresh: String get() = if (isZh) "刷新目录" else "Refresh"
-    val disconnect: String get() = if (isZh) "断开 SFTP" else "Disconnect"
-    val viewEditFile: String get() = if (isZh) "查看 / 在线编辑" else "View / Edit"
+    val createFile: String get() = if (isZh) "新建文件" else "New File"
+    val refresh: String get() = if (isZh) "刷新" else "Refresh"
+    val disconnect: String get() = if (isZh) "断开连接" else "Disconnect"
+    val viewEditFile: String get() = if (isZh) "查看 / 编辑" else "View / Edit"
     val downloadToPhone: String get() = if (isZh) "下载到手机 (Downloads)" else "Download to Phone"
     val rename: String get() = if (isZh) "重命名" else "Rename"
-    val copyRemotePath: String get() = if (isZh) "复制远程完整路径" else "Copy Full Path"
-    val deleteItem: String get() = if (isZh) "永久删除" else "Delete"
-    val saveSuccess: String get() = if (isZh) "文件保存成功" else "Saved successfully"
-    val downloadSuccess: String get() = if (isZh) "下载成功，已保存至手机“下载”目录" else "Downloaded to phone Downloads folder"
+    val copyRemotePath: String get() = if (isZh) "复制路径" else "Copy Path"
+    val deleteItem: String get() = if (isZh) "删除" else "Delete"
+    val saveSuccess: String get() = if (isZh) "保存成功" else "Saved successfully"
+    val downloadSuccess: String get() = if (isZh) "下载成功，已保存至手机 Downloads 目录" else "Downloaded to phone Downloads folder"
 }
