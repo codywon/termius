@@ -1,27 +1,23 @@
 package com.termius.clone.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.data.model.HostEntity
-import com.termius.clone.terminal.session.SessionManager
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.Strings
 
-enum class MainTab(val title: String, val icon: ImageVector) {
-    HOSTS("Hosts", Icons.Default.Dns),
-    TERMINAL("Terminal", Icons.Default.Terminal),
-    SFTP("SFTP", Icons.Default.FolderShared),
-    SNIPPETS("Snippets", Icons.Default.Code),
-    KEYCHAIN("Vault", Icons.Default.VpnKey)
+enum class MainTab(val getTitle: () -> String, val icon: ImageVector) {
+    HOSTS({ Strings.tabHosts }, Icons.Default.Dns),
+    SFTP({ Strings.tabSftp }, Icons.Default.FolderShared),
+    CHEATSHEET({ Strings.tabCheatsheet }, Icons.Default.MenuBook),
+    SETTINGS({ Strings.tabSettings }, Icons.Default.Settings)
 }
 
 @Composable
@@ -30,52 +26,45 @@ fun MainScreen(
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOSTS) }
     var sftpHostTarget by remember { mutableStateOf<HostEntity?>(null) }
-
-    val activeSessions by SessionManager.sessions.collectAsState()
+    val theme = LocalAppTheme.current
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0), // 消除外层多余的状态栏 inset 嵌套，让顶部标题紧凑贴顶
         bottomBar = {
             NavigationBar(
-                containerColor = ObsidianSurfaceContainerLow,
+                containerColor = theme.surfaceContainerLow,
                 tonalElevation = 0.dp
             ) {
                 MainTab.entries.forEach { tab ->
                     val isSelected = currentTab == tab
+                    val labelText = tab.getTitle()
                     NavigationBarItem(
-                        icon = { Icon(tab.icon, contentDescription = tab.title) },
-                        label = { Text(tab.title, fontSize = 11.sp) },
+                        icon = { Icon(tab.icon, contentDescription = labelText) },
+                        label = { Text(labelText, fontSize = 11.sp) },
                         selected = isSelected,
                         onClick = {
-                            if (tab == MainTab.TERMINAL) {
-                                if (activeSessions.isNotEmpty()) {
-                                    onNavigateToTerminal()
-                                } else {
-                                    currentTab = MainTab.TERMINAL
-                                }
-                            } else {
-                                if (tab != MainTab.SFTP) {
-                                    sftpHostTarget = null
-                                }
-                                currentTab = tab
+                            if (tab != MainTab.SFTP) {
+                                sftpHostTarget = null
                             }
+                            currentTab = tab
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = ObsidianPrimary,
-                            selectedTextColor = ObsidianPrimary,
+                            selectedIconColor = theme.primary,
+                            selectedTextColor = theme.primary,
                             unselectedIconColor = ObsidianTextMuted,
                             unselectedTextColor = ObsidianTextMuted,
-                            indicatorColor = ObsidianPrimary.copy(alpha = 0.15f)
+                            indicatorColor = theme.primary.copy(alpha = 0.15f)
                         )
                     )
                 }
             }
         },
-        containerColor = ObsidianBackground
+        containerColor = theme.background
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
             when (currentTab) {
                 MainTab.HOSTS -> HostListScreen(
@@ -85,29 +74,9 @@ fun MainScreen(
                         currentTab = MainTab.SFTP
                     }
                 )
-                MainTab.TERMINAL -> {
-                    if (activeSessions.isNotEmpty()) {
-                        TerminalScreen(onNavigateBack = { currentTab = MainTab.HOSTS })
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(ObsidianBackground),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.Terminal, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(56.dp))
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text("No Active Terminal Session", color = ObsidianTextPrimary, fontWeight = FontWeight.SemiBold)
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text("Go to the Hosts tab and launch a connection", color = ObsidianTextSecondary, fontSize = 13.sp)
-                            }
-                        }
-                    }
-                }
                 MainTab.SFTP -> SftpScreen(initialHost = sftpHostTarget)
-                MainTab.SNIPPETS -> SnippetScreen()
-                MainTab.KEYCHAIN -> KeychainScreen()
+                MainTab.CHEATSHEET -> CommandCheatSheetScreen()
+                MainTab.SETTINGS -> SettingsScreen()
             }
         }
     }

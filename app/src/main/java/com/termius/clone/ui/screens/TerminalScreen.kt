@@ -54,11 +54,14 @@ fun TerminalScreen(
         }
     }
 
+    val theme = LocalAppTheme.current
+
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(color = ObsidianSurfaceContainerLow) {
+            Surface(color = theme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                    // Header Bar with Session Tabs (Clean Termius Style)
+                    // Header Bar with Session Tabs (Clean TeamX Mobile Style)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -84,7 +87,7 @@ fun TerminalScreen(
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
                                     color = if (isSelected) ObsidianSurfaceContainerHighest else ObsidianSurfaceContainer,
-                                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, ObsidianPrimary) else null,
+                                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
                                     onClick = { SessionManager.selectSession(session.id) }
                                 ) {
                                     Row(
@@ -94,7 +97,7 @@ fun TerminalScreen(
                                     ) {
                                         // Status dot
                                         val dotColor = when (sessionState) {
-                                            SessionState.CONNECTED -> ObsidianPrimary
+                                            SessionState.CONNECTED -> theme.primary
                                             SessionState.CONNECTING, SessionState.AUTHENTICATING -> ObsidianTertiary
                                             SessionState.ERROR, SessionState.DISCONNECTED -> ObsidianError
                                         }

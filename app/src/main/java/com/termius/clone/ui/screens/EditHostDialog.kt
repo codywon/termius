@@ -362,7 +362,7 @@ fun EditHostDialog(
                             value = username,
                             onValueChange = { username = it },
                             label = { Text("Username") },
-                            placeholder = { Text("root or ubuntu") },
+                            placeholder = { Text("root") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
                             colors = OutlinedTextFieldDefaults.colors(

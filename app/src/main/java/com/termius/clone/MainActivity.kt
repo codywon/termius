@@ -12,10 +12,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import com.termius.clone.ui.screens.MainScreen
 import com.termius.clone.ui.screens.TerminalScreen
-import com.termius.clone.ui.theme.ObsidianBackground
-import com.termius.clone.ui.theme.TermiusCloneTheme
+import com.termius.clone.ui.theme.LocalAppTheme
+import com.termius.clone.ui.theme.TeamXTheme
+import com.termius.clone.ui.theme.ThemeManager
+import com.termius.clone.util.LanguageManager
 
 class MainActivity : ComponentActivity() {
 
@@ -24,6 +27,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 初始化主题与语言管理器
+        ThemeManager.init(this)
+        LanguageManager.init(this)
+
+        // 沉浸式 Edge-to-Edge，状态栏由 Compose 统一精准控制
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // 请求 Android 13+ 通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -37,10 +47,11 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            com.termius.clone.ui.theme.TeamXTheme {
+            TeamXTheme {
+                val theme = LocalAppTheme.current
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = ObsidianBackground
+                    color = theme.background
                 ) {
                     var currentRoute by remember { mutableStateOf("main") }
 

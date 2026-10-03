@@ -163,6 +163,7 @@ fun SftpScreen(
     }
 
     val keyboardController = LocalSoftwareKeyboardController.current
+    val theme = LocalAppTheme.current
 
     BackHandler(enabled = editingItem != null) {
         keyboardController?.hide()
@@ -177,10 +178,10 @@ fun SftpScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding(),
-            color = ObsidianBackground
+            color = theme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Surface(color = ObsidianSurfaceContainerLow) {
+                Surface(color = theme.surfaceContainerLow) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -274,8 +275,9 @@ fun SftpScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(color = ObsidianSurfaceContainerLow) {
+            Surface(color = theme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     Row(
                         modifier = Modifier
@@ -319,16 +321,16 @@ fun SftpScreen(
                             // 新建/上传操作菜单
                             Box {
                                 IconButton(onClick = { showHeaderMenu = true }) {
-                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "Actions", tint = ObsidianPrimary)
+                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "Actions", tint = theme.primary)
                                 }
                                 DropdownMenu(
                                     expanded = showHeaderMenu,
                                     onDismissRequest = { showHeaderMenu = false },
-                                    modifier = Modifier.background(ObsidianSurfaceContainerHighest)
+                                    modifier = Modifier.background(theme.surfaceContainerHigh)
                                 ) {
                                     DropdownMenuItem(
                                         text = { Text("上传本地文件", color = ObsidianTextPrimary) },
-                                        leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null, tint = ObsidianPrimary) },
+                                        leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null, tint = theme.primary) },
                                         onClick = {
                                             showHeaderMenu = false
                                             uploadFileLauncher.launch("*/*")
@@ -374,9 +376,9 @@ fun SftpScreen(
                         }
                     }
 
-                    // Breadcrumb Path Bar (Termius Style)
+                    // Breadcrumb Path Bar (TeamX Mobile Style)
                     if (isConnected) {
-                        Surface(color = ObsidianSurfaceContainer) {
+                        Surface(color = theme.surfaceContainer) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -388,7 +390,7 @@ fun SftpScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = currentPath,
-                                    color = ObsidianPrimary,
+                                    color = theme.primary,
                                     fontSize = 12.sp,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Medium
@@ -399,7 +401,7 @@ fun SftpScreen(
                 }
             }
         },
-        containerColor = ObsidianBackground
+        containerColor = theme.background
     ) { innerPadding ->
         Box(
             modifier = Modifier

@@ -78,33 +78,36 @@ fun HostListScreen(
         }
     }
 
+    val theme = LocalAppTheme.current
+
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(color = ObsidianSurfaceContainerLow) {
+            Surface(color = theme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     // Header Bar (TeamX Mobile Branding & Sync status)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Brand Logo
                         Box(
                             modifier = Modifier
                                 .size(34.dp)
-                                .background(ObsidianPrimary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                                .border(1.dp, ObsidianPrimary.copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
+                                .background(theme.primary.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                                .border(1.dp, theme.primary.copy(alpha = 0.6f), RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Terminal, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Terminal, contentDescription = null, tint = theme.primary, modifier = Modifier.size(20.dp))
                         }
 
                         Spacer(modifier = Modifier.width(10.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "TeamX Mobile",
+                                text = Strings.appTitle,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp,
                                 color = ObsidianTextPrimary
@@ -113,11 +116,11 @@ fun HostListScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(6.dp)
-                                        .background(ObsidianPrimary, CircleShape)
+                                        .background(theme.primary, CircleShape)
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = "Synced",
+                                    text = Strings.synced,
                                     fontSize = 11.sp,
                                     color = ObsidianTextSecondary
                                 )
@@ -147,23 +150,10 @@ fun HostListScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CloudDownload,
-                                contentDescription = "Check for updates",
-                                tint = ObsidianSecondary,
-                                modifier = Modifier.size(19.dp)
+                                contentDescription = Strings.checkUpdates,
+                                tint = theme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
-                        }
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        // Avatar
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(ObsidianSurfaceContainerHigh, CircleShape)
-                                .border(1.dp, ObsidianOutlineVariant, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Person, contentDescription = "Profile", tint = ObsidianTextSecondary, modifier = Modifier.size(18.dp))
                         }
                     }
 
@@ -173,15 +163,15 @@ fun HostListScreen(
                         onValueChange = { searchQuery = it },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        placeholder = { Text("Search hosts, clusters, IPs...", color = ObsidianTextMuted, fontSize = 13.sp) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ObsidianTextMuted) },
+                            .padding(horizontal = 16.dp, vertical = 3.dp),
+                        placeholder = { Text(Strings.searchHostsPlaceholder, color = ObsidianTextMuted, fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(18.dp)) },
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = ObsidianSurfaceContainer,
-                            unfocusedContainerColor = ObsidianSurfaceContainer,
-                            focusedBorderColor = ObsidianPrimary,
+                            focusedContainerColor = theme.surfaceContainer,
+                            unfocusedContainerColor = theme.surfaceContainer,
+                            focusedBorderColor = theme.primary,
                             unfocusedBorderColor = ObsidianOutlineVariant
                         )
                     )
@@ -191,7 +181,7 @@ fun HostListScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         filterTags.forEach { tag ->
@@ -199,19 +189,19 @@ fun HostListScreen(
                             val isSelected = selectedTag == tag
 
                             Surface(
-                                shape = RoundedCornerShape(20.dp),
-                                color = if (isSelected) ObsidianPrimary.copy(alpha = 0.2f) else ObsidianSurfaceContainer,
-                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, ObsidianPrimary) else null,
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isSelected) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainer,
+                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
                                 onClick = { selectedTag = tag }
                             ) {
                                 Text(
                                     text = "$tag ($count)",
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) ObsidianPrimary else ObsidianTextSecondary,
+                                    color = if (isSelected) theme.primary else ObsidianTextSecondary,
                                     maxLines = 1,
                                     softWrap = false,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
                             }
                         }
@@ -225,14 +215,14 @@ fun HostListScreen(
                     hostToEdit = null
                     showEditDialog = true
                 },
-                containerColor = ObsidianPrimary,
+                containerColor = theme.primary,
                 contentColor = ObsidianOnPrimary,
                 shape = CircleShape
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Host", modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.Add, contentDescription = Strings.addHost, tint = ObsidianOnPrimary)
             }
         },
-        containerColor = ObsidianBackground
+        containerColor = theme.background
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -252,9 +242,9 @@ fun HostListScreen(
                             modifier = Modifier.size(56.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("No hosts found", color = ObsidianTextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(Strings.noHostsTitle, color = ObsidianTextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("Tap + button below to add your first SSH cluster host", color = ObsidianTextSecondary, fontSize = 13.sp)
+                        Text(Strings.noHostsSubtitle, color = ObsidianTextSecondary, fontSize = 13.sp)
                     }
                 }
             } else {
@@ -380,15 +370,16 @@ fun TeamXHostCard(
     onOpenSftp: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val theme = LocalAppTheme.current
     val colorTag = try {
         Color(android.graphics.Color.parseColor(host.colorTag))
     } catch (e: Exception) {
-        ObsidianPrimary
+        theme.primary
     }
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = ObsidianSurfaceContainerLow,
+        color = theme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
         modifier = Modifier
             .fillMaxWidth()
@@ -438,7 +429,7 @@ fun TeamXHostCard(
                         // Tag chip
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = ObsidianSurfaceContainerHigh
+                            color = theme.surfaceContainerHigh
                         ) {
                             Text(
                                 text = host.groupName,
@@ -468,16 +459,16 @@ fun TeamXHostCard(
             // Quick Connect Button
             Surface(
                 shape = CircleShape,
-                color = ObsidianPrimary.copy(alpha = 0.15f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianPrimary.copy(alpha = 0.6f)),
+                color = theme.primary.copy(alpha = 0.15f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.6f)),
                 onClick = onConnect,
                 modifier = Modifier.size(34.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.PlayArrow,
-                        contentDescription = "Connect",
-                        tint = ObsidianPrimary,
+                        contentDescription = Strings.connect,
+                        tint = theme.primary,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -494,18 +485,18 @@ fun TeamXHostCard(
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(ObsidianSurfaceContainerHigh)
+                    modifier = Modifier.background(theme.surfaceContainerHigh)
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Launch Terminal", color = ObsidianTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = ObsidianPrimary) },
+                        text = { Text(Strings.connect, color = ObsidianTextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = theme.primary) },
                         onClick = {
                             showMenu = false
                             onConnect()
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Open SFTP Explorer", color = ObsidianTextPrimary) },
+                        text = { Text("SFTP", color = ObsidianTextPrimary) },
                         leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ObsidianSecondary) },
                         onClick = {
                             showMenu = false
@@ -513,15 +504,15 @@ fun TeamXHostCard(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Edit Configuration", color = ObsidianTextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = ObsidianTextPrimary) },
+                        text = { Text(Strings.edit, color = ObsidianTextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = ObsidianTextSecondary) },
                         onClick = {
                             showMenu = false
                             onEdit()
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Delete Host", color = ObsidianError) },
+                        text = { Text(Strings.delete, color = ObsidianError) },
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = ObsidianError) },
                         onClick = {
                             showMenu = false
