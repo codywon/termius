@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
@@ -37,7 +38,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.*
@@ -80,11 +83,15 @@ fun TerminalView(
 
     val appTheme = LocalAppTheme.current
 
-    // 本地响应式终端字号 (在双指捏合缩放时仅在内存平滑变动，手势释放时才提交持久化，彻底根除卡顿迟滞)
+    // 本地响应式终端字号
     var localFontSizeSp by remember { mutableFloatStateOf(ThemeManager.terminalFontSizeSp) }
     LaunchedEffect(ThemeManager.terminalFontSizeSp) {
         localFontSizeSp = ThemeManager.terminalFontSizeSp
     }
+
+    // 纯 GPU 硬件图层缩放比例（手势捏合过程中仅变动此比例，0 界面重组、0 网络请求，达到 120 帧满帧丝滑）
+    var gestureZoom by remember { mutableFloatStateOf(1f) }
+    var zoomPivot by remember { mutableStateOf(Offset.Zero) }
 
     var scrollOffsetLines by remember { mutableIntStateOf(0) }
     var scrollAccumulator by remember { mutableFloatStateOf(0f) }
@@ -151,17 +158,16 @@ fun TerminalView(
                         val pointerCount = event.changes.size
 
                         if (pointerCount >= 2) {
-                            // 1. 双指状态：立即锁定为捏合缩放模式，绝不误触单指滚动，顺滑跟手 (120Hz 极速响应)
+                            // 1. 双指状态：立即锁定为捏合缩放模式，GPU 硬件图形变换，跟手丝滑 120 帧，零重绘重组
                             isPinching = true
                             hasOperated = true
                             val zoom = event.calculateZoom()
-                            pinchAccumulated *= zoom
-                            // 平滑节流：累积变动超过 4% 时更新一次本地字号预览，消除每一微小触摸事件触发全局重绘的严重卡顿
-                            if (abs(pinchAccumulated - 1f) > 0.04f) {
-                                val updatedSize = (localFontSizeSp * pinchAccumulated).coerceIn(9f, 26f)
-                                localFontSizeSp = updatedSize
-                                pinchAccumulated = 1f
+                            val centroid = event.calculateCentroid()
+                            if (centroid != Offset.Unspecified) {
+                                zoomPivot = centroid
                             }
+                            val nextZoom = (gestureZoom * zoom).coerceIn(0.5f, 2.5f)
+                            gestureZoom = nextZoom
                             event.changes.forEach { it.consume() }
                         } else if (!isPinching) {
                             // 2. 仅当单指且未曾进入双指状态时，才处理上下滑动回溯
@@ -190,9 +196,10 @@ fun TerminalView(
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 手势完全释放：若发生了捏合缩放，在此处单次持久化存储到全局并对齐到 0.5sp
+                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵
                     if (isPinching) {
-                        val finalSize = (Math.round(localFontSizeSp * pinchAccumulated * 2f) / 2f).coerceIn(9f, 26f)
+                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(9f, 26f)
+                        gestureZoom = 1f
                         localFontSizeSp = finalSize
                         ThemeManager.setTerminalFontSize(finalSize)
                     } else if (!hasOperated) {
@@ -294,7 +301,22 @@ fun TerminalView(
             )
         )
 
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = gestureZoom
+                    scaleY = gestureZoom
+                    if (size.width > 0f && size.height > 0f && zoomPivot != Offset.Zero) {
+                        transformOrigin = TransformOrigin(
+                            pivotFractionX = (zoomPivot.x / size.width).coerceIn(0f, 1f),
+                            pivotFractionY = (zoomPivot.y / size.height).coerceIn(0f, 1f)
+                        )
+                    } else {
+                        transformOrigin = TransformOrigin.Center
+                    }
+                }
+        ) {
             val unusedTick = renderTick // 订阅触发 Compose 刷新
             val buffer = session.terminalBuffer
             val theme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme

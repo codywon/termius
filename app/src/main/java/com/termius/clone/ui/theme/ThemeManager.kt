@@ -125,7 +125,7 @@ object ThemeManager {
     var terminalFontSizeSp: Float by mutableFloatStateOf(DEFAULT_FONT_SIZE)
         private set
 
-    var currentTerminalTheme by mutableStateOf<com.termius.clone.data.model.TerminalThemeColors>(com.termius.clone.data.model.TerminalThemes.ClassicDark)
+    var currentTerminalTheme by mutableStateOf<com.termius.clone.data.model.TerminalThemeColors>(com.termius.clone.data.model.TerminalThemes.PaperLight)
         private set
 
     fun init(context: Context) {
@@ -134,7 +134,7 @@ object ThemeManager {
             val savedId = prefs?.getString(KEY_THEME, AppTheme.LIGHT_PAPER.id) ?: AppTheme.LIGHT_PAPER.id
             currentTheme = AppTheme.fromId(savedId)
             terminalFontSizeSp = prefs?.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SIZE) ?: DEFAULT_FONT_SIZE
-            val savedTerminalThemeId = prefs?.getString(KEY_TERMINAL_THEME, com.termius.clone.data.model.TerminalThemes.ClassicDark.id) ?: com.termius.clone.data.model.TerminalThemes.ClassicDark.id
+            val savedTerminalThemeId = prefs?.getString(KEY_TERMINAL_THEME, com.termius.clone.data.model.TerminalThemes.PaperLight.id) ?: com.termius.clone.data.model.TerminalThemes.PaperLight.id
             currentTerminalTheme = com.termius.clone.data.model.TerminalThemes.getThemeById(savedTerminalThemeId)
         }
     }

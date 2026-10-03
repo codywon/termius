@@ -58,6 +58,7 @@ fun TerminalAccessoryBar(
     onRequestShowKeyboard: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val theme = LocalAppTheme.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val clipboardManager = LocalClipboardManager.current
     val commands by QuickCommandManager.commands.collectAsState()
@@ -78,13 +79,13 @@ fun TerminalAccessoryBar(
                 // 只有在输入法模式下才应用 imePadding 贴合系统键盘；快捷键与电脑键盘模式下收起输入法，不使用 imePadding 避免叠加
                 if (currentMode == TerminalInputMode.IME) Modifier.imePadding() else Modifier
             )
-            .background(ObsidianSurfaceContainerLowest)
+            .background(theme.surfaceContainerLow)
     ) {
         // -------------------------------------------------------------------------
         // 1. 顶层 Tab 控制栏 (参考网易 UU 远程：输入法 | 快捷键 | 电脑键盘 | 关闭)
         // -------------------------------------------------------------------------
         Surface(
-            color = ObsidianSurfaceContainerLow,
+            color = theme.surfaceContainerLow,
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -490,6 +491,7 @@ private fun UUTabItem(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val theme = LocalAppTheme.current
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -504,7 +506,7 @@ private fun UUTabItem(
             Icon(
                 imageVector = icon,
                 contentDescription = title,
-                tint = if (isSelected) ObsidianSecondary else ObsidianTextMuted,
+                tint = if (isSelected) theme.primary else theme.textMuted,
                 modifier = Modifier.size(15.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -512,7 +514,7 @@ private fun UUTabItem(
                 text = title,
                 fontSize = 13.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                color = if (isSelected) ObsidianSecondary else ObsidianTextSecondary
+                color = if (isSelected) theme.primary else theme.textSecondary
             )
         }
 
@@ -523,7 +525,7 @@ private fun UUTabItem(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth(0.6f)
                     .height(2.5.dp)
-                    .background(ObsidianSecondary, RoundedCornerShape(1.dp))
+                    .background(theme.primary, RoundedCornerShape(1.dp))
             )
         }
     }
@@ -541,6 +543,7 @@ private fun QuickCommandCard(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit
 ) {
+    val theme = LocalAppTheme.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -548,10 +551,10 @@ private fun QuickCommandCard(
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp),
-        color = ObsidianSurfaceContainerLow,
+        color = theme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isEditMode) ObsidianPrimary.copy(alpha = 0.5f) else ObsidianOutlineVariant
+            if (isEditMode) theme.primary.copy(alpha = 0.5f) else theme.outline.copy(alpha = 0.35f)
         )
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp)) {
@@ -562,7 +565,7 @@ private fun QuickCommandCard(
             ) {
                 Text(
                     text = command.title,
-                    color = ObsidianTextPrimary,
+                    color = theme.textPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
@@ -572,7 +575,7 @@ private fun QuickCommandCard(
                 if (command.subtitle.isNotBlank()) {
                     Text(
                         text = command.subtitle,
-                        color = ObsidianTextSecondary,
+                        color = theme.textSecondary,
                         fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -752,23 +755,29 @@ private fun CommandEditDialog(
 private fun AccessoryButton(
     label: String,
     isActive: Boolean = false,
-    activeBg: Color = ObsidianPrimary.copy(alpha = 0.2f),
-    activeBorder: Color = ObsidianPrimary,
-    textColor: Color = ObsidianTextPrimary,
-    bgColor: Color = ObsidianSurfaceContainerHigh,
+    activeBg: Color? = null,
+    activeBorder: Color? = null,
+    textColor: Color? = null,
+    bgColor: Color? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val theme = LocalAppTheme.current
+    val resolvedActiveBg = activeBg ?: theme.primary.copy(alpha = 0.2f)
+    val resolvedActiveBorder = activeBorder ?: theme.primary
+    val resolvedTextColor = textColor ?: theme.textPrimary
+    val resolvedBgColor = bgColor ?: theme.surfaceContainerHigh
+
     Surface(
         modifier = modifier
             .height(34.dp)
             .clip(RoundedCornerShape(6.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(6.dp),
-        color = if (isActive) activeBg else bgColor,
+        color = if (isActive) resolvedActiveBg else resolvedBgColor,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isActive) activeBorder else ObsidianOutlineVariant
+            if (isActive) resolvedActiveBorder else theme.outline.copy(alpha = 0.35f)
         )
     ) {
         Box(
@@ -779,7 +788,7 @@ private fun AccessoryButton(
                 text = label,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = if (isActive) ObsidianPrimary else textColor,
+                color = if (isActive) theme.primary else resolvedTextColor,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 softWrap = false
@@ -797,20 +806,21 @@ private fun AccessoryIconButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val theme = LocalAppTheme.current
     Surface(
         modifier = modifier
             .size(34.dp)
             .clip(RoundedCornerShape(6.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(6.dp),
-        color = ObsidianSurfaceContainerHigh,
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+        color = theme.surfaceContainerHigh,
+        border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = ObsidianTextPrimary,
+                tint = theme.textPrimary,
                 modifier = Modifier.size(18.dp)
             )
         }

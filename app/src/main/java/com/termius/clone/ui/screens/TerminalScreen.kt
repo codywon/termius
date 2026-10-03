@@ -56,11 +56,15 @@ fun TerminalScreen(
     }
 
     val theme = LocalAppTheme.current
+    val termTheme = ThemeManager.currentTerminalTheme
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(color = ObsidianSurfaceContainerLowest) {
+            Surface(
+                color = theme.surfaceContainerLow,
+                shadowElevation = if (theme.isDark) 0.dp else 1.dp
+            ) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     // Header Bar with Session Tabs (Clean TermX Mobile Style)
                     Row(
@@ -70,10 +74,10 @@ fun TerminalScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = ObsidianTextPrimary)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = theme.textPrimary)
                         }
 
-                        // Session Tabs Strip
+                        // Session Tabs Strip (极简现代扁平微胶囊设计，彻底去除绿框灰底)
                         Row(
                             modifier = Modifier
                                 .weight(1f)
@@ -87,50 +91,59 @@ fun TerminalScreen(
 
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) ObsidianSurfaceContainerHighest else ObsidianSurfaceContainerLow,
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isSelected) ObsidianPrimary.copy(alpha = 0.8f) else ObsidianOutlineVariant
-                                    ),
+                                    color = if (isSelected) {
+                                        theme.primary.copy(alpha = if (theme.isDark) 0.20f else 0.12f)
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                    border = if (isSelected) {
+                                        androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
+                                    } else null,
                                     onClick = { SessionManager.selectSession(session.id) }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         // Status dot
                                         val dotColor = when (sessionState) {
-                                            SessionState.CONNECTED -> theme.primary
-                                            SessionState.CONNECTING, SessionState.AUTHENTICATING -> ObsidianTertiary
-                                            SessionState.ERROR, SessionState.DISCONNECTED -> ObsidianError
+                                            SessionState.CONNECTED -> Color(0xFF22C55E)
+                                            SessionState.CONNECTING, SessionState.AUTHENTICATING -> Color(0xFFF59E0B)
+                                            SessionState.ERROR, SessionState.DISCONNECTED -> Color(0xFFEF4444)
                                         }
                                         Box(
                                             modifier = Modifier
                                                 .size(7.dp)
-                                                .background(dotColor, androidx.compose.foundation.shape.CircleShape)
+                                                .background(dotColor, CircleShape)
                                         )
 
                                         Text(
                                             text = "${session.host.username}@${session.host.label}",
-                                            color = if (isSelected) Color.White else ObsidianTextSecondary,
+                                            color = if (isSelected) {
+                                                if (theme.isDark) theme.primary else theme.textPrimary
+                                            } else {
+                                                theme.textSecondary
+                                            },
                                             fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                             fontFamily = FontFamily.Monospace,
                                             maxLines = 1,
                                             softWrap = false
                                         )
 
-                                        IconButton(
-                                            onClick = { SessionManager.closeSession(context, session.id) },
-                                            modifier = Modifier.size(16.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Close",
-                                                tint = ObsidianTextMuted,
-                                                modifier = Modifier.size(12.dp)
-                                            )
+                                        if (sessions.size > 1) {
+                                            IconButton(
+                                                onClick = { SessionManager.closeSession(context, session.id) },
+                                                modifier = Modifier.size(16.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Close",
+                                                    tint = if (isSelected) theme.primary.copy(alpha = 0.7f) else theme.textMuted,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -139,7 +152,7 @@ fun TerminalScreen(
 
                         if (activeSession != null) {
                             IconButton(onClick = { showDisconnectDialog = true }) {
-                                Icon(Icons.Default.PowerSettingsNew, contentDescription = "断开连接", tint = ObsidianError)
+                                Icon(Icons.Default.PowerSettingsNew, contentDescription = "断开连接", tint = Color(0xFFEF4444).copy(alpha = 0.88f))
                             }
                         }
                     }
@@ -167,13 +180,13 @@ fun TerminalScreen(
                 )
             }
         },
-        containerColor = ObsidianBackground
+        containerColor = termTheme.background
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(ObsidianBackground)
+                .background(termTheme.background)
         ) {
             if (activeSession != null) {
                 TerminalView(
@@ -190,7 +203,7 @@ fun TerminalScreen(
                     }
                 )
 
-                // 当模式为 HIDDEN 时，在右下角悬浮一个黑曜石风格的极简键盘唤醒胶囊
+                // 当模式为 HIDDEN 时，在右下角悬浮一个极简键盘唤醒胶囊
                 if (currentInputMode == TerminalInputMode.HIDDEN) {
                     Surface(
                         modifier = Modifier
@@ -203,16 +216,17 @@ fun TerminalScreen(
                                 keyboardController?.show()
                             },
                         shape = CircleShape,
-                        color = ObsidianSurfaceContainerHigh.copy(alpha = 0.9f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                        color = theme.surfaceContainerHigh.copy(alpha = 0.95f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.5f)),
+                        shadowElevation = 4.dp
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(Icons.Default.Keyboard, contentDescription = "Open Keyboard", tint = ObsidianPrimary, modifier = Modifier.size(16.dp))
-                            Text("键盘", color = ObsidianTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Icon(Icons.Default.Keyboard, contentDescription = "Open Keyboard", tint = theme.primary, modifier = Modifier.size(16.dp))
+                            Text(if (com.termius.clone.ui.theme.Strings.isZh) "键盘" else "Keyboard", color = theme.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -221,7 +235,7 @@ fun TerminalScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No active terminal sessions", color = ObsidianTextMuted)
+                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "暂无活跃终端会话" else "No active terminal sessions", color = theme.textMuted)
                 }
             }
         }
@@ -232,15 +246,19 @@ fun TerminalScreen(
             onDismissRequest = { showDisconnectDialog = false },
             title = {
                 Text(
-                    text = "断开连接",
+                    text = if (com.termius.clone.ui.theme.Strings.isZh) "断开连接" else "Disconnect",
                     fontWeight = FontWeight.Bold,
-                    color = ObsidianTextPrimary
+                    color = theme.textPrimary
                 )
             },
             text = {
                 Text(
-                    text = "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？",
-                    color = ObsidianTextPrimary,
+                    text = if (com.termius.clone.ui.theme.Strings.isZh) {
+                        "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？"
+                    } else {
+                        "Are you sure you want to disconnect from ${activeSession.host.label} (${activeSession.host.hostname})?"
+                    },
+                    color = theme.textPrimary,
                     fontSize = 13.sp
                 )
             },
@@ -254,14 +272,14 @@ fun TerminalScreen(
                             onNavigateBack()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ObsidianError, contentColor = Color.White)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444), contentColor = Color.White)
                 ) {
-                    Text("断开", fontWeight = FontWeight.Bold)
+                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "断开" else "Disconnect", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectDialog = false }) {
-                    Text("取消", color = ObsidianTextSecondary)
+                    Text(if (com.termius.clone.ui.theme.Strings.isZh) "取消" else "Cancel", color = theme.textSecondary)
                 }
             },
             containerColor = theme.surfaceContainerLow

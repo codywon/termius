@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.termius.clone.data.local.AppDatabase
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.terminal.session.SessionManager
+import com.termius.clone.terminal.session.SessionState
 import com.termius.clone.ui.components.AppUpdateDialog
 import com.termius.clone.ui.components.UpdateUiState
 import com.termius.clone.ui.theme.*
@@ -48,6 +49,7 @@ fun HostListScreen(
 
     val hosts by db.hostDao().getAllHosts().collectAsState(initial = emptyList())
     val identities by db.identityDao().getAllIdentities().collectAsState(initial = emptyList())
+    val sessions by SessionManager.sessions.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedTag by remember { mutableStateOf("全部") }
@@ -200,8 +202,12 @@ fun HostListScreen(
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     items(filteredHosts, key = { it.id }) { host ->
+                        val activeSession = sessions.find { it.host.id == host.id }
+                        val sessionState by (activeSession?.sessionState ?: remember { kotlinx.coroutines.flow.MutableStateFlow(SessionState.DISCONNECTED) }).collectAsState()
+
                         ConnectBotHostItem(
                             host = host,
+                            sessionState = sessionState,
                             onConnect = {
                                 try {
                                     val identity = identities.find { it.id == host.identityId }
@@ -281,6 +287,7 @@ fun HostListScreen(
 @Composable
 fun ConnectBotHostItem(
     host: HostEntity,
+    sessionState: SessionState?,
     onConnect: () -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
@@ -293,6 +300,35 @@ fun ConnectBotHostItem(
         Color(android.graphics.Color.parseColor(host.colorTag))
     } catch (e: Exception) {
         theme.primary
+    }
+
+    // 联网状态判定
+    val isOnline = sessionState == SessionState.CONNECTED
+    val isPending = sessionState == SessionState.CONNECTING || sessionState == SessionState.AUTHENTICATING
+    val isError = sessionState == SessionState.ERROR
+
+    // 状态外圈颜色：绿圈(已联网)、黄圈(连接中)、红圈(断开或报错)、默认设备色
+    val ringBorderColor = when {
+        isOnline -> Color(0xFF22C55E)
+        isPending -> Color(0xFFF59E0B)
+        isError -> Color(0xFFEF4444)
+        else -> colorTag.copy(alpha = 0.35f)
+    }
+
+    val ringBorderWidth = if (isOnline || isPending || isError) 2.dp else 1.dp
+
+    val iconBgColor = when {
+        isOnline -> Color(0xFF22C55E).copy(alpha = 0.12f)
+        isPending -> Color(0xFFF59E0B).copy(alpha = 0.12f)
+        isError -> Color(0xFFEF4444).copy(alpha = 0.12f)
+        else -> colorTag.copy(alpha = 0.12f)
+    }
+
+    val iconTintColor = when {
+        isOnline -> Color(0xFF22C55E)
+        isPending -> Color(0xFFF59E0B)
+        isError -> Color(0xFFEF4444)
+        else -> colorTag
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -311,20 +347,36 @@ fun ConnectBotHostItem(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左侧圆形图标 (参考 ConnectBot 图 1)
+                // 左侧圆形图标：根据联网与断开状态反馈红圈、绿圈、黄圈与状态角标
                 Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(colorTag.copy(alpha = 0.15f), CircleShape)
-                        .border(1.dp, colorTag.copy(alpha = 0.4f), CircleShape),
+                    modifier = Modifier.size(42.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Laptop,
-                        contentDescription = null,
-                        tint = colorTag,
-                        modifier = Modifier.size(22.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(iconBgColor, CircleShape)
+                            .border(ringBorderWidth, ringBorderColor, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Laptop,
+                            contentDescription = null,
+                            tint = iconTintColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // 右下角状态指示小圆点 (在线绿点 / 异常红点 / 连接黄点)
+                    if (isOnline || isPending || isError) {
+                        Box(
+                            modifier = Modifier
+                                .size(11.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(ringBorderColor, CircleShape)
+                                .border(1.5.dp, theme.background, CircleShape)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -338,7 +390,7 @@ fun ConnectBotHostItem(
                             text = host.label.ifBlank { host.hostname },
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            color = ObsidianTextPrimary,
+                            color = theme.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
@@ -352,7 +404,7 @@ fun ConnectBotHostItem(
                                 Text(
                                     text = host.groupName,
                                     fontSize = 10.sp,
-                                    color = ObsidianTextSecondary,
+                                    color = theme.textSecondary,
                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                 )
                             }
@@ -365,13 +417,13 @@ fun ConnectBotHostItem(
                         text = "ssh://${host.username}@${host.hostname}:${host.port}",
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = ObsidianTextSecondary,
+                        color = theme.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // 右侧：三点操作菜单 (对标 ConnectBot 图 1)
+                // 右侧：三点操作菜单
                 Box {
                     IconButton(
                         onClick = { showMenu = true },
@@ -380,7 +432,7 @@ fun ConnectBotHostItem(
                         Icon(
                             Icons.Default.MoreVert,
                             contentDescription = "Options",
-                            tint = ObsidianTextMuted,
+                            tint = theme.textMuted,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -391,7 +443,7 @@ fun ConnectBotHostItem(
                         modifier = Modifier.background(theme.surfaceContainerHigh)
                     ) {
                         DropdownMenuItem(
-                            text = { Text(Strings.connect, color = ObsidianTextPrimary) },
+                            text = { Text(Strings.connect, color = theme.textPrimary) },
                             leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, tint = theme.primary) },
                             onClick = {
                                 showMenu = false
@@ -399,32 +451,32 @@ fun ConnectBotHostItem(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("SFTP", color = ObsidianTextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ObsidianSecondary) },
+                            text = { Text("SFTP", color = theme.textPrimary) },
+                            leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, tint = theme.primary) },
                             onClick = {
                                 showMenu = false
                                 onOpenSftp()
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text(Strings.edit, color = ObsidianTextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = ObsidianTextSecondary) },
+                            text = { Text(Strings.edit, color = theme.textPrimary) },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = theme.textSecondary) },
                             onClick = {
                                 showMenu = false
                                 onEdit()
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text(Strings.copy, color = ObsidianTextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = ObsidianTextSecondary) },
+                            text = { Text(Strings.copy, color = theme.textPrimary) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = theme.textSecondary) },
                             onClick = {
                                 showMenu = false
                                 onDuplicate()
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text(Strings.delete, color = ObsidianError) },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = ObsidianError) },
+                            text = { Text(Strings.delete, color = Color(0xFFEF4444)) },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF4444)) },
                             onClick = {
                                 showMenu = false
                                 onDelete()
@@ -436,7 +488,7 @@ fun ConnectBotHostItem(
         }
 
         HorizontalDivider(
-            color = ObsidianOutlineVariant.copy(alpha = 0.25f),
+            color = theme.outline.copy(alpha = 0.2f),
             thickness = 0.5.dp
         )
     }
