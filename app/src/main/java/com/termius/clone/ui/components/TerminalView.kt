@@ -90,8 +90,11 @@ fun TerminalView(
     var scrollAccumulator by remember { mutableFloatStateOf(0f) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // 用于承载系统 IME 输入法的隐藏输入框状态
-    var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    // 关键哨兵字符：确保系统输入法在按退格键时永远有字符可删，彻底解决软键盘回删不起作用的业界难题
+    val sentinel = "\u200B"
+    var textFieldValue by remember {
+        mutableStateOf(TextFieldValue(sentinel, androidx.compose.ui.text.TextRange(sentinel.length)))
+    }
 
     val density = LocalDensity.current
     val textPaint = remember(localFontSizeSp) {
@@ -117,6 +120,7 @@ fun TerminalView(
             val cols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
             val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
             session.resize(cols, rows, viewSize.width, viewSize.height)
+            scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
         }
     }
 
@@ -201,20 +205,31 @@ fun TerminalView(
         BasicTextField(
             value = textFieldValue,
             onValueChange = { newValue ->
-                val newText = newValue.text
-                if (newText.isNotEmpty()) {
-                    if (isCtrlActive && newText.length == 1) {
-                        session.write(TerminalKeyCodes.getCtrlCode(newText[0]))
-                        onConsumeCtrl()
-                    } else if (isAltActive && newText.length == 1) {
-                        session.write(TerminalKeyCodes.getAltSequence(newText[0]))
-                        onConsumeAlt()
-                    } else {
-                        session.write(newText)
-                    }
-                    textFieldValue = TextFieldValue("")
-                } else {
+                if (newValue.composition != null) {
+                    // 输入法正在组合候选字符（如拼音输入）
                     textFieldValue = newValue
+                } else {
+                    val newText = newValue.text
+                    // 软键盘按下了退格键：输入框内的哨兵字符被删除 (长度小于哨兵长度或为空)
+                    if (newText.isEmpty() || newText.length < sentinel.length) {
+                        session.write(TerminalKeyCodes.BACKSPACE)
+                        textFieldValue = TextFieldValue(sentinel, androidx.compose.ui.text.TextRange(sentinel.length))
+                    } else {
+                        val insertedText = newText.replace(sentinel, "")
+                        if (insertedText.isNotEmpty()) {
+                            if (isCtrlActive && insertedText.length == 1) {
+                                session.write(TerminalKeyCodes.getCtrlCode(insertedText[0]))
+                                onConsumeCtrl()
+                            } else if (isAltActive && insertedText.length == 1) {
+                                session.write(TerminalKeyCodes.getAltSequence(insertedText[0]))
+                                onConsumeAlt()
+                            } else {
+                                session.write(insertedText)
+                            }
+                        }
+                        // 无论如何，均将输入框重置为持有哨兵字符，以便下一次按退格键能继续准确捕获
+                        textFieldValue = TextFieldValue(sentinel, androidx.compose.ui.text.TextRange(sentinel.length))
+                    }
                 }
             },
             modifier = Modifier

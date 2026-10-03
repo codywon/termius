@@ -54,16 +54,6 @@ fun HostListScreen(
     var hostToEdit by remember { mutableStateOf<HostEntity?>(null) }
     var showEditDialog by remember { mutableStateOf(false) }
 
-    var updateUiState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
-
-    // 启动时静默检查更新
-    LaunchedEffect(Unit) {
-        val result = AppUpdateManager.checkUpdate(context, isManual = false)
-        if (result is UpdateCheckResult.HasUpdate) {
-            updateUiState = UpdateUiState.HasUpdate(result.info)
-        }
-    }
-
     // 动态提取用户实际存在的标签
     val existingTags = remember(hosts) {
         val tags = hosts.map { it.groupName.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -95,45 +85,15 @@ fun HostListScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = Strings.appTitle,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
-                            color = ObsidianTextPrimary,
-                            modifier = Modifier.weight(1f)
+                            color = ObsidianTextPrimary
                         )
-
-                        // 检查更新按钮
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    Toast.makeText(context, if (Strings.isZh) "正在检查更新..." else "Checking...", Toast.LENGTH_SHORT).show()
-                                    when (val result = AppUpdateManager.checkUpdate(context, isManual = true)) {
-                                        is UpdateCheckResult.HasUpdate -> {
-                                            updateUiState = UpdateUiState.HasUpdate(result.info)
-                                        }
-                                        is UpdateCheckResult.NoUpdate -> {
-                                            Toast.makeText(context, if (Strings.isZh) "已是最新版本 (v${result.currentVersion})" else "Up to date (v${result.currentVersion})", Toast.LENGTH_SHORT).show()
-                                        }
-                                        is UpdateCheckResult.Error -> {
-                                            Toast.makeText(context, if (Strings.isZh) "检查更新失败: ${result.message}" else "Failed: ${result.message}", Toast.LENGTH_SHORT).show()
-                                        }
-                                        else -> {}
-                                    }
-                                }
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDownload,
-                                contentDescription = Strings.checkUpdates,
-                                tint = theme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
                     }
 
                     // 搜索输入框 (紧凑极简)
@@ -308,53 +268,6 @@ fun HostListScreen(
             }
         )
     }
-
-    // 在线自动升级对话框
-    AppUpdateDialog(
-        state = updateUiState,
-        onStartDownload = { info ->
-            scope.launch {
-                updateUiState = UpdateUiState.Downloading(
-                    info = info,
-                    progress = 0f,
-                    downloadedBytes = 0L,
-                    totalBytes = info.fileSize,
-                    speedText = "测速竞选...",
-                    channelName = "优选节点中..."
-                )
-                val result = AppUpdateManager.downloadApk(context, info) { progress, downloaded, total, speed, channel ->
-                    updateUiState = UpdateUiState.Downloading(info, progress, downloaded, total, speed, channel)
-                }
-                result.onSuccess { apkFile ->
-                    if (AppUpdateManager.canInstallPackages(context)) {
-                        updateUiState = UpdateUiState.ReadyToInstall(apkFile, info)
-                        AppUpdateManager.installApk(context, apkFile)
-                    } else {
-                        updateUiState = UpdateUiState.PermissionRequired(apkFile, info)
-                    }
-                }.onFailure { err ->
-                    updateUiState = UpdateUiState.Error(err.message ?: "下载失败", info)
-                }
-            }
-        },
-        onInstall = { file ->
-            if (AppUpdateManager.canInstallPackages(context)) {
-                AppUpdateManager.installApk(context, file)
-            } else {
-                val currentInfo = (updateUiState as? UpdateUiState.ReadyToInstall)?.info
-                if (currentInfo != null) {
-                    updateUiState = UpdateUiState.PermissionRequired(file, currentInfo)
-                }
-            }
-        },
-        onIgnore = { tagName ->
-            AppUpdateManager.ignoreVersion(context, tagName)
-            updateUiState = UpdateUiState.Idle
-        },
-        onDismiss = {
-            updateUiState = UpdateUiState.Idle
-        }
-    )
 }
 
 /**

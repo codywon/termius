@@ -22,14 +22,26 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("termx_release.jks")
+            storePassword = "termx123456"
+            keyAlias = "termx"
+            keyPassword = "termx123456"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

@@ -274,10 +274,14 @@ private fun CommandCard(
 
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = theme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+        color = if (theme.isDark) theme.surfaceContainer else theme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 0.5.dp,
+            color = if (theme.isDark) theme.outline.copy(alpha = 0.35f) else theme.outline.copy(alpha = 0.6f)
+        ),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -320,21 +324,21 @@ private fun CommandCard(
             }
 
             if (command.description.isNotBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = command.description,
-                    fontSize = 11.sp,
-                    color = ObsidianTextMuted,
-                    lineHeight = 15.sp
+                    fontSize = 12.sp,
+                    color = ObsidianTextSecondary,
+                    lineHeight = 16.sp
                 )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 代码命令行展示
+            // 代码命令行展示 (清爽代码盒)
             Surface(
                 shape = RoundedCornerShape(6.dp),
-                color = ObsidianSurfaceContainerLowest,
+                color = if (theme.isDark) theme.background.copy(alpha = 0.7f) else theme.surfaceContainer.copy(alpha = 0.5f),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onCopy() }
@@ -342,7 +346,7 @@ private fun CommandCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(

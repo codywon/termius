@@ -45,6 +45,7 @@ fun TerminalScreen(
     var isCtrlActive by remember { mutableStateOf(false) }
     var isAltActive by remember { mutableStateOf(false) }
     var currentInputMode by remember { mutableStateOf(TerminalInputMode.IME) }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
 
     val activeSession = sessions.find { it.id == currentSessionId }
 
@@ -134,8 +135,8 @@ fun TerminalScreen(
                         }
 
                         if (activeSession != null) {
-                            IconButton(onClick = { activeSession.disconnect() }) {
-                                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Disconnect", tint = ObsidianError)
+                            IconButton(onClick = { showDisconnectDialog = true }) {
+                                Icon(Icons.Default.PowerSettingsNew, contentDescription = "断开连接", tint = ObsidianError)
                             }
                         }
                     }
@@ -221,5 +222,46 @@ fun TerminalScreen(
                 }
             }
         }
+    }
+
+    if (showDisconnectDialog && activeSession != null) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectDialog = false },
+            title = {
+                Text(
+                    text = "断开连接",
+                    fontWeight = FontWeight.Bold,
+                    color = ObsidianTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "确定要断开与 ${activeSession.host.label} (${activeSession.host.hostname}) 的 SSH 会话吗？",
+                    color = ObsidianTextPrimary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val sid = activeSession.id
+                        showDisconnectDialog = false
+                        SessionManager.closeSession(context, sid)
+                        if (sessions.size <= 1) {
+                            onNavigateBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ObsidianError, contentColor = Color.White)
+                ) {
+                    Text("断开", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectDialog = false }) {
+                    Text("取消", color = ObsidianTextSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
     }
 }

@@ -101,7 +101,7 @@ enum class AppTheme(
     val textMuted: Color get() = if (isDark) Color(0xFF879484) else Color(0xFF8C959F)
 
     companion object {
-        fun fromId(id: String): AppTheme = entries.find { it.id == id } ?: EMERALD
+        fun fromId(id: String): AppTheme = entries.find { it.id == id } ?: LIGHT_PAPER
     }
 }
 
@@ -117,7 +117,7 @@ object ThemeManager {
 
     private var prefs: SharedPreferences? = null
 
-    var currentTheme by mutableStateOf(AppTheme.EMERALD)
+    var currentTheme by mutableStateOf(AppTheme.LIGHT_PAPER)
         private set
 
     var terminalFontSizeSp: Float by mutableFloatStateOf(DEFAULT_FONT_SIZE)
@@ -126,7 +126,7 @@ object ThemeManager {
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val savedId = prefs?.getString(KEY_THEME, AppTheme.EMERALD.id) ?: AppTheme.EMERALD.id
+            val savedId = prefs?.getString(KEY_THEME, AppTheme.LIGHT_PAPER.id) ?: AppTheme.LIGHT_PAPER.id
             currentTheme = AppTheme.fromId(savedId)
             terminalFontSizeSp = prefs?.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SIZE) ?: DEFAULT_FONT_SIZE
         }

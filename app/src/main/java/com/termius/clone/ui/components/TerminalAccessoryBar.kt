@@ -164,6 +164,7 @@ fun TerminalAccessoryBar(
                 ) {
                     AccessoryButton(label = "ESC", onClick = { onSendKey(TerminalKeyCodes.ESC) })
                     AccessoryButton(label = "TAB", onClick = { onSendKey(TerminalKeyCodes.TAB) })
+                    AccessoryButton(label = "⌫", textColor = ObsidianError, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
                     AccessoryButton(
                         label = "CTRL",
                         isActive = isCtrlActive,
@@ -416,7 +417,7 @@ fun TerminalAccessoryBar(
                         AccessoryButton("END", modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.END) }
                         AccessoryButton("PGUP", modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_UP) }
                         AccessoryButton("PGDN", modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_DOWN) }
-                        AccessoryButton("BACK", modifier = Modifier.weight(1.2f)) { onSendKey(TerminalKeyCodes.BACKSPACE) }
+                        AccessoryButton("⌫ 退格", textColor = ObsidianError, modifier = Modifier.weight(1.3f)) { onSendKey(TerminalKeyCodes.BACKSPACE) }
                         AccessoryButton(
                             "ENTER",
                             textColor = Color.Black,

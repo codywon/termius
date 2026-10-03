@@ -113,31 +113,57 @@ class TerminalBuffer(
         val newAltScreen = Array(rows) { TerminalLine(cols) }
         val minCols = minOf(oldCols, cols)
 
-        if (oldRows > rows && !isUsingAltScreen) {
-            // 终端行数变小（如软键盘弹起），将顶部超出视口的有效行推进历史
-            val pushCount = oldRows - rows
-            for (r in 0 until pushCount) {
+        if (newRows < oldRows && !isUsingAltScreen) {
+            // 终端行数变小（软键盘弹起）：
+            // 仅当当前光标行超出新视口时，才向上滚动让光标位于底部
+            val linesToScroll = if (cursorRow >= newRows) {
+                cursorRow - newRows + 1
+            } else {
+                0
+            }
+
+            for (r in 0 until linesToScroll) {
                 if (oldMainScreen[r].hasContent()) {
                     if (history.size >= maxHistoryLines) history.removeFirst()
                     history.addLast(oldMainScreen[r].copy())
                 }
             }
-            for (r in 0 until rows) {
-                val oldR = r + pushCount
+
+            for (r in 0 until newRows) {
+                val oldR = r + linesToScroll
                 if (oldR in 0 until oldRows) {
                     for (c in 0 until minCols) {
                         newMainScreen[r].cells[c].copyFrom(oldMainScreen[oldR].cells[c])
                     }
                 }
             }
+            cursorRow = (cursorRow - linesToScroll).coerceIn(0, newRows - 1)
+        } else if (newRows > oldRows && !isUsingAltScreen) {
+            // 终端行数变大（软键盘收起）：
+            // 如果历史缓冲区中有内容，拉回对应行填补顶部，保持内容和光标自然沉底
+            val linesFromHistory = minOf(history.size, newRows - oldRows)
+            for (r in 0 until linesFromHistory) {
+                val histLine = history.removeLast()
+                for (c in 0 until minCols) {
+                    newMainScreen[r].cells[c].copyFrom(histLine.cells[c])
+                }
+            }
+            val minCopy = minOf(oldRows, newRows - linesFromHistory)
+            for (r in 0 until minCopy) {
+                for (c in 0 until minCols) {
+                    newMainScreen[r + linesFromHistory].cells[c].copyFrom(oldMainScreen[r].cells[c])
+                }
+            }
+            cursorRow = (cursorRow + linesFromHistory).coerceIn(0, newRows - 1)
         } else {
-            // 终端行数变大或不变（如软键盘收起），保持原有行
+            // 行数不变或使用 AltScreen
             val minRows = minOf(oldRows, rows)
             for (r in 0 until minRows) {
                 for (c in 0 until minCols) {
                     newMainScreen[r].cells[c].copyFrom(oldMainScreen[r].cells[c])
                 }
             }
+            cursorRow = cursorRow.coerceIn(0, rows - 1)
         }
 
         val minAltRows = minOf(oldRows, rows)
@@ -150,7 +176,6 @@ class TerminalBuffer(
         mainScreen = newMainScreen
         altScreen = newAltScreen
         cursorCol = cursorCol.coerceIn(0, cols - 1)
-        cursorRow = cursorRow.coerceIn(0, rows - 1)
     }
 
     fun writeChar(c: Char) {

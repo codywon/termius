@@ -230,7 +230,7 @@ fun EditHostDialog(
                             value = hostname,
                             onValueChange = { hostname = it.trim() },
                             label = { Text(if (Strings.isZh) "主机地址 (IP 或域名) *" else "Hostname / IP *") },
-                            placeholder = { Text("192.168.1.100 或 dl.codywon.top") },
+                            placeholder = { Text(if (Strings.isZh) "例如 192.168.1.100 或 server.com" else "e.g. 192.168.1.100 or server.com") },
                             trailingIcon = {
                                 IconButton(onClick = {
                                     val clipText = clipboard.getText()?.text
