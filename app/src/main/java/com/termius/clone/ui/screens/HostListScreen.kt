@@ -272,7 +272,7 @@ fun HostListScreen(
                                     val copyHost = host.copy(
                                         id = 0L,
                                         label = "${host.label} (副本)",
-                                        createdAt = System.currentTimeMillis()
+                                        lastConnected = 0L
                                     )
                                     db.hostDao().insertHost(copyHost)
                                     Toast.makeText(context, if (Strings.isZh) "已复制主机" else "Host duplicated", Toast.LENGTH_SHORT).show()
