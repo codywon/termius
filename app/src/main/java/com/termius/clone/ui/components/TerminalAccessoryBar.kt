@@ -3,9 +3,12 @@ package com.termius.clone.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -24,16 +27,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import com.termius.clone.data.local.QuickCommandManager
 import com.termius.clone.data.model.QuickCommand
 import com.termius.clone.terminal.engine.TerminalKeyCodes
@@ -66,6 +76,7 @@ fun TerminalAccessoryBar(
     var isEditMode by remember { mutableStateOf(false) }
     var editingCommand by remember { mutableStateOf<QuickCommand?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var contextMenuCommand by remember { mutableStateOf<QuickCommand?>(null) }
 
     // 如果处于 HIDDEN 状态，不渲染主体
     if (currentMode == TerminalInputMode.HIDDEN) {
@@ -245,10 +256,10 @@ fun TerminalAccessoryBar(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { isEditMode = !isEditMode },
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isEditMode) ObsidianPrimary.copy(alpha = 0.2f) else ObsidianSurfaceContainerHigh,
+                            color = if (isEditMode) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainerHigh,
                             border = androidx.compose.foundation.BorderStroke(
                                 1.dp,
-                                if (isEditMode) ObsidianPrimary else ObsidianOutlineVariant
+                                if (isEditMode) theme.primary else theme.outline.copy(alpha = 0.4f)
                             )
                         ) {
                             Column(
@@ -259,13 +270,13 @@ fun TerminalAccessoryBar(
                                 Icon(
                                     imageVector = if (isEditMode) Icons.Default.Check else Icons.Default.Edit,
                                     contentDescription = "Edit",
-                                    tint = if (isEditMode) ObsidianPrimary else ObsidianTextSecondary,
+                                    tint = if (isEditMode) theme.primary else theme.textSecondary,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = if (isEditMode) "完成" else "编辑",
-                                    color = if (isEditMode) ObsidianPrimary else ObsidianTextSecondary,
+                                    color = if (isEditMode) theme.primary else theme.textSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -280,8 +291,8 @@ fun TerminalAccessoryBar(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { showAddDialog = true },
                             shape = RoundedCornerShape(8.dp),
-                            color = ObsidianSurfaceContainerHigh,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainerHigh,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxSize(),
@@ -291,11 +302,11 @@ fun TerminalAccessoryBar(
                                 Icon(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = "Add",
-                                    tint = ObsidianSecondary,
+                                    tint = theme.primary,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text("添加", color = ObsidianSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                Text("添加", color = theme.primary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                             }
                         }
 
@@ -308,16 +319,16 @@ fun TerminalAccessoryBar(
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { QuickCommandManager.resetToDefaults() },
                                 shape = RoundedCornerShape(8.dp),
-                                color = ObsidianSurfaceContainer,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                                color = theme.surfaceContainer,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                             ) {
                                 Column(
                                     modifier = Modifier.fillMaxSize(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = ObsidianTextMuted, modifier = Modifier.size(16.dp))
-                                    Text("重置", color = ObsidianTextMuted, fontSize = 10.sp)
+                                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = theme.textMuted, modifier = Modifier.size(16.dp))
+                                    Text("重置", color = theme.textMuted, fontSize = 10.sp)
                                 }
                             }
                         }
@@ -337,17 +348,14 @@ fun TerminalAccessoryBar(
                         itemsIndexed(commands, key = { _, item -> item.id }) { index, item ->
                             QuickCommandCard(
                                 command = item,
+                                index = index,
+                                totalCount = commands.size,
                                 isEditMode = isEditMode,
-                                onClick = {
-                                    if (isEditMode) {
-                                        editingCommand = item
-                                    } else {
-                                        onSendKey(item.command)
-                                    }
-                                },
+                                onClick = { onSendKey(item.command) },
+                                onLongClick = { contextMenuCommand = item },
+                                onEdit = { editingCommand = item },
                                 onDelete = { QuickCommandManager.deleteCommand(item.id) },
-                                onMoveUp = { QuickCommandManager.moveUp(index) },
-                                onMoveDown = { QuickCommandManager.moveDown(index) }
+                                onMove = { fromIndex, toIndex -> QuickCommandManager.move(fromIndex, toIndex) }
                             )
                         }
                     }
@@ -478,6 +486,104 @@ fun TerminalAccessoryBar(
             }
         )
     }
+
+    contextMenuCommand?.let { cmd ->
+        AlertDialog(
+            onDismissRequest = { contextMenuCommand = null },
+            title = {
+                Text(
+                    text = cmd.title + if (cmd.subtitle.isNotBlank()) " (${cmd.subtitle})" else "",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = theme.textPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "执行命令: ${cmd.command.replace("\n", " [↵回车]")}",
+                        fontSize = 12.sp,
+                        color = theme.textSecondary,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    HorizontalDivider(color = theme.outline.copy(alpha = 0.3f), thickness = 0.5.dp)
+
+                    // 选项 1: 编辑指令
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                editingCommand = cmd
+                                contextMenuCommand = null
+                            },
+                        color = theme.surfaceContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                            Text("编辑此快捷键", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 选项 2: 拖拽排序
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                isEditMode = true
+                                contextMenuCommand = null
+                            },
+                        color = theme.surfaceContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.DragHandle, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                            Text("排序管理 (按住手柄自由拖动)", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    // 选项 3: 删除指令
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                QuickCommandManager.deleteCommand(cmd.id)
+                                contextMenuCommand = null
+                            },
+                        color = theme.surfaceContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                            Text("删除此快捷键", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { contextMenuCommand = null }) {
+                    Text("取消", color = theme.textSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
+    }
 }
 
 /**
@@ -533,33 +639,76 @@ private fun UUTabItem(
 
 /**
  * 快捷指令网格卡片 (双行显示：上部标题 + 下部中文注释)
+ * 支持：
+ * 1. 轻按发送指令 / 编辑模式下点击直接编辑
+ * 2. 长按弹出操作菜单 (编辑、拖动排序、删除)
+ * 3. 编辑模式下：移除左右小箭头彻底杜绝误触，支持按住拖拽手柄自由拖动排序
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QuickCommandCard(
     command: QuickCommand,
+    index: Int,
+    totalCount: Int,
     isEditMode: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    onMove: (fromIndex: Int, toIndex: Int) -> Unit
 ) {
     val theme = LocalAppTheme.current
+    val haptic = LocalHapticFeedback.current
+
+    var dragOffsetX by remember { mutableStateOf(0f) }
+    var dragOffsetY by remember { mutableStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(54.dp)
+            .height(56.dp)
+            .zIndex(if (isDragging) 10f else 1f)
+            .offset { IntOffset(dragOffsetX.roundToInt(), dragOffsetY.roundToInt()) }
+            .graphicsLayer {
+                if (isDragging) {
+                    scaleX = 1.08f
+                    scaleY = 1.08f
+                    shadowElevation = 14f
+                }
+            }
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = {
+                    if (isEditMode) {
+                        onEdit()
+                    } else {
+                        onClick()
+                    }
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            ),
         shape = RoundedCornerShape(8.dp),
-        color = theme.surfaceContainerLow,
+        color = if (isDragging) theme.surfaceContainerHigh else theme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (isEditMode) theme.primary.copy(alpha = 0.5f) else theme.outline.copy(alpha = 0.35f)
-        )
+            if (isDragging) 1.5.dp else 1.dp,
+            if (isDragging) theme.primary else if (isEditMode) theme.primary.copy(alpha = 0.55f) else theme.outline.copy(alpha = 0.35f)
+        ),
+        shadowElevation = if (isDragging) 8.dp else 0.dp
     ) {
-        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+        ) {
+            // 中心标题与副标题
             Column(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = if (isEditMode) 16.dp else 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -583,43 +732,106 @@ private fun QuickCommandCard(
                 }
             }
 
-            // 编辑状态下的操作覆盖物
+            // 编辑状态下的操作界面：杜绝误触，分立清晰
             if (isEditMode) {
-                // 删除按钮
-                IconButton(
-                    onClick = onDelete,
+                // 左下角：清晰的编辑铅笔小标识
+                Box(
                     modifier = Modifier
-                        .size(18.dp)
-                        .align(Alignment.TopEnd)
+                        .size(20.dp)
+                        .align(Alignment.BottomStart)
+                        .clip(CircleShape)
+                        .clickable(onClick = onEdit),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Delete",
-                        tint = ObsidianError,
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit",
+                        tint = theme.primary,
                         modifier = Modifier.size(13.dp)
                     )
                 }
 
-                // 左右微调排序按钮
-                Row(
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // 右上角：明确的删除红色小按钮 (带圆底，防误触)
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .align(Alignment.TopEnd)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                        .clickable(onClick = onDelete),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Move Left",
-                        tint = ObsidianTextMuted,
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clickable(onClick = onMoveUp)
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Delete",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(13.dp)
                     )
+                }
+
+                // 右下角：拖动手柄（专供拖动重排，彻底替代旧箭头）
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .align(Alignment.BottomEnd)
+                        .clip(RoundedCornerShape(4.dp))
+                        .pointerInput(command.id, index) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    isDragging = true
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffsetX += dragAmount.x
+                                    dragOffsetY += dragAmount.y
+
+                                    val thresholdX = 85.dp.toPx() * 0.6f
+                                    val thresholdY = 60.dp.toPx() * 0.6f
+
+                                    var targetIndex = index
+                                    if (dragOffsetX > thresholdX && (index % 3) < 2) {
+                                        targetIndex += 1
+                                        dragOffsetX -= 85.dp.toPx()
+                                    } else if (dragOffsetX < -thresholdX && (index % 3) > 0) {
+                                        targetIndex -= 1
+                                        dragOffsetX += 85.dp.toPx()
+                                    }
+
+                                    if (dragOffsetY > thresholdY && targetIndex + 3 < totalCount) {
+                                        targetIndex += 3
+                                        dragOffsetY -= 60.dp.toPx()
+                                    } else if (dragOffsetY < -thresholdY && targetIndex - 3 >= 0) {
+                                        targetIndex -= 3
+                                        dragOffsetY += 60.dp.toPx()
+                                    }
+
+                                    if (targetIndex != index && targetIndex in 0 until totalCount) {
+                                        onMove(index, targetIndex)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                },
+                                onDragEnd = {
+                                    isDragging = false
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                },
+                                onDragCancel = {
+                                    isDragging = false
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Move Right",
-                        tint = ObsidianTextMuted,
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clickable(onClick = onMoveDown)
+                        imageVector = Icons.Default.DragHandle,
+                        contentDescription = "Drag Handle",
+                        tint = if (isDragging) theme.primary else theme.textMuted,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -628,7 +840,7 @@ private fun QuickCommandCard(
 }
 
 /**
- * 自定义指令添加/编辑弹窗
+ * 自定义指令添加/编辑弹窗 (自适应深浅色主题，支持完全编辑名称、注释与指令文本)
  */
 @Composable
 private fun CommandEditDialog(
@@ -636,6 +848,7 @@ private fun CommandEditDialog(
     onDismiss: () -> Unit,
     onSave: (title: String, subtitle: String, cmd: String) -> Unit
 ) {
+    val theme = LocalAppTheme.current
     var title by remember { mutableStateOf(initialCommand?.title ?: "") }
     var subtitle by remember { mutableStateOf(initialCommand?.subtitle ?: "") }
     var commandText by remember { mutableStateOf(initialCommand?.command ?: "") }
@@ -644,9 +857,10 @@ private fun CommandEditDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(14.dp),
-            color = ObsidianSurfaceContainerLow,
-            border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            color = theme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            shadowElevation = 8.dp
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -656,7 +870,7 @@ private fun CommandEditDialog(
                     text = if (initialCommand == null) "添加快捷运维指令" else "编辑快捷指令",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = ObsidianTextPrimary
+                    color = theme.textPrimary
                 )
 
                 OutlinedTextField(
@@ -666,10 +880,10 @@ private fun CommandEditDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = ObsidianSurfaceContainer,
-                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                        focusedBorderColor = ObsidianPrimary,
-                        unfocusedBorderColor = ObsidianOutlineVariant
+                        focusedContainerColor = theme.surfaceContainer,
+                        unfocusedContainerColor = theme.surfaceContainer,
+                        focusedBorderColor = theme.primary,
+                        unfocusedBorderColor = theme.outline.copy(alpha = 0.4f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -681,10 +895,10 @@ private fun CommandEditDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = ObsidianSurfaceContainer,
-                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                        focusedBorderColor = ObsidianPrimary,
-                        unfocusedBorderColor = ObsidianOutlineVariant
+                        focusedContainerColor = theme.surfaceContainer,
+                        unfocusedContainerColor = theme.surfaceContainer,
+                        focusedBorderColor = theme.primary,
+                        unfocusedBorderColor = theme.outline.copy(alpha = 0.4f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -696,10 +910,10 @@ private fun CommandEditDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = ObsidianSurfaceContainer,
-                        unfocusedContainerColor = ObsidianSurfaceContainer,
-                        focusedBorderColor = ObsidianPrimary,
-                        unfocusedBorderColor = ObsidianOutlineVariant
+                        focusedContainerColor = theme.surfaceContainer,
+                        unfocusedContainerColor = theme.surfaceContainer,
+                        focusedBorderColor = theme.primary,
+                        unfocusedBorderColor = theme.outline.copy(alpha = 0.4f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -711,10 +925,10 @@ private fun CommandEditDialog(
                     Checkbox(
                         checked = appendEnter,
                         onCheckedChange = { appendEnter = it },
-                        colors = CheckboxDefaults.colors(checkedColor = ObsidianPrimary)
+                        colors = CheckboxDefaults.colors(checkedColor = theme.primary)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("自动追加回车 (直接在终端执行)", fontSize = 12.sp, color = ObsidianTextSecondary)
+                    Text("自动追加回车 (直接在终端执行)", fontSize = 12.sp, color = theme.textSecondary)
                 }
 
                 Row(
@@ -722,7 +936,7 @@ private fun CommandEditDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("取消", color = ObsidianTextSecondary)
+                        Text("取消", color = theme.textSecondary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -737,7 +951,10 @@ private fun CommandEditDialog(
                             }
                         },
                         enabled = title.isNotBlank() && commandText.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = theme.primary,
+                            contentColor = if (theme.isDark) Color.Black else Color.White
+                        ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("保存", fontWeight = FontWeight.Bold)

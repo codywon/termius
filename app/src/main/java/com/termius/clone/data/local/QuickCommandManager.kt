@@ -125,6 +125,25 @@ object QuickCommandManager {
         saveToDisk(current)
     }
 
+    fun move(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        val current = _commands.value.toMutableList()
+        if (fromIndex !in current.indices || toIndex !in current.indices) return
+        val item = current.removeAt(fromIndex)
+        current.add(toIndex, item)
+        _commands.value = current
+        saveToDisk(current)
+    }
+
+    fun swap(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        val current = _commands.value.toMutableList()
+        if (fromIndex !in current.indices || toIndex !in current.indices) return
+        Collections.swap(current, fromIndex, toIndex)
+        _commands.value = current
+        saveToDisk(current)
+    }
+
     fun resetToDefaults() {
         _commands.value = defaultCommands
         saveToDisk(defaultCommands)
