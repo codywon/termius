@@ -123,11 +123,15 @@ fun TerminalView(
     // 自动重算行与列并向 SSH PTY 发送尺寸更新 (加入 250ms 防抖，避免缩放途中的网络与重绘风暴)
     LaunchedEffect(viewSize, charWidth, charHeight) {
         delay(250)
-        if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
-            val cols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
-            val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
-            session.resize(cols, rows, viewSize.width, viewSize.height)
-            scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
+        try {
+            if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
+                val cols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
+                val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
+                session.resize(cols, rows, viewSize.width, viewSize.height)
+                scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
         }
     }
 
@@ -320,12 +324,6 @@ fun TerminalView(
             val unusedTick = renderTick // 订阅触发 Compose 刷新
             val buffer = session.terminalBuffer
             val theme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
-            val rows = buffer.rows
-            val cols = buffer.cols
-
-            val history = buffer.history
-            val totalHistory = history.size
-            val screen = buffer.currentScreen
 
             val defaultBg = theme.background
             val defaultFg = theme.foreground
@@ -336,131 +334,139 @@ fun TerminalView(
 
             drawIntoCanvas { canvas ->
                 try {
-                    val nativeCanvas = canvas.nativeCanvas
+                    buffer.withLock {
+                        val rows = buffer.rows
+                        val cols = buffer.cols
+                        val history = buffer.history
+                        val totalHistory = history.size
+                        val screen = if (buffer.isUsingAltScreen) buffer.altScreen else buffer.mainScreen
 
-                    for (r in 0 until rows) {
-                        val line = if (scrollOffsetLines > 0 && !buffer.isUsingAltScreen) {
-                            val historyIndex = totalHistory - scrollOffsetLines + r
-                            if (historyIndex in 0 until totalHistory) {
-                                history.getOrNull(historyIndex)
-                            } else {
-                                val screenRow = historyIndex - totalHistory
-                                if (screenRow in 0 until rows) screen.getOrNull(screenRow) else null
-                            }
-                        } else {
-                            screen.getOrNull(r)
-                        } ?: continue
+                        val nativeCanvas = canvas.nativeCanvas
 
-                        val yPos = r * charHeight
-                        val cells = line.cells
-                        val limitCols = minOf(cols, cells.size)
-
-                        // 1. 批量合并绘制连续自定义背景色 (减少 80% drawRect 调用)
-                        var bgStartCol = -1
-                        var currentBg = Color.Unspecified
-                        for (c in 0 until limitCols) {
-                            val cell = cells.getOrNull(c) ?: continue
-                            val cellBg = if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) cell.bgColor else Color.Unspecified
-                            if (cellBg != currentBg) {
-                                if (currentBg != Color.Unspecified && bgStartCol >= 0) {
-                                    drawRect(
-                                        color = currentBg,
-                                        topLeft = Offset(bgStartCol * charWidth, yPos),
-                                        size = Size((c - bgStartCol) * charWidth + 0.5f, charHeight)
-                                    )
+                        for (r in 0 until rows) {
+                            val line = if (scrollOffsetLines > 0 && !buffer.isUsingAltScreen) {
+                                val historyIndex = totalHistory - scrollOffsetLines + r
+                                if (historyIndex in 0 until totalHistory) {
+                                    history.getOrNull(historyIndex)
+                                } else {
+                                    val screenRow = historyIndex - totalHistory
+                                    if (screenRow in 0 until rows) screen.getOrNull(screenRow) else null
                                 }
-                                currentBg = cellBg
-                                bgStartCol = if (cellBg != Color.Unspecified) c else -1
+                            } else {
+                                screen.getOrNull(r)
+                            } ?: continue
+
+                            val yPos = r * charHeight
+                            val cells = line.cells
+                            val limitCols = minOf(cols, cells.size)
+
+                            // 1. 批量合并绘制连续自定义背景色 (减少 80% drawRect 调用)
+                            var bgStartCol = -1
+                            var currentBg = Color.Unspecified
+                            for (c in 0 until limitCols) {
+                                val cell = cells.getOrNull(c) ?: continue
+                                val cellBg = if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) cell.bgColor else Color.Unspecified
+                                if (cellBg != currentBg) {
+                                    if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                                        drawRect(
+                                            color = currentBg,
+                                            topLeft = Offset(bgStartCol * charWidth, yPos),
+                                            size = Size((c - bgStartCol) * charWidth + 0.5f, charHeight)
+                                        )
+                                    }
+                                    currentBg = cellBg
+                                    bgStartCol = if (cellBg != Color.Unspecified) c else -1
+                                }
                             }
+                            if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                                drawRect(
+                                    color = currentBg,
+                                    topLeft = Offset(bgStartCol * charWidth, yPos),
+                                    size = Size((limitCols - bgStartCol) * charWidth + 0.5f, charHeight)
+                                )
+                            }
+
+                            // 2. 文本按连续相同样式批量绘制 (Run-Length Text Batching)，消除每字符 String 对象分配与 90% JNI 调用
+                            var textStartCol = -1
+                            val textBuffer = StringBuilder()
+                            var currentRunFg = Color.Unspecified
+                            var currentRunBold = false
+                            var currentRunUnderline = false
+
+                            fun flushTextRun() {
+                                if (textBuffer.isNotEmpty() && textStartCol >= 0) {
+                                    textPaint.color = (if (currentRunFg != Color.Unspecified) currentRunFg else defaultFg).toArgb()
+                                    textPaint.isFakeBoldText = currentRunBold
+                                    textPaint.isUnderlineText = currentRunUnderline
+                                    nativeCanvas.drawText(
+                                        textBuffer.toString(),
+                                        textStartCol * charWidth,
+                                        yPos + baselineOffset,
+                                        textPaint
+                                    )
+                                    textBuffer.clear()
+                                    textStartCol = -1
+                                }
+                            }
+
+                            for (c in 0 until limitCols) {
+                                val cell = cells.getOrNull(c) ?: continue
+                                val ch = cell.char
+                                if (ch == ' ' || ch.code == 0) {
+                                    flushTextRun()
+                                    continue
+                                }
+
+                                if (cell.isWideChar) {
+                                    flushTextRun()
+                                    textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
+                                    textPaint.isFakeBoldText = cell.isBold
+                                    textPaint.isUnderlineText = cell.isUnderline
+                                    nativeCanvas.drawText(
+                                        ch.toString(),
+                                        c * charWidth,
+                                        yPos + baselineOffset,
+                                        textPaint
+                                    )
+                                    continue
+                                }
+
+                                val cellFg = cell.fgColor
+                                val cellBold = cell.isBold
+                                val cellUnderline = cell.isUnderline
+
+                                if (textStartCol < 0) {
+                                    textStartCol = c
+                                    currentRunFg = cellFg
+                                    currentRunBold = cellBold
+                                    currentRunUnderline = cellUnderline
+                                    textBuffer.append(ch)
+                                } else if (cellFg == currentRunFg && cellBold == currentRunBold && cellUnderline == currentRunUnderline) {
+                                    textBuffer.append(ch)
+                                } else {
+                                    flushTextRun()
+                                    textStartCol = c
+                                    currentRunFg = cellFg
+                                    currentRunBold = cellBold
+                                    currentRunUnderline = cellUnderline
+                                    textBuffer.append(ch)
+                                }
+                            }
+                            flushTextRun()
                         }
-                        if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+
+                        // 绘制终端光标 (如果未滚动且光标可见)
+                        if (scrollOffsetLines == 0 && buffer.isCursorVisible) {
+                            val safeCol = buffer.cursorCol.coerceIn(0, maxOf(0, cols - 1))
+                            val safeRow = buffer.cursorRow.coerceIn(0, maxOf(0, rows - 1))
+                            val cursorX = safeCol * charWidth
+                            val cursorY = safeRow * charHeight
                             drawRect(
-                                color = currentBg,
-                                topLeft = Offset(bgStartCol * charWidth, yPos),
-                                size = Size((limitCols - bgStartCol) * charWidth + 0.5f, charHeight)
+                                color = defaultCursor.copy(alpha = 0.7f),
+                                topLeft = Offset(cursorX, cursorY),
+                                size = Size(charWidth, charHeight)
                             )
                         }
-
-                        // 2. 文本按连续相同样式批量绘制 (Run-Length Text Batching)，消除每字符 String 对象分配与 90% JNI 调用
-                        var textStartCol = -1
-                        val textBuffer = StringBuilder()
-                        var currentRunFg = Color.Unspecified
-                        var currentRunBold = false
-                        var currentRunUnderline = false
-
-                        fun flushTextRun() {
-                            if (textBuffer.isNotEmpty() && textStartCol >= 0) {
-                                textPaint.color = (if (currentRunFg != Color.Unspecified) currentRunFg else defaultFg).toArgb()
-                                textPaint.isFakeBoldText = currentRunBold
-                                textPaint.isUnderlineText = currentRunUnderline
-                                nativeCanvas.drawText(
-                                    textBuffer.toString(),
-                                    textStartCol * charWidth,
-                                    yPos + baselineOffset,
-                                    textPaint
-                                )
-                                textBuffer.clear()
-                                textStartCol = -1
-                            }
-                        }
-
-                        for (c in 0 until limitCols) {
-                            val cell = cells.getOrNull(c) ?: continue
-                            val ch = cell.char
-                            if (ch == ' ' || ch.code == 0) {
-                                flushTextRun()
-                                continue
-                            }
-
-                            if (cell.isWideChar) {
-                                flushTextRun()
-                                textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
-                                textPaint.isFakeBoldText = cell.isBold
-                                textPaint.isUnderlineText = cell.isUnderline
-                                nativeCanvas.drawText(
-                                    ch.toString(),
-                                    c * charWidth,
-                                    yPos + baselineOffset,
-                                    textPaint
-                                )
-                                continue
-                            }
-
-                            val cellFg = cell.fgColor
-                            val cellBold = cell.isBold
-                            val cellUnderline = cell.isUnderline
-
-                            if (textStartCol < 0) {
-                                textStartCol = c
-                                currentRunFg = cellFg
-                                currentRunBold = cellBold
-                                currentRunUnderline = cellUnderline
-                                textBuffer.append(ch)
-                            } else if (cellFg == currentRunFg && cellBold == currentRunBold && cellUnderline == currentRunUnderline) {
-                                textBuffer.append(ch)
-                            } else {
-                                flushTextRun()
-                                textStartCol = c
-                                currentRunFg = cellFg
-                                currentRunBold = cellBold
-                                currentRunUnderline = cellUnderline
-                                textBuffer.append(ch)
-                            }
-                        }
-                        flushTextRun()
-                    }
-
-                    // 绘制终端光标 (如果未滚动且光标可见)
-                    if (scrollOffsetLines == 0 && buffer.isCursorVisible) {
-                        val safeCol = buffer.cursorCol.coerceIn(0, maxOf(0, cols - 1))
-                        val safeRow = buffer.cursorRow.coerceIn(0, maxOf(0, rows - 1))
-                        val cursorX = safeCol * charWidth
-                        val cursorY = safeRow * charHeight
-                        drawRect(
-                            color = defaultCursor.copy(alpha = 0.7f),
-                            topLeft = Offset(cursorX, cursorY),
-                            size = Size(charWidth, charHeight)
-                        )
                     }
                 } catch (e: Throwable) {
                     e.printStackTrace()

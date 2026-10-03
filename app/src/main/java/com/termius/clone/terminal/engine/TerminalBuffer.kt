@@ -57,6 +57,13 @@ class TerminalLine(val cols: Int) {
         return newLine
     }
 
+    fun copyCellsFrom(source: TerminalLine) {
+        val count = minOf(cells.size, source.cells.size)
+        for (i in 0 until count) {
+            cells[i].copyFrom(source.cells[i])
+        }
+    }
+
     fun hasContent(): Boolean {
         for (cell in cells) {
             if (cell.char != ' ' && cell.char.code > 0) return true
@@ -73,20 +80,27 @@ class TerminalBuffer(
     var rows: Int = 24,
     var theme: TerminalThemeColors = TerminalThemes.ObsidianShell
 ) {
+    val lock = Any()
     private val maxHistoryLines = 2000
 
     // 主屏幕缓冲区
     var mainScreen: Array<TerminalLine> = Array(rows) { TerminalLine(cols) }
+        private set
     // 备用屏幕缓冲区 (用于 vim, htop, less, tmux 等交互应用)
     var altScreen: Array<TerminalLine> = Array(rows) { TerminalLine(cols) }
+        private set
     // 回退历史缓冲区
     val history: ArrayDeque<TerminalLine> = ArrayDeque()
 
+    @Volatile
     var isUsingAltScreen = false
 
     // 光标位置 (0-indexed)
+    @Volatile
     var cursorCol = 0
+    @Volatile
     var cursorRow = 0
+    @Volatile
     var isCursorVisible = true
 
     // 当前绘制样式
@@ -97,10 +111,14 @@ class TerminalBuffer(
     var currentInverse = false
 
     val currentScreen: Array<TerminalLine>
-        get() = if (isUsingAltScreen) altScreen else mainScreen
+        get() = synchronized(lock) { if (isUsingAltScreen) altScreen else mainScreen }
 
-    fun resize(newCols: Int, newRows: Int) {
-        if (newCols == cols && newRows == rows) return
+    fun <T> withLock(block: () -> T): T = synchronized(lock, block)
+
+    fun resize(newCols: Int, newRows: Int) = synchronized(lock) {
+        if (newCols <= 0 || newRows <= 0) return@synchronized
+        if (newCols == cols && newRows == rows) return@synchronized
+
         val oldCols = cols
         val oldRows = rows
         val oldMainScreen = mainScreen
@@ -111,10 +129,9 @@ class TerminalBuffer(
 
         val newMainScreen = Array(rows) { TerminalLine(cols) }
         val newAltScreen = Array(rows) { TerminalLine(cols) }
-        val minCols = minOf(oldCols, cols)
 
         if (newRows < oldRows && !isUsingAltScreen) {
-            // 终端行数变小（软键盘弹起）：
+            // 终端行数变小（如软键盘弹起或切换为横屏）：
             // 仅当当前光标行超出新视口时，才向上滚动让光标位于底部
             val linesToScroll = if (cursorRow >= newRows) {
                 cursorRow - newRows + 1
@@ -123,63 +140,49 @@ class TerminalBuffer(
             }
 
             for (r in 0 until linesToScroll) {
-                if (oldMainScreen[r].hasContent()) {
+                val oldLine = oldMainScreen.getOrNull(r)
+                if (oldLine != null && oldLine.hasContent()) {
                     if (history.size >= maxHistoryLines) history.removeFirst()
-                    history.addLast(oldMainScreen[r].copy())
+                    history.addLast(oldLine.copy())
                 }
             }
 
             for (r in 0 until newRows) {
                 val oldR = r + linesToScroll
-                if (oldR in 0 until oldRows) {
-                    for (c in 0 until minCols) {
-                        newMainScreen[r].cells[c].copyFrom(oldMainScreen[oldR].cells[c])
-                    }
-                }
+                val oldLine = oldMainScreen.getOrNull(oldR) ?: continue
+                newMainScreen[r].copyCellsFrom(oldLine)
             }
-            cursorRow = (cursorRow - linesToScroll).coerceIn(0, newRows - 1)
-        } else if (newRows > oldRows && !isUsingAltScreen) {
-            // 终端行数变大（软键盘收起）：
-            // 如果历史缓冲区中有内容，拉回对应行填补顶部，保持内容和光标自然沉底
-            val linesFromHistory = minOf(history.size, newRows - oldRows)
-            for (r in 0 until linesFromHistory) {
-                val histLine = history.removeLast()
-                for (c in 0 until minCols) {
-                    newMainScreen[r].cells[c].copyFrom(histLine.cells[c])
-                }
-            }
-            val minCopy = minOf(oldRows, newRows - linesFromHistory)
-            for (r in 0 until minCopy) {
-                for (c in 0 until minCols) {
-                    newMainScreen[r + linesFromHistory].cells[c].copyFrom(oldMainScreen[r].cells[c])
-                }
-            }
-            cursorRow = (cursorRow + linesFromHistory).coerceIn(0, newRows - 1)
+            cursorRow = (cursorRow - linesToScroll).coerceIn(0, (newRows - 1).coerceAtLeast(0))
         } else {
-            // 行数不变或使用 AltScreen
-            val minRows = minOf(oldRows, rows)
-            for (r in 0 until minRows) {
-                for (c in 0 until minCols) {
-                    newMainScreen[r].cells[c].copyFrom(oldMainScreen[r].cells[c])
-                }
+            // 终端行数变大（如从横屏切回竖屏，或者收起键盘）：
+            // 严禁倒腾 history，避免历史顺序颠倒与并发数组越界崩溃！
+            // 直接将旧屏幕内容安全复制到新屏幕，多出行保留为空白行供后续输出
+            val copyRows = minOf(oldRows, newRows)
+            for (r in 0 until copyRows) {
+                val oldLine = oldMainScreen.getOrNull(r) ?: continue
+                newMainScreen[r].copyCellsFrom(oldLine)
             }
-            cursorRow = cursorRow.coerceIn(0, rows - 1)
+            cursorRow = cursorRow.coerceIn(0, (newRows - 1).coerceAtLeast(0))
         }
 
+        // 备用屏幕安全拷贝
         val minAltRows = minOf(oldRows, rows)
         for (r in 0 until minAltRows) {
-            for (c in 0 until minCols) {
-                newAltScreen[r].cells[c].copyFrom(oldAltScreen[r].cells[c])
-            }
+            val oldLine = oldAltScreen.getOrNull(r) ?: continue
+            newAltScreen[r].copyCellsFrom(oldLine)
         }
 
         mainScreen = newMainScreen
         altScreen = newAltScreen
-        cursorCol = cursorCol.coerceIn(0, cols - 1)
+        cursorCol = cursorCol.coerceIn(0, (cols - 1).coerceAtLeast(0))
+        cursorRow = cursorRow.coerceIn(0, (rows - 1).coerceAtLeast(0))
     }
 
-    fun writeChar(c: Char) {
+    fun writeChar(c: Char) = synchronized(lock) {
         val wide = isWide(c)
+
+        cursorCol = cursorCol.coerceIn(0, (cols - 1).coerceAtLeast(0))
+        cursorRow = cursorRow.coerceIn(0, (rows - 1).coerceAtLeast(0))
 
         if (wide && cursorCol >= cols - 1) {
             newLine()
@@ -187,8 +190,9 @@ class TerminalBuffer(
             newLine()
         }
 
-        val line = currentScreen[cursorRow]
-        val cell = line.cells[cursorCol]
+        val screen = if (isUsingAltScreen) altScreen else mainScreen
+        val line = screen.getOrNull(cursorRow) ?: return@synchronized
+        val cell = line.cells.getOrNull(cursorCol) ?: return@synchronized
         cell.char = c
         cell.fgColor = currentFgColor
         cell.bgColor = currentBgColor
@@ -201,13 +205,16 @@ class TerminalBuffer(
 
         // 宽字符占用两个字符宽度，第二单元格置空占位，避免后续字符覆写
         if (wide && cursorCol < cols) {
-            val followCell = line.cells[cursorCol]
-            followCell.reset()
-            followCell.char = ' '
-            followCell.bgColor = cell.bgColor
-            followCell.isWideChar = false
+            val followCell = line.cells.getOrNull(cursorCol)
+            if (followCell != null) {
+                followCell.reset()
+                followCell.char = ' '
+                followCell.bgColor = cell.bgColor
+                followCell.isWideChar = false
+            }
             cursorCol++
         }
+        cursorCol = cursorCol.coerceIn(0, (cols - 1).coerceAtLeast(0))
     }
 
     private fun isWide(c: Char): Boolean {
@@ -222,7 +229,7 @@ class TerminalBuffer(
                (code in 0xAC00..0xD7AF)          // 韩文音节
     }
 
-    fun newLine() {
+    fun newLine() = synchronized(lock) {
         cursorCol = 0
         if (cursorRow < rows - 1) {
             cursorRow++
@@ -231,46 +238,52 @@ class TerminalBuffer(
         }
     }
 
-    fun scrollUp() {
+    fun scrollUp() = synchronized(lock) {
+        val screen = if (isUsingAltScreen) altScreen else mainScreen
         if (!isUsingAltScreen) {
             if (history.size >= maxHistoryLines) {
                 history.removeFirst()
             }
-            history.addLast(mainScreen[0].copy())
-        }
-        for (i in 0 until rows - 1) {
-            for (j in 0 until cols) {
-                currentScreen[i].cells[j].copyFrom(currentScreen[i + 1].cells[j])
+            val topRow = mainScreen.getOrNull(0)
+            if (topRow != null) {
+                history.addLast(topRow.copy())
             }
         }
-        currentScreen[rows - 1].clear()
+        for (i in 0 until rows - 1) {
+            val currLine = screen.getOrNull(i) ?: continue
+            val nextLine = screen.getOrNull(i + 1) ?: continue
+            currLine.copyCellsFrom(nextLine)
+        }
+        screen.getOrNull(rows - 1)?.clear()
     }
 
-    fun clearScreen(mode: Int) {
+    fun clearScreen(mode: Int) = synchronized(lock) {
+        val screen = if (isUsingAltScreen) altScreen else mainScreen
         when (mode) {
             0 -> { // 光标到屏幕底部
                 clearLine(0)
                 for (r in cursorRow + 1 until rows) {
-                    currentScreen[r].clear()
+                    screen.getOrNull(r)?.clear()
                 }
             }
             1 -> { // 屏幕顶部到光标
                 for (r in 0 until cursorRow) {
-                    currentScreen[r].clear()
+                    screen.getOrNull(r)?.clear()
                 }
                 clearLine(1)
             }
             2, 3 -> { // 全屏清除 (将当前屏的非空内容保存到历史以供回溯翻看)
                 if (!isUsingAltScreen) {
                     for (r in 0 until rows) {
-                        if (mainScreen[r].hasContent()) {
+                        val row = mainScreen.getOrNull(r)
+                        if (row != null && row.hasContent()) {
                             if (history.size >= maxHistoryLines) history.removeFirst()
-                            history.addLast(mainScreen[r].copy())
+                            history.addLast(row.copy())
                         }
                     }
                 }
                 for (r in 0 until rows) {
-                    currentScreen[r].clear()
+                    screen.getOrNull(r)?.clear()
                 }
                 cursorRow = 0
                 cursorCol = 0
@@ -278,17 +291,19 @@ class TerminalBuffer(
         }
     }
 
-    fun clearLine(mode: Int) {
-        val line = currentScreen[cursorRow]
+    fun clearLine(mode: Int) = synchronized(lock) {
+        val screen = if (isUsingAltScreen) altScreen else mainScreen
+        val line = screen.getOrNull(cursorRow) ?: return@synchronized
         when (mode) {
             0 -> { // 光标到行末
                 for (c in cursorCol until cols) {
-                    line.cells[c].reset()
+                    line.cells.getOrNull(c)?.reset()
                 }
             }
             1 -> { // 行首到光标
-                for (c in 0..cursorCol.coerceAtMost(cols - 1)) {
-                    line.cells[c].reset()
+                val maxC = cursorCol.coerceAtMost(cols - 1)
+                for (c in 0..maxC) {
+                    line.cells.getOrNull(c)?.reset()
                 }
             }
             2 -> { // 整行
@@ -297,12 +312,12 @@ class TerminalBuffer(
         }
     }
 
-    fun setCursorPosition(r: Int, c: Int) {
-        cursorRow = (r - 1).coerceIn(0, rows - 1)
-        cursorCol = (c - 1).coerceIn(0, cols - 1)
+    fun setCursorPosition(r: Int, c: Int) = synchronized(lock) {
+        cursorRow = (r - 1).coerceIn(0, (rows - 1).coerceAtLeast(0))
+        cursorCol = (c - 1).coerceIn(0, (cols - 1).coerceAtLeast(0))
     }
 
-    fun resetAttributes() {
+    fun resetAttributes() = synchronized(lock) {
         currentFgColor = Color.Unspecified
         currentBgColor = Color.Unspecified
         currentBold = false

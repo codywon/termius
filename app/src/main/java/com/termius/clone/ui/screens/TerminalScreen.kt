@@ -1,9 +1,12 @@
 package com.termius.clone.ui.screens
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -12,17 +15,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.clip
 import com.termius.clone.terminal.session.SessionManager
 import com.termius.clone.terminal.session.SessionState
 import com.termius.clone.ui.components.TerminalAccessoryBar
@@ -38,6 +40,8 @@ fun TerminalScreen(
 ) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val terminalFocusRequester = remember { FocusRequester() }
 
     val sessions by SessionManager.sessions.collectAsState()
@@ -67,15 +71,21 @@ fun TerminalScreen(
                 shadowElevation = if (theme.isDark) 0.dp else 1.dp
             ) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                    // Header Bar with Session Tabs (Clean TermX Mobile Style)
+                    // Header Bar with Session Tabs (Clean TermX Mobile Style, compact in landscape)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                            .padding(
+                                horizontal = 4.dp,
+                                vertical = if (isLandscape) 1.dp else 4.dp
+                            ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = theme.textPrimary)
+                        IconButton(
+                            onClick = onNavigateBack,
+                            modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = theme.textPrimary, modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp))
                         }
 
                         // Session Tabs Strip (极简现代扁平微胶囊设计，彻底去除绿框灰底)
@@ -109,9 +119,12 @@ fun TerminalScreen(
                                     }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.padding(
+                                            horizontal = if (isLandscape) 8.dp else 10.dp,
+                                            vertical = if (isLandscape) 3.dp else 6.dp
+                                        ),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         // Status dot
                                         val dotColor = when (sessionState) {
@@ -121,7 +134,7 @@ fun TerminalScreen(
                                         }
                                         Box(
                                             modifier = Modifier
-                                                .size(7.dp)
+                                                .size(if (isLandscape) 6.dp else 7.dp)
                                                 .background(dotColor, CircleShape)
                                         )
 
@@ -132,7 +145,7 @@ fun TerminalScreen(
                                             } else {
                                                 theme.textSecondary
                                             },
-                                            fontSize = 12.sp,
+                                            fontSize = if (isLandscape) 11.sp else 12.sp,
                                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                             fontFamily = FontFamily.Monospace,
                                             maxLines = 1,
@@ -142,13 +155,13 @@ fun TerminalScreen(
                                         if (sessions.size > 1) {
                                             IconButton(
                                                 onClick = { SessionManager.closeSession(context, session.id) },
-                                                modifier = Modifier.size(16.dp)
+                                                modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Close,
                                                     contentDescription = "Close",
                                                     tint = if (isSelected) theme.primary.copy(alpha = 0.7f) else theme.textMuted,
-                                                    modifier = Modifier.size(12.dp)
+                                                    modifier = Modifier.size(if (isLandscape) 10.dp else 12.dp)
                                                 )
                                             }
                                         }
@@ -164,19 +177,27 @@ fun TerminalScreen(
                                     activeState == SessionState.AUTHENTICATING
 
                             if (isConnected) {
-                                IconButton(onClick = { showDisconnectDialog = true }) {
+                                IconButton(
+                                    onClick = { showDisconnectDialog = true },
+                                    modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                                ) {
                                     Icon(
                                         Icons.Default.PowerSettingsNew,
                                         contentDescription = if (Strings.isZh) "断开连接" else "Disconnect",
-                                        tint = Color(0xFFEF4444).copy(alpha = 0.88f)
+                                        tint = Color(0xFFEF4444).copy(alpha = 0.88f),
+                                        modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp)
                                     )
                                 }
                             } else {
-                                IconButton(onClick = { activeSession.reconnect() }) {
+                                IconButton(
+                                    onClick = { activeSession.reconnect() },
+                                    modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                                ) {
                                     Icon(
                                         Icons.Default.Refresh,
                                         contentDescription = if (Strings.isZh) "重新连接" else "Reconnect",
-                                        tint = Color(0xFF22C55E)
+                                        tint = Color(0xFF22C55E),
+                                        modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp)
                                     )
                                 }
                             }
