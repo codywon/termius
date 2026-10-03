@@ -86,7 +86,7 @@ enum class AppTheme(
  * 主题管理中心 (支持持久化与即时热响应)
  */
 object ThemeManager {
-    private const val PREFS_NAME = "teamx_theme_prefs"
+    private const val PREFS_NAME = "termx_theme_prefs"
     private const val KEY_THEME = "current_theme_id"
 
     private const val KEY_FONT_SIZE = "terminal_font_size_sp"

@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +34,7 @@ import com.termius.clone.ui.components.UpdateUiState
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.AppLanguage
 import com.termius.clone.util.AppUpdateManager
+import com.termius.clone.util.BatteryOptimizationHelper
 import com.termius.clone.util.LanguageManager
 import com.termius.clone.util.Strings
 import com.termius.clone.util.UpdateCheckResult
@@ -51,6 +54,8 @@ fun SettingsScreen() {
     var isCheckingUpdate by remember { mutableStateOf(false) }
 
     var sshKeepaliveEnabled by remember { mutableStateOf(true) }
+    var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
+    var showBatteryGuideDialog by remember { mutableStateOf(false) }
 
     val theme = LocalAppTheme.current
 
@@ -88,7 +93,7 @@ fun SettingsScreen() {
                             color = ObsidianTextPrimary
                         )
                         Text(
-                            text = if (LanguageManager.currentLanguage == AppLanguage.ZH) "偏好、主题、保活与安全凭据" else "Preferences, themes, keepalive & credentials",
+                            text = Strings.settingsSubtitle,
                             fontSize = 11.sp,
                             color = ObsidianTextSecondary
                         )
@@ -129,7 +134,7 @@ fun SettingsScreen() {
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
                                         Text(
-                                            text = if (isVaultExpanded) "收起" else "查看",
+                                            text = if (isVaultExpanded) Strings.collapseLabel else Strings.viewLabel,
                                             color = theme.primary,
                                             fontSize = 12.sp
                                         )
@@ -145,7 +150,7 @@ fun SettingsScreen() {
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("新建", fontSize = 12.sp)
+                                        Text(Strings.newLabel, fontSize = 12.sp)
                                     }
                                 }
                             }
@@ -493,7 +498,7 @@ fun SettingsScreen() {
                                     color = theme.primary.copy(alpha = 0.15f)
                                 ) {
                                     Text(
-                                        text = "常驻保活中",
+                                        text = Strings.runningStatus,
                                         fontSize = 11.sp,
                                         color = theme.primary,
                                         fontWeight = FontWeight.SemiBold,
@@ -501,11 +506,90 @@ fun SettingsScreen() {
                                     )
                                 }
                             }
+
+                            HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
+
+                            // 电池后台优化白名单状态 (解决息屏中断核心)
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.Default.BatteryChargingFull,
+                                                contentDescription = null,
+                                                tint = if (isIgnoringBattery) theme.primary else ObsidianWarning,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = Strings.batteryOptimizationTitle,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = ObsidianTextPrimary
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = Strings.batteryOptimizationDesc,
+                                            fontSize = 11.sp,
+                                            color = ObsidianTextMuted
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (isIgnoringBattery) theme.primary.copy(alpha = 0.15f) else ObsidianWarning.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = if (isIgnoringBattery) Strings.batteryIgnoredTag else Strings.batteryOptimizedTag,
+                                            fontSize = 11.sp,
+                                            color = if (isIgnoringBattery) theme.primary else ObsidianWarning,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (!isIgnoringBattery) {
+                                        Button(
+                                            onClick = {
+                                                BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(context)
+                                                isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary),
+                                            contentPadding = PaddingValues(vertical = 6.dp)
+                                        ) {
+                                            Text(Strings.batteryOptimizeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { showBatteryGuideDialog = true },
+                                        modifier = if (!isIgnoringBattery) Modifier.wrapContentWidth() else Modifier.fillMaxWidth(),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.HelpOutline, contentDescription = null, tint = ObsidianTextSecondary, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(Strings.batteryGuideBtn, fontSize = 12.sp, color = ObsidianTextSecondary)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // 5. 关于与更新区块 (严格包含 Powered by codywon 与 TeamX Mobile)
+                // 5. 关于与更新区块 (严格包含 Powered by codywon 与 TermX Mobile)
                 item {
                     SettingsCard(title = Strings.sectionAbout, icon = Icons.Default.Info) {
                         Column(
@@ -525,7 +609,7 @@ fun SettingsScreen() {
                             Spacer(modifier = Modifier.height(8.dp))
 
                             Text(
-                                text = "TeamX Mobile",
+                                text = "TermX Mobile",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = ObsidianTextPrimary
@@ -650,6 +734,77 @@ fun SettingsScreen() {
                     Toast.makeText(context, "凭据已安全保存", Toast.LENGTH_SHORT).show()
                 }
             }
+        )
+    }
+
+    // 电池后台优化与系统保活指南弹窗
+    if (showBatteryGuideDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatteryGuideDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Shield, contentDescription = null, tint = theme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "系统后台长连接保活指南" else "Background Keepalive Guide", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = if (LanguageManager.currentLanguage == AppLanguage.ZH)
+                            "Android 系统的电池优化策略会在手机息屏后休眠 Wi-Fi 与限制网络，导致后台 SSH 管道中断。为保证终端 24 小时后台稳定连接，请按如下指引设置："
+                        else
+                            "Android system battery optimizations may sleep Wi-Fi when screen is off, breaking SSH connections. Please configure as follows:",
+                        fontSize = 12.sp,
+                        color = ObsidianTextSecondary,
+                        lineHeight = 18.sp
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ObsidianSurfaceContainerLowest,
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = if (LanguageManager.currentLanguage == AppLanguage.ZH) "📱 各大手机厂商配置要点：" else "📱 Key steps for OEM systems:",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = theme.primary
+                            )
+                            Text("• 小米 / 澎湃 OS：系统设置 ➜ 应用管理 ➜ TermX Mobile ➜ 省电策略选【无限制】，并开启【自启动】与【后台弹出界面】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 华为 / 荣耀：系统设置 ➜ 电池 ➜ 应用启动管理 ➜ TermX Mobile 改为【手动管理】，勾选【允许自启动】与【允许后台活动】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• OPPO / 一加 / realme：系统设置 ➜ 电池 ➜ 耗电异常优化 ➜ TermX Mobile 选【不优化】；应用管理中允许完全后台行为", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• vivo / iQOO：系统设置 ➜ 电池 ➜ 后台耗电管理 ➜ TermX Mobile 勾选【允许高耗电】", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 原生 Android / 三星：系统设置 ➜ 应用 ➜ TermX Mobile ➜ 电池 ➜ 选择【不受限制】(Unrestricted)", fontSize = 11.sp, color = ObsidianTextPrimary)
+                            Text("• 任务卡片加锁：在多任务列表长按或下拉 TermX Mobile 卡片，点击【加锁】，防止被系统一键清理", fontSize = 11.sp, color = theme.primary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        BatteryOptimizationHelper.openAppSettings(context)
+                        showBatteryGuideDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
+                ) {
+                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "前往系统设置" else "Open App Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatteryGuideDialog = false }) {
+                    Text(if (LanguageManager.currentLanguage == AppLanguage.ZH) "知道了" else "Close", color = ObsidianTextSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
         )
     }
 }

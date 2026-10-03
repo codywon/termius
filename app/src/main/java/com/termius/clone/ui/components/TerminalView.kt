@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -121,9 +122,9 @@ fun TerminalView(
             .pointerInput(charHeight) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    var isMultiTouch = false
+                    var hasOperated = false
+                    var isPinching = false
                     var totalMovement = 0f
-                    var hasDragged = false
 
                     do {
                         val event = awaitPointerEvent()
@@ -131,44 +132,45 @@ fun TerminalView(
                         if (canceled) break
 
                         val pointerCount = event.changes.size
-                        if (pointerCount >= 2) {
-                            // 双指缩放手势：动态缩放终端字体大小
-                            isMultiTouch = true
-                            hasDragged = true
-                            val zoomChange = event.calculateZoom()
-                            if (zoomChange != 1f) {
-                                val currentSize = ThemeManager.terminalFontSizeSp
-                                val newSize = (currentSize * zoomChange).coerceIn(9f, 26f)
-                                ThemeManager.setTerminalFontSize(newSize)
-                            }
+                        val zoom = if (pointerCount >= 2) event.calculateZoom() else 1f
+                        val pan = event.calculatePan()
+
+                        // 1. 双指显著捏合手势检测 (间距比例变化率超过 4%) -> 缩放终端字体大小
+                        if (pointerCount >= 2 && abs(zoom - 1f) > 0.04f) {
+                            isPinching = true
+                            hasOperated = true
+                            val currentSize = ThemeManager.terminalFontSizeSp
+                            val newSize = (currentSize * zoom).coerceIn(9f, 26f)
+                            ThemeManager.setTerminalFontSize(newSize)
                             event.changes.forEach { it.consume() }
-                        } else if (pointerCount == 1 && !isMultiTouch) {
-                            // 单指拖拽手势：平滑滚动回退历史
-                            val change = event.changes.first()
-                            val pan = change.positionChange()
-                            totalMovement += abs(pan.y) + abs(pan.x)
+                        } else if (!isPinching) {
+                            // 2. 双指平移滑动 或 单指滑动：统一支持平滑回溯翻看终端历史记录
+                            val moveDelta = abs(pan.y) + abs(pan.x)
+                            totalMovement += moveDelta
 
-                            if (totalMovement > 10f) {
-                                hasDragged = true
+                            if (totalMovement > 8f) {
+                                hasOperated = true
                             }
 
-                            if (hasDragged && charHeight > 0f) {
-                                // 手指向下拉 (pan.y > 0) -> 回溯上方历史 (scrollOffsetLines 增大)
-                                // 手指向上推 (pan.y < 0) -> 滑回最新内容 (scrollOffsetLines 减小)
+                            if (hasOperated && charHeight > 0f) {
+                                // 手指向下拉 (pan.y > 0) -> 翻看上方过往历史 (增大 offset)
+                                // 手指向上推 (pan.y < 0) -> 滑回最新输出行 (减小 offset)
                                 scrollAccumulator += pan.y
                                 val deltaLines = (scrollAccumulator / charHeight).toInt()
                                 if (deltaLines != 0) {
                                     val maxScroll = session.terminalBuffer.history.size
-                                    scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                    if (maxScroll > 0) {
+                                        scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                    }
                                     scrollAccumulator -= deltaLines * charHeight
                                 }
-                                change.consume()
+                                event.changes.forEach { it.consume() }
                             }
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 如果未发生明显拖动或缩放，判定为单指点击屏幕：唤起输入法
-                    if (!hasDragged) {
+                    // 3. 若用户无明显滑动或捏合，判定为单指点击屏幕：唤起输入法并聚焦
+                    if (!hasOperated) {
                         try {
                             onTapTerminal?.invoke()
                             focusRequester.requestFocus()

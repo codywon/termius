@@ -9,7 +9,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 val LocalAppTheme = staticCompositionLocalOf { AppTheme.EMERALD }
 
 @Composable
-fun TeamXTheme(
+fun TermXTheme(
     theme: AppTheme = ThemeManager.currentTheme,
     content: @Composable () -> Unit
 ) {
@@ -45,4 +45,4 @@ fun TeamXTheme(
 }
 
 @Composable
-fun TermiusCloneTheme(content: @Composable () -> Unit) = TeamXTheme(content = content)
+fun TermiusCloneTheme(content: @Composable () -> Unit) = TermXTheme(content = content)

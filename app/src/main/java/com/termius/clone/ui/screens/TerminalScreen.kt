@@ -61,7 +61,7 @@ fun TerminalScreen(
         topBar = {
             Surface(color = theme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                    // Header Bar with Session Tabs (Clean TeamX Mobile Style)
+                    // Header Bar with Session Tabs (Clean TermX Mobile Style)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

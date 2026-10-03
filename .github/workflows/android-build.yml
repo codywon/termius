@@ -1,4 +1,4 @@
-name: Build and Release TeamX Mobile APK
+name: Build and Release TermX Mobile APK
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble TeamX APKs
+    name: Assemble TermX APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -43,23 +43,23 @@ jobs:
             TAG_NAME="v1.0.0"
           fi
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-artifacts/TeamX-Mobile-${TAG_NAME}-release.apk
+            cp app/build/outputs/apk/release/app-release.apk release-artifacts/TermX-Mobile-${TAG_NAME}-release.apk
           fi
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/TeamX-Mobile-${TAG_NAME}-debug.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-artifacts/TermX-Mobile-${TAG_NAME}-debug.apk
           fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TeamX-Debug-APK
+          name: TermX-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TeamX-Release-APK
+          name: TermX-Release-APK
           path: release-artifacts/*.apk
           retention-days: 30
 
@@ -67,62 +67,42 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: TeamX Mobile ${{ github.ref_name }}
+          name: TermX Mobile ${{ github.ref_name }}
           body: |
-            ## 🎉 TeamX Mobile ${{ github.ref_name }} 正式发布！
+            ## 🎉 TermX Mobile ${{ github.ref_name }} 正式发布！
             
-            基于现代纯原生架构打造的 **TeamX Mobile** Android SSH 客户端与终端工具，采用 Kotlin + Jetpack Compose (Material 3)。
-
+            基于现代纯原生架构打造的 **TermX Mobile** Android SSH 客户端与终端运维工具，采用 Kotlin + Jetpack Compose (Material 3)。
+            
             ### 🚀 核心特性与最新优化：
-            - **终端平滑回溯翻看历史 (Scrollback Buffer 深度优化)**：
-              - 彻底修复连接成功后无法上下滑动翻看历史输出的 Bug；
-              - 单指平滑拖拽向上回退/向下归位，并消除每帧浮点截断与手势方向颠倒；
-              - 顶部中央贴心悬浮回溯小胶囊（`回溯历史 -X 行 • 点击回到底部`），单手轻点秒回最新终端行；
-              - 终端内支持原生**双指捏合无级缩放字体大小**。
+            - **应用正式更名**：全面启用 **TermX Mobile** 全新品牌标识。
+            - **终端双指与单指顺滑翻看历史 (Scrollback Buffer 深度重构)**：
+              - 彻底修复连接服务器交互后无法在手机上双指滑动翻看历史输出的 Bug；
+              - 科学解耦手势识别：双指并拢上下平移滑动与单指滑动均可平滑滚动历史，双指捏合（间距明显变化）时动态缩放终端字号；
+              - 重构终端视口尺寸变更逻辑（`resize`），彻底消除软键盘弹起/收起时历史输出被清空的问题，变矮时有效内容无损推入历史；
+              - 清屏命令（`clear`）自动将屏幕有效内容持久化到历史回溯缓冲区；
+              - 顶部中央悬浮回溯小胶囊（`📜 历史输出 (-X行) • 回到底部 ⬇`），点击瞬间秒回最新输出并呼出软键盘。
+            - **系统电池优化与后台常驻保护 (Doze 模式豁免)**：
+              - 设置页新增【系统电池优化 (后台保活核心)】状态检测与一键申请豁免；
+              - 支持一键调起原生白名单授权，并提供涵盖小米澎湃、华为、OPPO、vivo、原生安卓的自启动与后台加锁详细指南。
+            - **全面重构地道专业中文本地化**：
+              - 全面审视并剔除机翻、生硬不伦不类的中文表达，统一规范为专业运维术语；
+              - 完善各界面中英文双语无缝切换，消除挤压折行与卡片不对称。
             - **全自由终端字体大小调节 (Terminal Font Size)**：
               - 设置页新增终端字号步进调节与 5 大快捷档位 Chip（11sp ~ 20sp）；
               - 提供实时终端代码输出预览盒，字号调节即刻同步并全局持久化。
-            - **中英文多语言切换卡片重构**：
-              - 彻底解决原并排卡片在小屏下宽度不足、文字被挤压折行与高度不对称的问题；
-              - 采用整齐对称的全宽工整列表项，清晰美观，点击整行秒切换。
-            - **消除顶部过多空白，标题紧凑贴顶**：重构全局 WindowInsets 拓扑与 Scaffold 内边距，彻底解决所有 Tab 页面标题偏低、上方留白过多的问题，实现精致贴顶、空间利用率最大化。
-            - **底部导航精简重构为 4 大核心 Tab**：
+            - **精简 4 大核心 Tab 架构**：
               - 💻【主机 (Hosts)】：服务器资产管理、多标签过滤与 SSH 极速直连；
               - 📁【文件 (SFTP)】：远程目录面包屑浏览、文件上传下载、全屏在线文本编辑与重命名删除；
-              - 📖【速查 (Cheatsheet)】：全新运维速查手册，内置系统监控、网络端口、Docker、Systemd 服务、磁盘清理、安全防火墙等 30+ 条生产常用命令，支持一键复制与自定义扩展；
-              - ⚙️【设置 (Settings)】：统一全局设置中心，整合 Vault 凭据钥匙串、4 套终端极客主题配色切换、终端字体调节、中英文无缝切换、连接保活设置、关于与版本检查。
-            - **4 套终端极客主题配色即时换肤**：
-              - 🟢 黑曜石翡翠 (Obsidian Emerald) - 默认极客荧光绿；
-              - 🔵 极客冰蓝 (Cyber Ice Blue) - 沉浸冰蓝科技风；
-              - 🟡 复古琥珀 (Cyber Amber) - 经典温暖琥珀炭黑；
-              - 🟣 赛博霓虹紫 (Cyberpunk Purple) - 赛博朋克深空紫；
-              - 一键切换，全局即时生效并持久化。
-            - **版本信息与关于 (Powered by codywon)**：设置页展示专属版本号与 `Powered by codywon` 标识，并支持一键检测新版本。
-            - **工业级后台连接常驻引擎**：
-              - 组合持有 CPU WakeLock 与全功能低延迟 Wi-Fi Lock，防止手机息屏或切后台时 Wi-Fi 芯片睡眠导致 SSH 管道破裂（Broken Pipe）；
-              - 屏幕广播感知：息屏时维持长连接心跳，亮屏时瞬间对活跃会话发送探活空包快速自愈；
-              - 动态网络环境监听（Wi-Fi / 蜂窝网络漫游切换）与常驻通知栏时长走秒与会话状态展示。
-            - **工业级自动升级引擎 (多镜像并发测速竞速 + 最优路径下载)**：
-              - 聚合 5 大国内高速开源镜像加速通道（官方直连 / ghfast / ghp.ci / gh-proxy / ghproxy）；
-              - **1200ms 并发 HEAD 测速竞速**：动态测量各镜像站握手延迟，排选出响应最快的通道置顶优先下载；
-              - **低速看门狗熔断机制 (Watchdog)**：前 4 秒平均速率低于 120 KB/s 时主动熔断切线，自动无缝切换更优备选镜像，绝不卡死；
-              - 400ms 动态平滑测速采样（如 `3.6 MB/s`）与流式进度回传；
-              - 未知应用授权引导与 FileProvider 安全免存储权限覆盖安装。
-            - **网易 UU 远程同款三模辅助交互系统**：
-              - 模式一【⌨ 输入法】：整行铺满横向滑动辅助条（ESC, TAB, CTRL, ALT, 方向键, 常用符号）；
-              - 模式二【⚡ 快捷键】：智能收起系统软键盘，彻底根除键盘与面板叠加！左侧常驻【编辑】/【添加】/【排序】工具，支持自定义创建常用运维指令与宏，修改/调序一键持久化；
-              - 模式三【💻 电脑键盘】：智能收起系统软键盘，独享完整 F1-F12、Insert、Delete、PageUp/Down、Home/End、全向箭头键，如同面对物理 PC 键盘；
-              - 模式四【全屏终端】：点击关闭一键进入 100% 全屏，右下角提供精致半透明键盘唤醒胶囊，点击屏幕任意位置丝滑唤起。
-            - **主机配置优化**：默认用户名调整为主流运维的 `root`，支持快捷密码/密钥一键直连。
-            - **全界面极简化视觉重构**：大刀阔斧去除非必要描述性文字，冗余说明全面转化为轻量点击问号 `?` 提示，界面干净利落。
-            - **高吞吐终端渲染节流引擎**：引入 30ms 帧率调度与动态合并缓冲，彻底解决远程编译大工程、长日志刷屏卡死与键盘无响应问题。
-            - **全屏沉浸式在线文本编辑器**：原生沉浸式 Window Insets 适配，键盘隐藏后即时平滑归位，告别弹窗悬空与底部留白，支持在线修改保存、下载与本地上传。
-            - **全页面防挤压排版加固**：全面消灭 Host 卡片 Tag 换行（如 Production 拆行）、芯片折行与文字挤压。
-            - **现代算法全套支持**：集成高版本 BouncyCastle 提供者，原生支持 `X25519`、`Ed25519`、`curve25519-sha256`。
+              - 📖【速查 (Cheatsheet)】：全新运维速查手册，内置 30+ 条生产常用命令，支持一键复制与自定义扩展；
+              - ⚙️【设置 (Settings)】：统一全局设置中心，整合 SSH 凭据管理、4 套极客主题配色、终端字号、电池后台保活、关于与更新。
+            - **4 套终端极客主题配色即时换肤**：黑曜石翡翠、极客冰蓝、复古琥珀、赛博霓虹紫。
+            - **网易 UU 远程同款三模辅助交互系统**：输入法、快捷键、电脑键盘三模随心切换。
+            - **多通道并发测速自动更新引擎**：聚合国内 5 大开源镜像通道，1200ms 并发 HEAD 竞速选优，低速看门狗自动切线。
+            - **现代算法全套支持**：原生支持 `X25519`、`Ed25519`、`curve25519-sha256`。
             
             ### 📱 安装包下载：
-            - **Release 正式版 APK**：下载附件中的 `TeamX-Mobile-${{ github.ref_name }}-release.apk`
-            - **Debug 调试版 APK**：下载附件中的 `TeamX-Mobile-${{ github.ref_name }}-debug.apk`
+            - **Release 正式版 APK**：下载附件中的 `TermX-Mobile-${{ github.ref_name }}-release.apk`
+            - **Debug 调试版 APK**：下载附件中的 `TermX-Mobile-${{ github.ref_name }}-debug.apk`
           files: release-artifacts/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

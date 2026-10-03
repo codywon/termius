@@ -56,6 +56,13 @@ class TerminalLine(val cols: Int) {
         }
         return newLine
     }
+
+    fun hasContent(): Boolean {
+        for (cell in cells) {
+            if (cell.char != ' ' && cell.char.code > 0) return true
+        }
+        return false
+    }
 }
 
 /**
@@ -94,10 +101,54 @@ class TerminalBuffer(
 
     fun resize(newCols: Int, newRows: Int) {
         if (newCols == cols && newRows == rows) return
+        val oldCols = cols
+        val oldRows = rows
+        val oldMainScreen = mainScreen
+        val oldAltScreen = altScreen
+
         cols = newCols
         rows = newRows
-        mainScreen = Array(rows) { TerminalLine(cols) }
-        altScreen = Array(rows) { TerminalLine(cols) }
+
+        val newMainScreen = Array(rows) { TerminalLine(cols) }
+        val newAltScreen = Array(rows) { TerminalLine(cols) }
+        val minCols = minOf(oldCols, cols)
+
+        if (oldRows > rows && !isUsingAltScreen) {
+            // 终端行数变小（如软键盘弹起），将顶部超出视口的有效行推进历史
+            val pushCount = oldRows - rows
+            for (r in 0 until pushCount) {
+                if (oldMainScreen[r].hasContent()) {
+                    if (history.size >= maxHistoryLines) history.removeFirst()
+                    history.addLast(oldMainScreen[r].copy())
+                }
+            }
+            for (r in 0 until rows) {
+                val oldR = r + pushCount
+                if (oldR in 0 until oldRows) {
+                    for (c in 0 until minCols) {
+                        newMainScreen[r].cells[c].copyFrom(oldMainScreen[oldR].cells[c])
+                    }
+                }
+            }
+        } else {
+            // 终端行数变大或不变（如软键盘收起），保持原有行
+            val minRows = minOf(oldRows, rows)
+            for (r in 0 until minRows) {
+                for (c in 0 until minCols) {
+                    newMainScreen[r].cells[c].copyFrom(oldMainScreen[r].cells[c])
+                }
+            }
+        }
+
+        val minAltRows = minOf(oldRows, rows)
+        for (r in 0 until minAltRows) {
+            for (c in 0 until minCols) {
+                newAltScreen[r].cells[c].copyFrom(oldAltScreen[r].cells[c])
+            }
+        }
+
+        mainScreen = newMainScreen
+        altScreen = newAltScreen
         cursorCol = cursorCol.coerceIn(0, cols - 1)
         cursorRow = cursorRow.coerceIn(0, rows - 1)
     }
@@ -184,7 +235,15 @@ class TerminalBuffer(
                 }
                 clearLine(1)
             }
-            2, 3 -> { // 全屏清除
+            2, 3 -> { // 全屏清除 (将当前屏的非空内容保存到历史以供回溯翻看)
+                if (!isUsingAltScreen) {
+                    for (r in 0 until rows) {
+                        if (mainScreen[r].hasContent()) {
+                            if (history.size >= maxHistoryLines) history.removeFirst()
+                            history.addLast(mainScreen[r].copy())
+                        }
+                    }
+                }
                 for (r in 0 until rows) {
                     currentScreen[r].clear()
                 }

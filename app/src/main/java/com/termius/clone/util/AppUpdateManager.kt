@@ -131,7 +131,7 @@ object AppUpdateManager {
             val request = Request.Builder()
                 .url(GITHUB_API_URL)
                 .header("Accept", "application/vnd.github.v3+json")
-                .header("User-Agent", "TeamX-Mobile-App")
+                .header("User-Agent", "TermX-Mobile-App")
                 .build()
 
             val response = httpClient.newCall(request).execute()
@@ -188,7 +188,7 @@ object AppUpdateManager {
             val updateInfo = UpdateInfo(
                 tagName = tagName,
                 versionName = tagName.removePrefix("v").removePrefix("V"),
-                releaseTitle = if (releaseTitle.isNotBlank()) releaseTitle else "TeamX Mobile $tagName",
+                releaseTitle = if (releaseTitle.isNotBlank()) releaseTitle else "TermX Mobile $tagName",
                 releaseNotes = releaseNotes,
                 downloadUrl = targetDownloadUrl,
                 mirrorUrls = mirrorUrls,
@@ -219,7 +219,7 @@ object AppUpdateManager {
         onProgress: (progress: Float, downloadedBytes: Long, totalBytes: Long, speedText: String, channelName: String) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val targetFile = File(updateDir, "TeamX-Mobile-update.apk")
+        val targetFile = File(updateDir, "TermX-Mobile-update.apk")
         if (targetFile.exists()) {
             targetFile.delete()
         }
@@ -241,7 +241,7 @@ object AppUpdateManager {
                 Log.d(TAG, "Attempting download from optimal channel [${channel.name}]: ${channel.url}")
                 val request = Request.Builder()
                     .url(channel.url)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android) TeamX-Mobile")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android) TermX-Mobile")
                     .build()
 
                 val response = httpClient.newCall(request).execute()
@@ -333,7 +333,7 @@ object AppUpdateManager {
                         val req = Request.Builder()
                             .url(channel.url)
                             .head()
-                            .header("User-Agent", "Mozilla/5.0 (Linux; Android) TeamX-Mobile")
+                            .header("User-Agent", "Mozilla/5.0 (Linux; Android) TermX-Mobile")
                             .build()
                         val client = httpClient.newBuilder()
                             .connectTimeout(1200, TimeUnit.MILLISECONDS)

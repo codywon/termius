@@ -376,7 +376,7 @@ fun SftpScreen(
                         }
                     }
 
-                    // Breadcrumb Path Bar (TeamX Mobile Style)
+                    // Breadcrumb Path Bar (TermX Mobile Style)
                     if (isConnected) {
                         Surface(color = theme.surfaceContainer) {
                             Row(

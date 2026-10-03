@@ -147,7 +147,7 @@ class SshSession(
                 val errMsg = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
                 _statusMessage.value = "连接失败: $errMsg"
                 terminalBuffer.clearScreen(2)
-                emulator.processInput("\r\n\u001B[31m[TeamX Mobile] 连接失败: $errMsg\u001B[0m\r\n\r\n\u001B[33m提示: 请检查主机 IP、端口以及密码/私钥是否配置正确。\u001B[0m\r\n")
+                emulator.processInput("\r\n\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m\r\n\r\n\u001B[33m提示: 请检查主机 IP、端口以及密码/私钥是否配置正确。\u001B[0m\r\n")
                 _renderTick.value = System.currentTimeMillis()
             }
         }

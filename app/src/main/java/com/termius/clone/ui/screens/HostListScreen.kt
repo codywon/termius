@@ -86,7 +86,7 @@ fun HostListScreen(
         topBar = {
             Surface(color = theme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
-                    // Header Bar (TeamX Mobile Branding & Sync status)
+                    // Header Bar (TermX Mobile Branding & Sync status)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -255,7 +255,7 @@ fun HostListScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredHosts, key = { it.id }) { host ->
-                        TeamXHostCard(
+                        TermXHostCard(
                             host = host,
                             onConnect = {
                                 try {
@@ -363,7 +363,7 @@ fun HostListScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TeamXHostCard(
+fun TermXHostCard(
     host: HostEntity,
     onConnect: () -> Unit,
     onEdit: () -> Unit,

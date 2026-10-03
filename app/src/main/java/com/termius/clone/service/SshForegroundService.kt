@@ -136,17 +136,17 @@ class SshForegroundService : Service() {
     private fun acquireWakeAndWifiLocks() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
-            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TeamX:SshKeepAliveLock")?.apply {
+            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TermX:SshKeepAliveLock")?.apply {
                 setReferenceCounted(false)
                 acquire(24 * 60 * 60 * 1000L) // 24小时超长租约
             }
 
             val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             wifiLock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "TeamX:SshWifiLock")
+                wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "TermX:SshWifiLock")
             } else {
                 @Suppress("DEPRECATION")
-                wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "TeamX:SshWifiLock")
+                wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "TermX:SshWifiLock")
             }?.apply {
                 setReferenceCounted(false)
                 acquire()
@@ -279,7 +279,7 @@ class SshForegroundService : Service() {
         val timeText = if (elapsedMinutes >= 60) "${elapsedMinutes / 60}小时${elapsedMinutes % 60}分" else "${elapsedMinutes}分钟"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TeamX Mobile 连接保活中")
+            .setContentTitle("TermX Mobile 连接保活中")
             .setContentText("$sessionCount 个活动连接 ($activeHostLabels) • 在线 $timeText")
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setContentIntent(pendingIntent)
@@ -293,7 +293,7 @@ class SshForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "TeamX SSH 会话保活",
+                "TermX SSH 会话保活",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "保持后台 SSH 会话和端口转发连接不断开"

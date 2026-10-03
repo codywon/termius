@@ -16,7 +16,7 @@ import androidx.core.view.WindowCompat
 import com.termius.clone.ui.screens.MainScreen
 import com.termius.clone.ui.screens.TerminalScreen
 import com.termius.clone.ui.theme.LocalAppTheme
-import com.termius.clone.ui.theme.TeamXTheme
+import com.termius.clone.ui.theme.TermXTheme
 import com.termius.clone.ui.theme.ThemeManager
 import com.termius.clone.util.LanguageManager
 
@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            TeamXTheme {
+            TermXTheme {
                 val theme = LocalAppTheme.current
                 Surface(
                     modifier = Modifier.fillMaxSize(),
