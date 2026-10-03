@@ -46,7 +46,7 @@ fun MainScreen(
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     HorizontalDivider(
-                        color = theme.divider.copy(alpha = 0.45f),
+                        color = theme.outline.copy(alpha = 0.35f),
                         thickness = 0.5.dp
                     )
                     Row(
