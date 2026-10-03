@@ -60,7 +60,7 @@ fun TerminalScreen(
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            Surface(color = theme.surfaceContainerLow) {
+            Surface(color = ObsidianSurfaceContainerLowest) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
                     // Header Bar with Session Tabs (Clean TermX Mobile Style)
                     Row(
@@ -87,8 +87,11 @@ fun TerminalScreen(
 
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) ObsidianSurfaceContainerHighest else ObsidianSurfaceContainer,
-                                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
+                                    color = if (isSelected) ObsidianSurfaceContainerHighest else ObsidianSurfaceContainerLow,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isSelected) ObsidianPrimary.copy(alpha = 0.8f) else ObsidianOutlineVariant
+                                    ),
                                     onClick = { SessionManager.selectSession(session.id) }
                                 ) {
                                     Row(

@@ -190,8 +190,8 @@ class TerminalBuffer(
         val line = currentScreen[cursorRow]
         val cell = line.cells[cursorCol]
         cell.char = c
-        cell.fgColor = if (currentFgColor == Color.Unspecified) theme.foreground else currentFgColor
-        cell.bgColor = if (currentBgColor == Color.Unspecified) theme.background else currentBgColor
+        cell.fgColor = currentFgColor
+        cell.bgColor = currentBgColor
         cell.isBold = currentBold
         cell.isUnderline = currentUnderline
         cell.isInverse = currentInverse

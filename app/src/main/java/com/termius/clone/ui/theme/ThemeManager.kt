@@ -115,6 +115,8 @@ object ThemeManager {
     private const val KEY_FONT_SIZE = "terminal_font_size_sp"
     const val DEFAULT_FONT_SIZE = 13f
 
+    private const val KEY_TERMINAL_THEME = "current_terminal_theme_id"
+
     private var prefs: SharedPreferences? = null
 
     var currentTheme by mutableStateOf(AppTheme.LIGHT_PAPER)
@@ -123,18 +125,28 @@ object ThemeManager {
     var terminalFontSizeSp: Float by mutableFloatStateOf(DEFAULT_FONT_SIZE)
         private set
 
+    var currentTerminalTheme by mutableStateOf<com.termius.clone.data.model.TerminalThemeColors>(com.termius.clone.data.model.TerminalThemes.ClassicDark)
+        private set
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val savedId = prefs?.getString(KEY_THEME, AppTheme.LIGHT_PAPER.id) ?: AppTheme.LIGHT_PAPER.id
             currentTheme = AppTheme.fromId(savedId)
             terminalFontSizeSp = prefs?.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+            val savedTerminalThemeId = prefs?.getString(KEY_TERMINAL_THEME, com.termius.clone.data.model.TerminalThemes.ClassicDark.id) ?: com.termius.clone.data.model.TerminalThemes.ClassicDark.id
+            currentTerminalTheme = com.termius.clone.data.model.TerminalThemes.getThemeById(savedTerminalThemeId)
         }
     }
 
     fun setTheme(theme: AppTheme) {
         currentTheme = theme
         prefs?.edit()?.putString(KEY_THEME, theme.id)?.apply()
+    }
+
+    fun setTerminalTheme(theme: com.termius.clone.data.model.TerminalThemeColors) {
+        currentTerminalTheme = theme
+        prefs?.edit()?.putString(KEY_TERMINAL_THEME, theme.id)?.apply()
     }
 
     fun setTerminalFontSize(sizeSp: Float) {

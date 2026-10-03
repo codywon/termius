@@ -93,7 +93,8 @@ object Strings {
     val groupAbout: String get() = if (isZh) "关于" else "About"
 
     val sectionVault: String get() = if (isZh) "SSH 凭据" else "SSH Credentials"
-    val sectionAppearance: String get() = if (isZh) "配色主题" else "Color Theme"
+    val sectionAppearance: String get() = if (isZh) "应用主题" else "App Theme"
+    val sectionTerminalTheme: String get() = if (isZh) "终端配色" else "Terminal Theme"
     val sectionLanguage: String get() = if (isZh) "界面语言" else "Language"
     val terminalFontSizeTitle: String get() = if (isZh) "终端字号" else "Font Size"
 

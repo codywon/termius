@@ -130,10 +130,12 @@ fun TerminalView(
         } catch (_: Exception) {}
     }
 
+    val terminalTheme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(if (appTheme.isDark) session.terminalBuffer.theme.background else appTheme.background)
+            .background(terminalTheme.background)
             .onSizeChanged { viewSize = it }
             .pointerInput(charHeight) {
                 awaitEachGesture {
@@ -290,7 +292,7 @@ fun TerminalView(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val unusedTick = renderTick // 订阅触发 Compose 刷新
             val buffer = session.terminalBuffer
-            val theme = buffer.theme
+            val theme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
             val rows = buffer.rows
             val cols = buffer.cols
 
@@ -298,9 +300,12 @@ fun TerminalView(
             val totalHistory = history.size
             val screen = buffer.currentScreen
 
-            val defaultBg = if (appTheme.isDark) theme.background else appTheme.background
-            val defaultFg = if (appTheme.isDark) theme.foreground else appTheme.textPrimary
-            val defaultCursor = if (appTheme.isDark) theme.cursor else appTheme.primary
+            val defaultBg = theme.background
+            val defaultFg = theme.foreground
+            val defaultCursor = theme.cursor
+
+            // 1. 先用终端配色背景完整铺满整个画布，消除任何由于尺寸变动或空白区域导致的杂色缝隙
+            drawRect(color = defaultBg, size = size)
 
             drawIntoCanvas { canvas ->
                 try {

@@ -57,6 +57,7 @@ fun SettingsScreen() {
     var showBatteryGuideDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showTerminalThemeDialog by remember { mutableStateOf(false) }
 
     val theme = LocalAppTheme.current
 
@@ -92,7 +93,7 @@ fun SettingsScreen() {
                 // ---------------- 1. 界面与外观 ----------------
                 SettingsSectionHeader(title = Strings.groupAppearance)
 
-                // 配色主题
+                // 应用主题
                 SettingsItem(
                     title = Strings.sectionAppearance,
                     subtitle = if (Strings.isZh) theme.titleZh else theme.titleEn,
@@ -107,6 +108,30 @@ fun SettingsScreen() {
                                 )
                                 .border(1.dp, ObsidianOutlineVariant, CircleShape)
                         )
+                    }
+                )
+                DividerLine()
+
+                // 终端配色 (黑底白字、黑客绿字、复古琥珀等)
+                SettingsItem(
+                    title = Strings.sectionTerminalTheme,
+                    subtitle = if (Strings.isZh) ThemeManager.currentTerminalTheme.nameZh else ThemeManager.currentTerminalTheme.nameEn,
+                    onClick = { showTerminalThemeDialog = true },
+                    trailingContent = {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = ThemeManager.currentTerminalTheme.background,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant)
+                        ) {
+                            Text(
+                                text = " >_ ",
+                                color = ThemeManager.currentTerminalTheme.foreground,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 )
                 DividerLine()
@@ -433,6 +458,70 @@ fun SettingsScreen() {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showThemeDialog = false }) {
+                    Text(Strings.cancel, color = ObsidianTextSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
+    }
+
+    // 终端配色选择对话框
+    if (showTerminalThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showTerminalThemeDialog = false },
+            title = { Text(Strings.sectionTerminalTheme, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.termius.clone.data.model.TerminalThemes.allThemes.forEach { termTheme ->
+                        val isSelected = ThemeManager.currentTerminalTheme.id == termTheme.id
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) theme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ThemeManager.setTerminalTheme(termTheme)
+                                    showTerminalThemeDialog = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = termTheme.background,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianOutlineVariant),
+                                    modifier = Modifier.padding(end = 12.dp)
+                                ) {
+                                    Text(
+                                        text = " >_ ",
+                                        color = termTheme.foreground,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text(
+                                    text = if (Strings.isZh) termTheme.nameZh else termTheme.nameEn,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = ObsidianTextPrimary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isSelected) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showTerminalThemeDialog = false }) {
                     Text(Strings.cancel, color = ObsidianTextSecondary)
                 }
             },

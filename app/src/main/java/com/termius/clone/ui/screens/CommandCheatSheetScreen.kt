@@ -160,7 +160,7 @@ fun CommandCheatSheetScreen() {
                         }
                     }
 
-                    // 搜索框
+                    // 极简扁平搜索框 (去除生硬边框，iOS/Material 3 纯平胶囊风)
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -170,16 +170,16 @@ fun CommandCheatSheetScreen() {
                         placeholder = { Text(Strings.searchCommandsPlaceholder, color = ObsidianTextMuted, fontSize = 12.sp) },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ObsidianTextMuted, modifier = Modifier.size(18.dp)) },
                         singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceContainer,
-                            unfocusedContainerColor = theme.surfaceContainer,
-                            focusedBorderColor = theme.primary,
-                            unfocusedBorderColor = ObsidianOutlineVariant
+                            focusedContainerColor = if (theme.isDark) theme.surfaceContainer else Color(0xFFEFF2F5),
+                            unfocusedContainerColor = if (theme.isDark) theme.surfaceContainer else Color(0xFFEFF2F5),
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent
                         )
                     )
 
-                    // 分类 Chips
+                    // 扁平分类 Chips (告别线框束缚)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -193,16 +193,15 @@ fun CommandCheatSheetScreen() {
 
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
-                                color = if (isSelected) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainer,
-                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, theme.primary) else null,
+                                color = if (isSelected) theme.primary else (if (theme.isDark) theme.surfaceContainer else Color(0xFFEFF2F5)),
                                 onClick = { selectedCategory = category }
                             ) {
                                 Text(
                                     text = "$category ($count)",
                                     fontSize = 11.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) theme.primary else ObsidianTextSecondary,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    color = if (isSelected) Color.White else ObsidianTextSecondary,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
                                 )
                             }
                         }
@@ -273,30 +272,28 @@ private fun CommandCard(
     val theme = LocalAppTheme.current
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (theme.isDark) theme.surfaceContainer else theme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(
-            width = 0.5.dp,
-            color = if (theme.isDark) theme.outline.copy(alpha = 0.35f) else theme.outline.copy(alpha = 0.6f)
-        ),
+        shape = RoundedCornerShape(12.dp),
+        color = if (theme.isDark) theme.surfaceContainerLow else Color.White,
+        shadowElevation = if (theme.isDark) 0.dp else 0.8.dp,
+        border = if (theme.isDark) androidx.compose.foundation.BorderStroke(0.5.dp, theme.outline.copy(alpha = 0.25f)) else null,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 分类 Badge
+                // 分类 Badge (轻巧微圆角胶囊)
                 Surface(
-                    color = theme.primary.copy(alpha = 0.12f),
+                    color = theme.primary.copy(alpha = 0.10f),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
                         text = command.category,
                         color = theme.primary,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                     )
                 }
 
@@ -304,7 +301,7 @@ private fun CommandCard(
 
                 Text(
                     text = command.title,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = ObsidianTextPrimary,
                     modifier = Modifier.weight(1f)
@@ -318,13 +315,13 @@ private fun CommandCard(
                         Icons.Default.ContentCopy,
                         contentDescription = "Copy Command",
                         tint = theme.primary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
             }
 
             if (command.description.isNotBlank()) {
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = command.description,
                     fontSize = 12.sp,
@@ -333,12 +330,12 @@ private fun CommandCard(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // 代码命令行展示 (清爽代码盒)
+            // 代码命令行展示 (轻量通透展示盒，消除深灰厚重感)
             Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = if (theme.isDark) theme.background.copy(alpha = 0.7f) else theme.surfaceContainer.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(8.dp),
+                color = if (theme.isDark) theme.surfaceContainer else Color(0xFFF7F9FB),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onCopy() }
@@ -346,7 +343,7 @@ private fun CommandCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
