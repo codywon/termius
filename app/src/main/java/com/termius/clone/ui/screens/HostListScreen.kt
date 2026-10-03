@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.widget.Toast
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -26,7 +27,11 @@ import androidx.compose.ui.unit.sp
 import com.termius.clone.data.local.AppDatabase
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.terminal.session.SessionManager
+import com.termius.clone.ui.components.AppUpdateDialog
+import com.termius.clone.ui.components.UpdateUiState
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.AppUpdateManager
+import com.termius.clone.util.UpdateCheckResult
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,6 +51,16 @@ fun HostListScreen(
     var selectedTag by remember { mutableStateOf("All") }
     var hostToEdit by remember { mutableStateOf<HostEntity?>(null) }
     var showEditDialog by remember { mutableStateOf(false) }
+
+    var updateUiState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+
+    // 启动时静默检查更新 (参考 mqtt-assistant-app)
+    LaunchedEffect(Unit) {
+        val result = AppUpdateManager.checkUpdate(context, isManual = false)
+        if (result is UpdateCheckResult.HasUpdate) {
+            updateUiState = UpdateUiState.HasUpdate(result.info)
+        }
+    }
 
     val filterTags = listOf("All", "Production", "Staging", "Docker", "AWS", "K8s")
 
@@ -108,6 +123,37 @@ fun HostListScreen(
                                 )
                             }
                         }
+
+                        // Check for updates action button
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    Toast.makeText(context, "正在检查更新...", Toast.LENGTH_SHORT).show()
+                                    when (val result = AppUpdateManager.checkUpdate(context, isManual = true)) {
+                                        is UpdateCheckResult.HasUpdate -> {
+                                            updateUiState = UpdateUiState.HasUpdate(result.info)
+                                        }
+                                        is UpdateCheckResult.NoUpdate -> {
+                                            Toast.makeText(context, "已是最新版本 (v${result.currentVersion})", Toast.LENGTH_SHORT).show()
+                                        }
+                                        is UpdateCheckResult.Error -> {
+                                            Toast.makeText(context, "检查更新失败: ${result.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                        else -> {}
+                                    }
+                                }
+                            },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = "Check for updates",
+                                tint = ObsidianSecondary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
 
                         // Avatar
                         Box(
@@ -275,6 +321,53 @@ fun HostListScreen(
             }
         )
     }
+
+    // 在线自动升级对话框 (支持多镜像并发测速与最优路径流式下载)
+    AppUpdateDialog(
+        state = updateUiState,
+        onStartDownload = { info ->
+            scope.launch {
+                updateUiState = UpdateUiState.Downloading(
+                    info = info,
+                    progress = 0f,
+                    downloadedBytes = 0L,
+                    totalBytes = info.fileSize,
+                    speedText = "测速竞选...",
+                    channelName = "优选节点中..."
+                )
+                val result = AppUpdateManager.downloadApk(context, info) { progress, downloaded, total, speed, channel ->
+                    updateUiState = UpdateUiState.Downloading(info, progress, downloaded, total, speed, channel)
+                }
+                result.onSuccess { apkFile ->
+                    if (AppUpdateManager.canInstallPackages(context)) {
+                        updateUiState = UpdateUiState.ReadyToInstall(apkFile, info)
+                        AppUpdateManager.installApk(context, apkFile)
+                    } else {
+                        updateUiState = UpdateUiState.PermissionRequired(apkFile, info)
+                    }
+                }.onFailure { err ->
+                    updateUiState = UpdateUiState.Error(err.message ?: "下载失败", info)
+                }
+            }
+        },
+        onInstall = { file ->
+            if (AppUpdateManager.canInstallPackages(context)) {
+                AppUpdateManager.installApk(context, file)
+            } else {
+                val currentInfo = (updateUiState as? UpdateUiState.ReadyToInstall)?.info
+                if (currentInfo != null) {
+                    updateUiState = UpdateUiState.PermissionRequired(file, currentInfo)
+                }
+            }
+        },
+        onIgnore = { tagName ->
+            AppUpdateManager.ignoreVersion(context, tagName)
+            updateUiState = UpdateUiState.Idle
+        },
+        onDismiss = {
+            updateUiState = UpdateUiState.Idle
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

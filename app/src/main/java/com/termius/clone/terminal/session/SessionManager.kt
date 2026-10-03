@@ -57,17 +57,10 @@ object SessionManager {
     private fun updateForegroundService(context: Context) {
         try {
             val count = _sessions.value.size
-            val intent = Intent(context, SshForegroundService::class.java).apply {
-                putExtra(SshForegroundService.EXTRA_SESSION_COUNT, count)
-            }
             if (count > 0) {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                SshForegroundService.start(context, count)
             } else {
-                context.stopService(intent)
+                SshForegroundService.stop(context)
             }
         } catch (e: Throwable) {
             e.printStackTrace()

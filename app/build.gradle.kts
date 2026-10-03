@@ -91,6 +91,9 @@ dependencies {
     // JSON
     implementation("com.google.code.gson:gson:2.11.0")
 
+    // HTTP & Download Engine (for GitHub multi-channel speed test and update)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // Test
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
