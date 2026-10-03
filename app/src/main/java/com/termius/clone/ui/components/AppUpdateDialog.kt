@@ -68,6 +68,7 @@ fun AppUpdateDialog(
 
     val context = LocalContext.current
     val currentVersion = AppUpdateManager.getCurrentVersionName(context)
+    val theme = LocalAppTheme.current
 
     Dialog(
         onDismissRequest = {
@@ -85,8 +86,8 @@ fun AppUpdateDialog(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .clip(RoundedCornerShape(20.dp))
-                .border(BorderStroke(1.dp, ObsidianOutlineVariant), RoundedCornerShape(20.dp)),
-            color = ObsidianSurfaceContainerLow,
+                .border(BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f)), RoundedCornerShape(20.dp)),
+            color = theme.surfaceContainerLow,
             shadowElevation = 12.dp
         ) {
             Column(
@@ -103,8 +104,8 @@ fun AppUpdateDialog(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(ObsidianPrimary.copy(alpha = 0.15f))
-                            .border(1.dp, ObsidianPrimary.copy(alpha = 0.5f), CircleShape),
+                            .background(theme.primary.copy(alpha = 0.15f))
+                            .border(1.dp, theme.primary.copy(alpha = 0.4f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -116,7 +117,7 @@ fun AppUpdateDialog(
                                 else -> Icons.Default.RocketLaunch
                             },
                             contentDescription = null,
-                            tint = ObsidianPrimary,
+                            tint = theme.primary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -133,7 +134,7 @@ fun AppUpdateDialog(
                                 else -> "发现新版本"
                             },
                             fontWeight = FontWeight.Bold,
-                            color = ObsidianTextPrimary,
+                            color = theme.textPrimary,
                             fontSize = 17.sp
                         )
 
@@ -150,7 +151,7 @@ fun AppUpdateDialog(
                             Text(
                                 text = "v$currentVersion ➔ v${updateInfo.versionName}",
                                 fontSize = 12.sp,
-                                color = ObsidianSecondary,
+                                color = theme.primary,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -163,14 +164,14 @@ fun AppUpdateDialog(
                 // Body 内容区
                 when (state) {
                     is UpdateUiState.HasUpdate -> {
-                        // 版本日志卡片
+                        // 版本日志卡片 (基于标准库 Markwon 进行富文本渲染)
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 200.dp),
+                                .heightIn(max = 240.dp),
                             shape = RoundedCornerShape(12.dp),
-                            color = ObsidianSurfaceContainer,
-                            border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainer,
+                            border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
                         ) {
                             Column(
                                 modifier = Modifier
@@ -184,27 +185,29 @@ fun AppUpdateDialog(
                                     Text(
                                         text = "发布日期: ${state.info.publishedAt.ifBlank { "最近" }}",
                                         fontSize = 11.sp,
-                                        color = ObsidianTextMuted
+                                        color = theme.textMuted
                                     )
                                     if (state.info.fileSize > 0) {
                                         Text(
                                             text = String.format(Locale.US, "%.1f MB", state.info.fileSize / (1024.0 * 1024.0)),
                                             fontSize = 11.sp,
-                                            color = ObsidianTextMuted,
+                                            color = theme.textMuted,
                                             fontFamily = FontFamily.Monospace
                                         )
                                     }
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
-                                HorizontalDivider(color = ObsidianOutlineVariant, thickness = 0.5.dp)
+                                HorizontalDivider(color = theme.outline.copy(alpha = 0.25f), thickness = 0.5.dp)
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                Text(
-                                    text = state.info.releaseNotes,
-                                    fontSize = 13.sp,
-                                    color = ObsidianTextPrimary,
-                                    lineHeight = 19.sp
+                                // 标准库 Markwon 渲染
+                                MarkdownText(
+                                    markdown = state.info.releaseNotes,
+                                    textColor = theme.textPrimary,
+                                    linkColor = theme.primary,
+                                    fontSizeSp = 13f,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
                         }
@@ -221,8 +224,8 @@ fun AppUpdateDialog(
                                     onClick = { onIgnore(state.info.tagName) },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ObsidianTextMuted),
-                                    border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textSecondary),
+                                    border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                                 ) {
                                     Text("跳过此版", fontSize = 13.sp)
                                 }
@@ -231,8 +234,8 @@ fun AppUpdateDialog(
                                     onClick = onDismiss,
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ObsidianTextMuted),
-                                    border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textSecondary),
+                                    border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                                 ) {
                                     Text("稍后提醒", fontSize = 13.sp)
                                 }
@@ -242,7 +245,10 @@ fun AppUpdateDialog(
                                 onClick = { onStartDownload(state.info) },
                                 modifier = Modifier.weight(1.4f),
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black)
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = theme.primary,
+                                    contentColor = if (theme.isDark) Color.Black else Color.White
+                                )
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -255,8 +261,8 @@ fun AppUpdateDialog(
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            color = ObsidianSurfaceContainer,
-                            border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainer,
+                            border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Row(
@@ -269,13 +275,13 @@ fun AppUpdateDialog(
                                         Box(
                                             modifier = Modifier
                                                 .size(6.dp)
-                                                .background(ObsidianPrimary, CircleShape)
+                                                .background(theme.primary, CircleShape)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = state.channelName,
                                             fontSize = 11.sp,
-                                            color = ObsidianSecondary,
+                                            color = theme.primary,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -286,7 +292,7 @@ fun AppUpdateDialog(
                                         text = state.speedText,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = ObsidianPrimary,
+                                        color = theme.primary,
                                         fontFamily = FontFamily.Monospace
                                     )
                                 }
@@ -300,8 +306,8 @@ fun AppUpdateDialog(
                                         .fillMaxWidth()
                                         .height(8.dp)
                                         .clip(RoundedCornerShape(4.dp)),
-                                    color = ObsidianPrimary,
-                                    trackColor = ObsidianSurfaceContainerHighest
+                                    color = theme.primary,
+                                    trackColor = theme.surfaceContainerHigh
                                 )
 
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -315,14 +321,14 @@ fun AppUpdateDialog(
                                     Text(
                                         text = String.format(Locale.US, "%.1fMB / %.1fMB", downloadedMb, totalMb),
                                         fontSize = 11.sp,
-                                        color = ObsidianTextMuted,
+                                        color = theme.textMuted,
                                         fontFamily = FontFamily.Monospace
                                     )
                                     Text(
                                         text = "${(state.progress * 100).toInt()}%",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = ObsidianTextPrimary,
+                                        color = theme.textPrimary,
                                         fontFamily = FontFamily.Monospace
                                     )
                                 }
@@ -333,7 +339,7 @@ fun AppUpdateDialog(
                         Text(
                             text = "已启用智能镜像测速与低速熔断保护，请稍候...",
                             fontSize = 11.sp,
-                            color = ObsidianTextMuted,
+                            color = theme.textMuted,
                             modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
                     }
@@ -342,18 +348,18 @@ fun AppUpdateDialog(
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            color = ObsidianSurfaceContainer,
-                            border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainer,
+                            border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
                         ) {
                             Row(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = ObsidianPrimary, modifier = Modifier.size(28.dp))
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = theme.primary, modifier = Modifier.size(28.dp))
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
-                                    Text("APK 安装包已下载校验完毕", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary)
-                                    Text("点击下方按钮立即唤起系统进行覆盖安装", fontSize = 11.sp, color = ObsidianTextSecondary)
+                                    Text("APK 安装包已下载校验完毕", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = theme.textPrimary)
+                                    Text("点击下方按钮立即唤起系统进行覆盖安装", fontSize = 11.sp, color = theme.textSecondary)
                                 }
                             }
                         }
@@ -364,7 +370,10 @@ fun AppUpdateDialog(
                             onClick = { onInstall(state.apkFile) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = theme.primary,
+                                contentColor = if (theme.isDark) Color.Black else Color.White
+                            )
                         ) {
                             Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -376,13 +385,13 @@ fun AppUpdateDialog(
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            color = ObsidianSurfaceContainer,
-                            border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainer,
+                            border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Text("需要开启“允许安装未知应用”权限", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ObsidianTextPrimary)
+                                Text("需要开启“允许安装未知应用”权限", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = theme.textPrimary)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("Android 安全机制要求对当前应用授予安装 APK 权限，开启后即可直接安装。", fontSize = 11.sp, color = ObsidianTextSecondary)
+                                Text("Android 安全机制要求对当前应用授予安装 APK 权限，开启后即可直接安装。", fontSize = 11.sp, color = theme.textSecondary)
                             }
                         }
 
@@ -395,7 +404,10 @@ fun AppUpdateDialog(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary, contentColor = Color.Black)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = theme.primary,
+                                contentColor = if (theme.isDark) Color.Black else Color.White
+                            )
                         ) {
                             Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -407,16 +419,16 @@ fun AppUpdateDialog(
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            color = ObsidianSurfaceContainer,
-                            border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                            color = theme.surfaceContainer,
+                            border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
                         ) {
                             Row(
                                 modifier = Modifier.padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = ObsidianError, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text(state.message, fontSize = 12.sp, color = ObsidianTextPrimary)
+                                Text(state.message, fontSize = 12.sp, color = theme.textPrimary)
                             }
                         }
 
@@ -430,8 +442,8 @@ fun AppUpdateDialog(
                                 onClick = onDismiss,
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = ObsidianTextMuted),
-                                border = BorderStroke(1.dp, ObsidianOutlineVariant)
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textSecondary),
+                                border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                             ) {
                                 Text("关闭", fontSize = 13.sp)
                             }
@@ -441,7 +453,10 @@ fun AppUpdateDialog(
                                     onClick = { AppUpdateManager.openInBrowser(context, state.info.downloadUrl) },
                                     modifier = Modifier.weight(1.3f),
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = ObsidianSurfaceContainerHigh, contentColor = ObsidianTextPrimary)
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = theme.surfaceContainerHigh,
+                                        contentColor = theme.textPrimary
+                                    )
                                 ) {
                                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))

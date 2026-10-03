@@ -13,8 +13,8 @@ android {
         applicationId = "com.termius.clone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -105,6 +105,9 @@ dependencies {
 
     // HTTP & Download Engine (for GitHub multi-channel speed test and update)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Markdown Standard Renderer (Markwon)
+    implementation("io.noties.markwon:core:4.6.2")
 
     // Test
     testImplementation("junit:junit:4.13.2")

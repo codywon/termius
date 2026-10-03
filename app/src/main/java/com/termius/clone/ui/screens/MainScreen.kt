@@ -39,8 +39,8 @@ fun MainScreen(
                     val isSelected = currentTab == tab
                     val labelText = tab.getTitle()
                     NavigationBarItem(
-                        icon = { Icon(tab.icon, contentDescription = labelText) },
-                        label = { Text(labelText, fontSize = 11.sp) },
+                        icon = { Icon(tab.icon, contentDescription = labelText, modifier = Modifier.size(24.dp)) },
+                        alwaysShowLabel = false,
                         selected = isSelected,
                         onClick = {
                             if (tab != MainTab.SFTP) {
@@ -50,10 +50,8 @@ fun MainScreen(
                         },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = theme.primary,
-                            selectedTextColor = theme.primary,
-                            unselectedIconColor = ObsidianTextMuted,
-                            unselectedTextColor = ObsidianTextMuted,
-                            indicatorColor = theme.primary.copy(alpha = 0.15f)
+                            unselectedIconColor = theme.textMuted,
+                            indicatorColor = theme.primary.copy(alpha = if (theme.isDark) 0.22f else 0.12f)
                         )
                     )
                 }
