@@ -1,6 +1,7 @@
 package com.termius.clone.ui.screens
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -38,6 +39,11 @@ import com.termius.clone.util.Strings
 fun TerminalScreen(
     onNavigateBack: () -> Unit
 ) {
+    // 拦截系统返回手势（如屏幕边缘侧滑返回、物理返回键等），平滑退回到主页而不是直接将应用最小化
+    BackHandler {
+        onNavigateBack()
+    }
+
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val configuration = LocalConfiguration.current

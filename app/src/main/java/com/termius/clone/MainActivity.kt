@@ -67,9 +67,14 @@ class MainActivity : ComponentActivity() {
                         "main" -> MainScreen(
                             onNavigateToTerminal = { currentRoute = "terminal" }
                         )
-                        "terminal" -> TerminalScreen(
-                            onNavigateBack = { currentRoute = "main" }
-                        )
+                        "terminal" -> {
+                            androidx.activity.compose.BackHandler {
+                                currentRoute = "main"
+                            }
+                            TerminalScreen(
+                                onNavigateBack = { currentRoute = "main" }
+                            )
+                        }
                     }
                 }
             }
