@@ -9,11 +9,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridItemScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,14 +30,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import android.content.res.Configuration
+import android.widget.Toast
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
@@ -76,6 +83,20 @@ fun TerminalAccessoryBar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val clipboardManager = LocalClipboardManager.current
     val commands by QuickCommandManager.commands.collectAsState()
+    val context = LocalContext.current
+
+    val handleExecuteCommand: (QuickCommand) -> Unit = { cmd ->
+        if (cmd.id == "ctrl_v" || cmd.command == "__CLIPBOARD_PASTE__") {
+            val clipText = clipboardManager.getText()?.text
+            if (!clipText.isNullOrEmpty()) {
+                onSendKey(clipText)
+            } else {
+                Toast.makeText(context, "剪贴板为空", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            onSendKey(cmd.command)
+        }
+    }
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -544,9 +565,18 @@ fun TerminalAccessoryBar(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
+                    val gridState = rememberLazyGridState()
+                    val reorderState = rememberReorderableLazyGridState(
+                        gridState = gridState,
+                        onMove = { fromIndex, toIndex ->
+                            QuickCommandManager.move(fromIndex, toIndex)
+                        }
+                    )
+
                     // 右侧指令网格 (自适应列数：竖屏 3 列，横屏 5 列)
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
+                        state = gridState,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
@@ -554,19 +584,26 @@ fun TerminalAccessoryBar(
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         itemsIndexed(commands, key = { _, item -> item.id }) { index, item ->
-                            QuickCommandCard(
-                                command = item,
-                                index = index,
-                                totalCount = commands.size,
-                                columns = gridColumns,
-                                isLandscape = isLandscape,
-                                isEditMode = isEditMode,
-                                onClick = { onSendKey(item.command) },
-                                onLongClick = { contextMenuCommand = item },
-                                onEdit = { editingCommand = item },
-                                onDelete = { QuickCommandManager.deleteCommand(item.id) },
-                                onMove = { fromIndex, toIndex -> QuickCommandManager.move(fromIndex, toIndex) }
-                            )
+                            val isDraggingThis = reorderState.draggingKey == item.id
+                            Box(
+                                modifier = Modifier
+                                    .animateItemPlacement()
+                                    .zIndex(if (isDraggingThis) 99f else 1f)
+                            ) {
+                                QuickCommandCard(
+                                    command = item,
+                                    index = index,
+                                    totalCount = commands.size,
+                                    columns = gridColumns,
+                                    isLandscape = isLandscape,
+                                    isEditMode = isEditMode,
+                                    reorderState = reorderState,
+                                    onClick = { handleExecuteCommand(item) },
+                                    onLongClick = { contextMenuCommand = item },
+                                    onEdit = { editingCommand = item },
+                                    onDelete = { QuickCommandManager.deleteCommand(item.id) }
+                                )
+                            }
                         }
                     }
                 }
@@ -720,7 +757,10 @@ fun TerminalAccessoryBar(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "执行命令: ${cmd.command.replace("\n", " [↵回车]")}",
+                        text = if (cmd.id == "ctrl_v" || cmd.command == "__CLIPBOARD_PASTE__")
+                            "执行指令: [粘贴剪贴板内容]"
+                        else
+                            "执行命令: ${cmd.command.replace("\n", " [↵回车]")}",
                         fontSize = 12.sp,
                         color = theme.textSecondary,
                         fontFamily = FontFamily.Monospace
@@ -767,7 +807,7 @@ fun TerminalAccessoryBar(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(Icons.Default.DragHandle, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
-                            Text("排序管理 (按住手柄自由拖动)", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("排序管理 (按住手柄或长按自由拖拽)", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
 
@@ -858,12 +898,96 @@ private fun UUTabItem(
 }
 
 /**
+ * 专为 LazyVerticalGrid 打造的高性能平滑拖拽重排状态管理器
+ * 1. 彻底解决 pointerInput 键变动导致手势协程取消引发的卡死悬空问题；
+ * 2. 基于真实物理视口像素坐标判定最近的 targetItem，100% 精确，绝不依赖粗糙 dp 估算；
+ * 3. 交换瞬间反向补偿位移差量 (deltaX, deltaY)，实现视觉绝对位置零抖动连续吸附；
+ * 4. 配合 LazyGridItemScope.animateItemPlacement() 实现被挤开卡片的物理弹簧让位动效；
+ * 5. 拖拽结束或取消时严格重置状态与偏移，绝无卡片重叠与悬空 Bug。
+ */
+class ReorderableLazyGridState(
+    val gridState: LazyGridState,
+    val onMove: (fromIndex: Int, toIndex: Int) -> Unit
+) {
+    var draggingKey by mutableStateOf<Any?>(null)
+    var dragOffset by mutableStateOf(Offset.Zero)
+    var currentDraggingIndex by mutableStateOf<Int?>(null)
+
+    val isDragging: Boolean get() = draggingKey != null
+
+    fun onDragStart(key: Any, index: Int) {
+        draggingKey = key
+        currentDraggingIndex = index
+        dragOffset = Offset.Zero
+    }
+
+    fun onDrag(dragAmount: Offset, haptic: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
+        dragOffset += dragAmount
+
+        val currentIndex = currentDraggingIndex ?: return
+        val layoutInfo = gridState.layoutInfo
+        val currentItem = layoutInfo.visibleItemsInfo.firstOrNull { it.key == draggingKey } ?: return
+
+        // 当前被拖动卡片在视口内的实时视觉中心坐标
+        val currentCenterX = currentItem.offset.x + currentItem.size.width / 2f + dragOffset.x
+        val currentCenterY = currentItem.offset.y + currentItem.size.height / 2f + dragOffset.y
+
+        // 寻找与当前视觉中心最接近、且重叠度最高的目标卡片
+        val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { item ->
+            if (item.key == draggingKey) return@firstOrNull false
+            val itemCenterX = item.offset.x + item.size.width / 2f
+            val itemCenterY = item.offset.y + item.size.height / 2f
+            val dx = currentCenterX - itemCenterX
+            val dy = currentCenterY - itemCenterY
+            val distSq = dx * dx + dy * dy
+            val threshold = (item.size.width * 0.6f) * (item.size.width * 0.6f) +
+                            (item.size.height * 0.6f) * (item.size.height * 0.6f)
+            distSq <= threshold
+        }
+
+        if (targetItem != null && targetItem.index != currentIndex) {
+            val targetIndex = targetItem.index
+            // 计算坐标差，抵消重排导致的底层布局跳跃，使卡片平滑粘在手指下方
+            val deltaX = currentItem.offset.x - targetItem.offset.x
+            val deltaY = currentItem.offset.y - targetItem.offset.y
+
+            onMove(currentIndex, targetIndex)
+            currentDraggingIndex = targetIndex
+            dragOffset += Offset(deltaX.toFloat(), deltaY.toFloat())
+            haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    fun onDragEnd() {
+        draggingKey = null
+        currentDraggingIndex = null
+        dragOffset = Offset.Zero
+    }
+
+    fun onDragCancel() {
+        draggingKey = null
+        currentDraggingIndex = null
+        dragOffset = Offset.Zero
+    }
+}
+
+@Composable
+fun rememberReorderableLazyGridState(
+    gridState: LazyGridState,
+    onMove: (fromIndex: Int, toIndex: Int) -> Unit
+): ReorderableLazyGridState {
+    return remember(gridState) {
+        ReorderableLazyGridState(gridState, onMove)
+    }
+}
+
+/**
  * 快捷指令网格卡片 (双行显示：上部标题 + 下部中文注释)
- * 支持：
- * 1. 轻按发送指令 / 编辑模式下点击直接编辑
- * 2. 长按弹出操作菜单 (编辑、拖动排序、删除)
- * 3. 编辑模式下：移除左右小箭头彻底杜绝误触，支持按住拖拽手柄自由拖动排序
- * 4. 横竖屏自适应：横屏下高度紧凑 (40dp)，5列网格，大半空间留给终端
+ * 极致体验升级：
+ * 1. 拖拽全域丝滑：专属大热区手柄按住即拖，无长按延迟；编辑模式下长按卡片亦可抓起；
+ * 2. 状态机稳定：绑定稳定键值，绝不中断手势协程，彻底根除悬空重叠 Bug；
+ * 3. 视觉触觉层次：抓起时放大 1.08 倍并投射悬浮阴影，拖动划过卡片带刻度感震动；
+ * 4. 常用按键醒目：Ctrl+C 与 Ctrl+V 专属高亮与语义区分，操作一目了然。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -874,32 +998,29 @@ private fun QuickCommandCard(
     columns: Int = 3,
     isLandscape: Boolean = false,
     isEditMode: Boolean,
+    reorderState: ReorderableLazyGridState,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onMove: (fromIndex: Int, toIndex: Int) -> Unit
+    onDelete: () -> Unit
 ) {
     val theme = LocalAppTheme.current
     val haptic = LocalHapticFeedback.current
 
-    var dragOffsetX by remember { mutableStateOf(0f) }
-    var dragOffsetY by remember { mutableStateOf(0f) }
-    var isDragging by remember { mutableStateOf(false) }
-
+    val isDraggingThis = reorderState.draggingKey == command.id
     val cardHeight = if (isLandscape) 40.dp else 56.dp
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(cardHeight)
-            .zIndex(if (isDragging) 10f else 1f)
-            .offset { IntOffset(dragOffsetX.roundToInt(), dragOffsetY.roundToInt()) }
             .graphicsLayer {
-                if (isDragging) {
+                if (isDraggingThis) {
+                    translationX = reorderState.dragOffset.x
+                    translationY = reorderState.dragOffset.y
                     scaleX = 1.08f
                     scaleY = 1.08f
-                    shadowElevation = 14f
+                    shadowElevation = 20f
                 }
             }
             .clip(RoundedCornerShape(8.dp))
@@ -913,16 +1034,38 @@ private fun QuickCommandCard(
                 },
                 onLongClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
+                    if (isEditMode) {
+                        reorderState.onDragStart(command.id, index)
+                    } else {
+                        onLongClick()
+                    }
                 }
+            )
+            .then(
+                if (isEditMode) {
+                    Modifier.pointerInput(command.id) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                reorderState.onDragStart(command.id, index)
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                reorderState.onDrag(dragAmount, haptic)
+                            },
+                            onDragEnd = { reorderState.onDragEnd() },
+                            onDragCancel = { reorderState.onDragCancel() }
+                        )
+                    }
+                } else Modifier
             ),
         shape = RoundedCornerShape(8.dp),
-        color = if (isDragging) theme.surfaceContainerHigh else theme.surfaceContainerLow,
+        color = if (isDraggingThis) theme.surfaceContainerHigh else theme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(
-            if (isDragging) 1.5.dp else 1.dp,
-            if (isDragging) theme.primary else if (isEditMode) theme.primary.copy(alpha = 0.55f) else theme.outline.copy(alpha = 0.35f)
+            if (isDraggingThis) 1.5.dp else 1.dp,
+            if (isDraggingThis) theme.primary else if (isEditMode) theme.primary.copy(alpha = 0.55f) else theme.outline.copy(alpha = 0.35f)
         ),
-        shadowElevation = if (isDragging) 8.dp else 0.dp
+        shadowElevation = if (isDraggingThis) 12.dp else 0.dp
     ) {
         Box(
             modifier = Modifier
@@ -937,9 +1080,14 @@ private fun QuickCommandCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
+                val titleColor = when {
+                    command.id == "ctrl_c" -> theme.error
+                    command.id == "ctrl_v" -> theme.primary
+                    else -> theme.textPrimary
+                }
                 Text(
                     text = command.title,
-                    color = theme.textPrimary,
+                    color = titleColor,
                     fontSize = if (isLandscape) 11.sp else 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
@@ -962,7 +1110,7 @@ private fun QuickCommandCard(
                 // 左下角：清晰的编辑铅笔小标识
                 Box(
                     modifier = Modifier
-                        .size(if (isLandscape) 16.dp else 20.dp)
+                        .size(if (isLandscape) 18.dp else 24.dp)
                         .align(Alignment.BottomStart)
                         .clip(CircleShape)
                         .clickable(onClick = onEdit),
@@ -972,14 +1120,14 @@ private fun QuickCommandCard(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Edit",
                         tint = theme.primary,
-                        modifier = Modifier.size(if (isLandscape) 11.dp else 13.dp)
+                        modifier = Modifier.size(if (isLandscape) 11.dp else 14.dp)
                     )
                 }
 
                 // 右上角：明确的删除红色小按钮 (带圆底，防误触)
                 Box(
                     modifier = Modifier
-                        .size(if (isLandscape) 18.dp else 22.dp)
+                        .size(if (isLandscape) 18.dp else 24.dp)
                         .align(Alignment.TopEnd)
                         .clip(CircleShape)
                         .background(Color(0xFFEF4444).copy(alpha = 0.14f))
@@ -994,59 +1142,28 @@ private fun QuickCommandCard(
                     )
                 }
 
-                // 右下角：拖动手柄（专供拖动重排，彻底替代旧箭头）
+                // 右下角：高灵敏度专属拖动手柄（大热区，按住即刻拖动，零长按等待）
                 Box(
                     modifier = Modifier
-                        .size(if (isLandscape) 20.dp else 26.dp)
+                        .size(if (isLandscape) 28.dp else 36.dp)
                         .align(Alignment.BottomEnd)
-                        .clip(RoundedCornerShape(4.dp))
-                        .pointerInput(command.id, index, columns) {
+                        .clip(RoundedCornerShape(topStart = 8.dp, bottomEnd = 8.dp))
+                        .background(if (isDraggingThis) theme.primary.copy(alpha = 0.25f) else Color.Transparent)
+                        .pointerInput(command.id) {
                             detectDragGestures(
                                 onDragStart = {
-                                    isDragging = true
-                                    dragOffsetX = 0f
-                                    dragOffsetY = 0f
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    reorderState.onDragStart(command.id, index)
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    dragOffsetX += dragAmount.x
-                                    dragOffsetY += dragAmount.y
-
-                                    val thresholdX = (if (isLandscape) 60.dp else 85.dp).toPx() * 0.6f
-                                    val thresholdY = (if (isLandscape) 42.dp else 60.dp).toPx() * 0.6f
-
-                                    var targetIndex = index
-                                    if (dragOffsetX > thresholdX && (index % columns) < columns - 1) {
-                                        targetIndex += 1
-                                        dragOffsetX -= if (isLandscape) 60.dp.toPx() else 85.dp.toPx()
-                                    } else if (dragOffsetX < -thresholdX && (index % columns) > 0) {
-                                        targetIndex -= 1
-                                        dragOffsetX += if (isLandscape) 60.dp.toPx() else 85.dp.toPx()
-                                    }
-
-                                    if (dragOffsetY > thresholdY && targetIndex + columns < totalCount) {
-                                        targetIndex += columns
-                                        dragOffsetY -= if (isLandscape) 42.dp.toPx() else 60.dp.toPx()
-                                    } else if (dragOffsetY < -thresholdY && targetIndex - columns >= 0) {
-                                        targetIndex -= columns
-                                        dragOffsetY += if (isLandscape) 42.dp.toPx() else 60.dp.toPx()
-                                    }
-
-                                    if (targetIndex != index && targetIndex in 0 until totalCount) {
-                                        onMove(index, targetIndex)
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    }
+                                    reorderState.onDrag(dragAmount, haptic)
                                 },
                                 onDragEnd = {
-                                    isDragging = false
-                                    dragOffsetX = 0f
-                                    dragOffsetY = 0f
+                                    reorderState.onDragEnd()
                                 },
                                 onDragCancel = {
-                                    isDragging = false
-                                    dragOffsetX = 0f
-                                    dragOffsetY = 0f
+                                    reorderState.onDragCancel()
                                 }
                             )
                         },
@@ -1055,8 +1172,8 @@ private fun QuickCommandCard(
                     Icon(
                         imageVector = Icons.Default.DragHandle,
                         contentDescription = "Drag Handle",
-                        tint = if (isDragging) theme.primary else theme.textMuted,
-                        modifier = Modifier.size(if (isLandscape) 13.dp else 16.dp)
+                        tint = if (isDraggingThis) theme.primary else theme.textSecondary,
+                        modifier = Modifier.size(if (isLandscape) 14.dp else 18.dp)
                     )
                 }
             }

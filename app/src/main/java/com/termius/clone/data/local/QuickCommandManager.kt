@@ -21,12 +21,13 @@ object QuickCommandManager {
     val commands: StateFlow<List<QuickCommand>> = _commands.asStateFlow()
 
     private val defaultCommands = listOf(
-        QuickCommand(id = "ctrl_c", title = "Ctrl+C", subtitle = "中断", command = "\u0003"),
-        QuickCommand(id = "ctrl_z", title = "Ctrl+Z", subtitle = "挂起", command = "\u001A"),
-        QuickCommand(id = "ctrl_d", title = "Ctrl+D", subtitle = "退出", command = "\u0004"),
-        QuickCommand(id = "ctrl_l", title = "Ctrl+L", subtitle = "清屏", command = "\u000C"),
-        QuickCommand(id = "ctrl_a", title = "Ctrl+A", subtitle = "行首", command = "\u0001"),
-        QuickCommand(id = "ctrl_e", title = "Ctrl+E", subtitle = "行尾", command = "\u0005"),
+        QuickCommand(id = "ctrl_c", title = "Ctrl+C", subtitle = "中断/复制", command = "\u0003"),
+        QuickCommand(id = "ctrl_v", title = "Ctrl+V", subtitle = "粘贴剪贴", command = "__CLIPBOARD_PASTE__"),
+        QuickCommand(id = "ctrl_z", title = "Ctrl+Z", subtitle = "后台挂起", command = "\u001A"),
+        QuickCommand(id = "ctrl_l", title = "Ctrl+L", subtitle = "快速清屏", command = "\u000C"),
+        QuickCommand(id = "ctrl_d", title = "Ctrl+D", subtitle = "退出会话", command = "\u0004"),
+        QuickCommand(id = "ctrl_a", title = "Ctrl+A", subtitle = "跳转行首", command = "\u0001"),
+        QuickCommand(id = "ctrl_e", title = "Ctrl+E", subtitle = "跳转行尾", command = "\u0005"),
         QuickCommand(id = "ctrl_u", title = "Ctrl+U", subtitle = "整行清空", command = "\u0015"),
         QuickCommand(id = "ctrl_r", title = "Ctrl+R", subtitle = "历史搜索", command = "\u0012"),
         QuickCommand(id = "vim_wq", title = ":wq", subtitle = "保存退出", command = ":wq\n"),
@@ -60,8 +61,25 @@ object QuickCommandManager {
                 val list: List<QuickCommand> = gson.fromJson(json, type)
                 if (list.isEmpty()) {
                     _commands.value = defaultCommands
+                    saveToDisk(defaultCommands)
                 } else {
-                    _commands.value = list
+                    val mutableList = list.toMutableList()
+                    // 兼容老数据升级：确保拥有 Ctrl+V 与优化后的 Ctrl+C
+                    val hasCtrlV = mutableList.any { it.id == "ctrl_v" || it.title.equals("Ctrl+V", ignoreCase = true) }
+                    if (!hasCtrlV) {
+                        val ctrlCIndex = mutableList.indexOfFirst { it.id == "ctrl_c" || it.title.equals("Ctrl+C", ignoreCase = true) }
+                        val insertIndex = if (ctrlCIndex >= 0) ctrlCIndex + 1 else 0
+                        mutableList.add(
+                            insertIndex,
+                            QuickCommand(id = "ctrl_v", title = "Ctrl+V", subtitle = "粘贴剪贴", command = "__CLIPBOARD_PASTE__")
+                        )
+                    }
+                    val ctrlCIndex = mutableList.indexOfFirst { it.id == "ctrl_c" }
+                    if (ctrlCIndex >= 0 && mutableList[ctrlCIndex].subtitle == "中断") {
+                        mutableList[ctrlCIndex] = mutableList[ctrlCIndex].copy(subtitle = "中断/复制")
+                    }
+                    _commands.value = mutableList
+                    saveToDisk(mutableList)
                 }
             } catch (e: Exception) {
                 _commands.value = defaultCommands
