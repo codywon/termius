@@ -67,6 +67,7 @@ enum class TerminalInputMode {
     HIDDEN        // 完全隐藏：全屏终端
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TerminalAccessoryBar(
     currentMode: TerminalInputMode,
@@ -1081,7 +1082,7 @@ private fun QuickCommandCard(
                 verticalArrangement = Arrangement.Center
             ) {
                 val titleColor = when {
-                    command.id == "ctrl_c" -> theme.error
+                    command.id == "ctrl_c" -> ObsidianError
                     command.id == "ctrl_v" -> theme.primary
                     else -> theme.textPrimary
                 }
