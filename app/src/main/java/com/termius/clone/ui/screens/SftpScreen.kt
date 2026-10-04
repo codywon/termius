@@ -46,8 +46,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -66,6 +64,7 @@ fun SftpScreen(
     var currentPath by remember { mutableStateOf("/") }
     var items by remember { mutableStateOf<List<SftpItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var isBackgroundRefreshing by remember { mutableStateOf(false) }
     var isConnected by remember { mutableStateOf(false) }
 
     // 弹窗与交互状态
@@ -89,17 +88,37 @@ fun SftpScreen(
 
     val sftpManager = remember { SftpClientManager() }
 
-    fun loadDir(path: String) {
-        scope.launch {
+    fun loadDir(path: String, forceRefresh: Boolean = false) {
+        val cached = sftpManager.getCachedItems(path)
+        val isFresh = sftpManager.isCacheFresh(path)
+
+        if (cached != null) {
+            // SWR 策略：已有缓存数据瞬间呈现 (0ms 延迟)，彻底消除卡顿与白屏
+            items = cached
+            currentPath = path
+            if (isFresh && !forceRefresh) {
+                return
+            }
+            isBackgroundRefreshing = true
+        } else {
+            // 首次访问该路径无缓存，展示加载态
             isLoading = true
+        }
+
+        scope.launch {
             try {
-                val list = sftpManager.listDirectory(path)
+                val list = sftpManager.listDirectory(path, forceRefresh = forceRefresh)
                 items = list
                 currentPath = path
             } catch (e: Exception) {
-                Toast.makeText(context, if (Strings.isZh) "加载目录失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (items.isEmpty()) {
+                    Toast.makeText(context, if (Strings.isZh) "加载目录失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, if (Strings.isZh) "后台同步失败: ${e.message}" else "Sync failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             } finally {
                 isLoading = false
+                isBackgroundRefreshing = false
             }
         }
     }
@@ -128,7 +147,7 @@ fun SftpScreen(
                         }
                     }
                     Toast.makeText(context, if (Strings.isZh) "文件上传成功: $fileName" else "Uploaded: $fileName", Toast.LENGTH_SHORT).show()
-                    loadDir(currentPath)
+                    loadDir(currentPath, forceRefresh = true)
                 } catch (e: Exception) {
                     Toast.makeText(context, if (Strings.isZh) "上传失败: ${e.message}" else "Upload failed: ${e.message}", Toast.LENGTH_LONG).show()
                 } finally {
@@ -241,7 +260,7 @@ fun SftpScreen(
                                         sftpManager.writeTextFile(targetItem.path, editingContent)
                                         Toast.makeText(context, Strings.saveSuccess, Toast.LENGTH_SHORT).show()
                                         editingItem = null
-                                        loadDir(currentPath)
+                                        loadDir(currentPath, forceRefresh = true)
                                     } catch (e: Exception) {
                                         Toast.makeText(context, if (Strings.isZh) "保存失败: ${e.message}" else "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
@@ -381,7 +400,7 @@ fun SftpScreen(
                             }
 
                             // 刷新
-                            IconButton(onClick = { loadDir(currentPath) }) {
+                            IconButton(onClick = { loadDir(currentPath, forceRefresh = true) }) {
                                 Icon(Icons.Default.Refresh, contentDescription = Strings.refresh, tint = ObsidianTextPrimary)
                             }
 
@@ -405,90 +424,102 @@ fun SftpScreen(
                             color = theme.surfaceContainer,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // 根目录 /
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (currentPath == "/") theme.primary.copy(alpha = 0.2f) else Color.Transparent,
-                                    modifier = Modifier.clickable {
-                                        if (currentPath != "/") loadDir("/")
-                                    }
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Folder,
-                                            contentDescription = null,
-                                            tint = if (currentPath == "/") theme.primary else ObsidianSecondary,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text(
-                                            text = "/",
-                                            fontSize = 12.sp,
-                                            fontWeight = if (currentPath == "/") FontWeight.Bold else FontWeight.Medium,
-                                            color = if (currentPath == "/") theme.primary else ObsidianTextSecondary,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
-                                }
-
-                                // 用户家目录快捷直达 (~)
-                                val userHome = if (selectedHost?.username == "root") "/root" else "/home/${selectedHost?.username ?: "user"}"
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (currentPath == userHome) theme.primary.copy(alpha = 0.2f) else Color.Transparent,
-                                    modifier = Modifier.clickable {
-                                        if (currentPath != userHome) loadDir(userHome)
-                                    }
-                                ) {
-                                    Text(
-                                        text = "~",
-                                        fontSize = 13.sp,
-                                        fontWeight = if (currentPath == userHome) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (currentPath == userHome) theme.primary else ObsidianTextMuted,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                    )
-                                }
-
-                                // 逐级目录分段
-                                val segments = currentPath.split("/").filter { it.isNotEmpty() }
-                                segments.forEachIndexed { index, seg ->
-                                    Text(
-                                        text = "/",
-                                        color = ObsidianTextMuted.copy(alpha = 0.5f),
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(horizontal = 1.dp)
-                                    )
-
-                                    val isLast = index == segments.size - 1
-                                    val targetPath = "/" + segments.take(index + 1).joinToString("/")
-
+                                    // 根目录 /
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
-                                        color = if (isLast) theme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                                        color = if (currentPath == "/") theme.primary.copy(alpha = 0.2f) else Color.Transparent,
                                         modifier = Modifier.clickable {
-                                            if (!isLast) loadDir(targetPath)
+                                            if (currentPath != "/") loadDir("/")
+                                        }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Folder,
+                                                contentDescription = null,
+                                                tint = if (currentPath == "/") theme.primary else ObsidianSecondary,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "/",
+                                                fontSize = 12.sp,
+                                                fontWeight = if (currentPath == "/") FontWeight.Bold else FontWeight.Medium,
+                                                color = if (currentPath == "/") theme.primary else ObsidianTextSecondary,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+
+                                    // 用户家目录快捷直达 (~)
+                                    val userHome = if (selectedHost?.username == "root") "/root" else "/home/${selectedHost?.username ?: "user"}"
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (currentPath == userHome) theme.primary.copy(alpha = 0.2f) else Color.Transparent,
+                                        modifier = Modifier.clickable {
+                                            if (currentPath != userHome) loadDir(userHome)
                                         }
                                     ) {
                                         Text(
-                                            text = seg,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isLast) theme.primary else ObsidianTextPrimary,
+                                            text = "~",
+                                            fontSize = 13.sp,
+                                            fontWeight = if (currentPath == userHome) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (currentPath == userHome) theme.primary else ObsidianTextMuted,
                                             fontFamily = FontFamily.Monospace,
-                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                                         )
                                     }
+
+                                    // 逐级目录分段
+                                    val segments = currentPath.split("/").filter { it.isNotEmpty() }
+                                    segments.forEachIndexed { index, seg ->
+                                        Text(
+                                            text = "/",
+                                            color = ObsidianTextMuted.copy(alpha = 0.5f),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(horizontal = 1.dp)
+                                        )
+
+                                        val isLast = index == segments.size - 1
+                                        val targetPath = "/" + segments.take(index + 1).joinToString("/")
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (isLast) theme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                                            modifier = Modifier.clickable {
+                                                if (!isLast) loadDir(targetPath)
+                                            }
+                                        ) {
+                                            Text(
+                                                text = seg,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isLast) theme.primary else ObsidianTextPrimary,
+                                                fontFamily = FontFamily.Monospace,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (isBackgroundRefreshing) {
+                                    LinearProgressIndicator(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(2.dp),
+                                        color = theme.primary,
+                                        trackColor = Color.Transparent
+                                    )
                                 }
                             }
                         }
@@ -652,9 +683,9 @@ fun SftpScreen(
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Text(
                                                 text = if (item.isDirectory) {
-                                                    "${item.permissions} • ${formatDate(item.mtime)}"
+                                                    "${item.permissions} • ${item.formattedTime}"
                                                 } else {
-                                                    "${formatSize(item.size)} • ${item.permissions} • ${formatDate(item.mtime)}"
+                                                    "${item.formattedSize} • ${item.permissions} • ${item.formattedTime}"
                                                 },
                                                 color = ObsidianTextSecondary,
                                                 fontSize = 11.sp,
@@ -685,7 +716,7 @@ fun SftpScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f)),
+                        .background(if (items.isEmpty()) theme.background else Color.Black.copy(alpha = 0.2f)),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(color = theme.primary)
@@ -828,7 +859,7 @@ fun SftpScreen(
                                     sftpManager.rename(targetItem.path, newRemotePath)
                                     Toast.makeText(context, if (Strings.isZh) "重命名成功" else "Renamed", Toast.LENGTH_SHORT).show()
                                     renamingItem = null
-                                    loadDir(currentPath)
+                                    loadDir(currentPath, forceRefresh = true)
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "重命名失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -882,7 +913,7 @@ fun SftpScreen(
                                 }
                                 Toast.makeText(context, if (Strings.isZh) "已删除: ${targetItem.name}" else "Deleted: ${targetItem.name}", Toast.LENGTH_SHORT).show()
                                 deletingItem = null
-                                loadDir(currentPath)
+                                loadDir(currentPath, forceRefresh = true)
                             } catch (e: Exception) {
                                 Toast.makeText(context, if (Strings.isZh) "删除失败: ${e.message}" else "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             } finally {
@@ -934,7 +965,7 @@ fun SftpScreen(
                                     sftpManager.createDirectory(newPath)
                                     Toast.makeText(context, if (Strings.isZh) "文件夹创建成功" else "Folder created", Toast.LENGTH_SHORT).show()
                                     showCreateFolderDialog = false
-                                    loadDir(currentPath)
+                                    loadDir(currentPath, forceRefresh = true)
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "创建文件夹失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -990,7 +1021,7 @@ fun SftpScreen(
                                     sftpManager.createEmptyFile(newPath)
                                     Toast.makeText(context, if (Strings.isZh) "文件创建成功" else "File created", Toast.LENGTH_SHORT).show()
                                     showCreateFileDialog = false
-                                    loadDir(currentPath)
+                                    loadDir(currentPath, forceRefresh = true)
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "创建文件失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -1015,18 +1046,6 @@ fun SftpScreen(
             containerColor = theme.surfaceContainerLow
         )
     }
-}
-
-private fun formatSize(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
-    val z = (63 - java.lang.Long.numberOfLeadingZeros(bytes)) / 10
-    return String.format(Locale.getDefault(), "%.1f %cB", bytes.toDouble() / (1L shl (z * 10)), " KMGTPE"[z])
-}
-
-private fun formatDate(epochMillis: Long): String {
-    if (epochMillis <= 0) return ""
-    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-    return sdf.format(Date(epochMillis))
 }
 
 private fun queryFileName(context: android.content.Context, uri: Uri): String? {
