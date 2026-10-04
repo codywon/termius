@@ -16,6 +16,25 @@ class TerminalEmulator(val buffer: TerminalBuffer) {
     private val csiParams = StringBuilder()
     private var isPrivateSequence = false
 
+    fun resetParserState() {
+        state = State.NORMAL
+        csiParams.clear()
+        isPrivateSequence = false
+    }
+
+    /**
+     * 打印系统级诊断/重连日志，确保换行独立且不被之前的 ANSI 序列污染
+     */
+    fun printSystemLog(logText: String) {
+        resetParserState()
+        // 若当前行已有字符（如提示符或未完成的命令输出），先换行闭合上一行
+        if (buffer.cursorCol > 0) {
+            processInput("\r\n")
+        }
+        // 打印系统日志，并在前后保证拥有清晰的空行与格式闭合
+        processInput("\r\n$logText\r\n\r\n")
+    }
+
     fun processInput(text: String) {
         for (c in text) {
             processChar(c)

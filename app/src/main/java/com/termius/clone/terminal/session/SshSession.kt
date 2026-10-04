@@ -75,7 +75,7 @@ class SshSession(
                 _statusMessage.value = if (isReconnecting) "正在重新连接 ${host.hostname}:${host.port}..." else "正在连接到 ${host.hostname}:${host.port}..."
 
                 if (isReconnecting) {
-                    emulator.processInput("\r\n\u001B[36m[TermX] 正在重新连接到 ${host.hostname}:${host.port}...\u001B[0m\r\n")
+                    emulator.printSystemLog("\u001B[36m[TermX] 正在重新连接到 ${host.hostname}:${host.port}...\u001B[0m")
                     _renderTick.value = System.currentTimeMillis()
                 }
 
@@ -137,7 +137,7 @@ class SshSession(
                 reconnectAttempts = 0
 
                 if (isReconnecting) {
-                    emulator.processInput("\r\n\u001B[32m[TermX] 重连成功！\u001B[0m\r\n\r\n")
+                    emulator.printSystemLog("\u001B[32m[TermX] 重连成功！\u001B[0m")
                     _renderTick.value = System.currentTimeMillis()
                 }
 
@@ -166,7 +166,7 @@ class SshSession(
                 _sessionState.value = SessionState.ERROR
                 val errMsg = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
                 _statusMessage.value = "连接失败: $errMsg"
-                emulator.processInput("\r\n\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m\r\n")
+                emulator.printSystemLog("\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m")
                 _renderTick.value = System.currentTimeMillis()
 
                 if (!isUserInitiatedDisconnect && reconnectAttempts < maxAutoReconnectAttempts) {
@@ -228,7 +228,7 @@ class SshSession(
         if (reconnectAttempts < maxAutoReconnectAttempts) {
             reconnectAttempts++
             val delaySec = 3
-            emulator.processInput("\r\n\u001B[33m[TermX] 网络连接中断，将在 ${delaySec} 秒后尝试自动重连 (${reconnectAttempts}/${maxAutoReconnectAttempts})...\u001B[0m\r\n")
+            emulator.printSystemLog("\u001B[33m[TermX] 网络连接中断，将在 ${delaySec} 秒后尝试自动重连 (${reconnectAttempts}/${maxAutoReconnectAttempts})...\u001B[0m")
             _renderTick.value = System.currentTimeMillis()
 
             reconnectJob?.cancel()
@@ -239,7 +239,7 @@ class SshSession(
                 }
             }
         } else {
-            emulator.processInput("\r\n\u001B[31m[TermX] 自动重连已达上限 (${maxAutoReconnectAttempts}次)，已暂停。点击右上角重连按钮可手动重试。\u001B[0m\r\n")
+            emulator.printSystemLog("\u001B[31m[TermX] 自动重连已达上限 (${maxAutoReconnectAttempts}次)，已暂停。点击右上角重连按钮可手动重试。\u001B[0m")
             _renderTick.value = System.currentTimeMillis()
         }
     }
@@ -320,7 +320,7 @@ class SshSession(
             cleanupConnection()
             _sessionState.value = SessionState.DISCONNECTED
             _statusMessage.value = "已断开连接"
-            emulator.processInput("\r\n\u001B[33m[TermX] 会话已手动断开。\u001B[0m\r\n")
+            emulator.printSystemLog("\u001B[33m[TermX] 会话已手动断开。\u001B[0m")
             _renderTick.value = System.currentTimeMillis()
         }
     }
