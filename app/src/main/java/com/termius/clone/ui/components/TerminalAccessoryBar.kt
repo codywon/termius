@@ -468,21 +468,21 @@ fun TerminalAccessoryBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(shortcutsPanelHeight)
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
                 ) {
-                    // 左侧工具操作列 (参考网易 UU 远程：[编辑/完成]、[添加])
+                    // 左侧工具操作列 (紧凑优雅型，仅占 50dp，将 85%+ 空间全部留给卡片网格)
                     Column(
                         modifier = Modifier
-                            .width(if (isLandscape) 56.dp else 70.dp)
+                            .width(if (isLandscape) 44.dp else 50.dp)
                             .fillMaxHeight(),
-                        verticalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         // 编辑 / 完成 按钮
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (isLandscape) 42.dp else 56.dp)
+                                .height(if (isLandscape) 38.dp else 48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { isEditMode = !isEditMode },
                             shape = RoundedCornerShape(8.dp),
@@ -501,13 +501,13 @@ fun TerminalAccessoryBar(
                                     imageVector = if (isEditMode) Icons.Default.Check else Icons.Default.Edit,
                                     contentDescription = "Edit",
                                     tint = if (isEditMode) theme.primary else theme.textSecondary,
-                                    modifier = Modifier.size(if (isLandscape) 15.dp else 18.dp)
+                                    modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
                                 )
                                 Spacer(modifier = Modifier.height(1.dp))
                                 Text(
                                     text = if (isEditMode) "完成" else "编辑",
                                     color = if (isEditMode) theme.primary else theme.textSecondary,
-                                    fontSize = if (isLandscape) 10.sp else 11.sp,
+                                    fontSize = if (isLandscape) 9.sp else 10.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -517,7 +517,7 @@ fun TerminalAccessoryBar(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (isLandscape) 42.dp else 56.dp)
+                                .height(if (isLandscape) 38.dp else 48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { showAddDialog = true },
                             shape = RoundedCornerShape(8.dp),
@@ -533,10 +533,10 @@ fun TerminalAccessoryBar(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = "Add",
                                     tint = theme.primary,
-                                    modifier = Modifier.size(if (isLandscape) 15.dp else 18.dp)
+                                    modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
                                 )
                                 Spacer(modifier = Modifier.height(1.dp))
-                                Text("添加", color = theme.primary, fontSize = if (isLandscape) 10.sp else 11.sp, fontWeight = FontWeight.Medium)
+                                Text("添加", color = theme.primary, fontSize = if (isLandscape) 9.sp else 10.sp, fontWeight = FontWeight.Medium)
                             }
                         }
 
@@ -545,7 +545,7 @@ fun TerminalAccessoryBar(
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(if (isLandscape) 36.dp else 48.dp)
+                                    .height(if (isLandscape) 34.dp else 44.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { QuickCommandManager.resetToDefaults() },
                                 shape = RoundedCornerShape(8.dp),
@@ -557,7 +557,7 @@ fun TerminalAccessoryBar(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = theme.textMuted, modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = theme.textMuted, modifier = Modifier.size(13.dp))
                                     Text("重置", color = theme.textMuted, fontSize = 9.sp)
                                 }
                             }
@@ -781,16 +781,16 @@ fun TerminalAccessoryBar(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = theme.primary, modifier = Modifier.size(17.dp))
                             Text("编辑此快捷键", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
 
-                    // 选项 2: 拖拽排序
+                    // 选项 2: 拖拽排序管理
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -803,16 +803,67 @@ fun TerminalAccessoryBar(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.DragHandle, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
-                            Text("排序管理 (按住手柄或长按自由拖拽)", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Icon(Icons.Default.DragHandle, contentDescription = null, tint = theme.primary, modifier = Modifier.size(17.dp))
+                            Text("进入排序模式 (按住卡片自由拖动)", color = theme.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
 
-                    // 选项 3: 删除指令
+                    // 选项 3: 快速前移 / 后移 (免拖拽微调)
+                    val cmdIndex = commands.indexOfFirst { it.id == cmd.id }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = cmdIndex > 0) {
+                                    QuickCommandManager.moveUp(cmdIndex)
+                                    contextMenuCommand = null
+                                },
+                            color = if (cmdIndex > 0) theme.surfaceContainer else theme.surfaceContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = null, tint = if (cmdIndex > 0) theme.primary else theme.textMuted, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("向前移动", color = if (cmdIndex > 0) theme.textPrimary else theme.textMuted, fontSize = 12.sp)
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = cmdIndex < commands.size - 1) {
+                                    QuickCommandManager.moveDown(cmdIndex)
+                                    contextMenuCommand = null
+                                },
+                            color = if (cmdIndex < commands.size - 1) theme.surfaceContainer else theme.surfaceContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text("向后移动", color = if (cmdIndex < commands.size - 1) theme.textPrimary else theme.textMuted, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.Default.ArrowForward, contentDescription = null, tint = if (cmdIndex < commands.size - 1) theme.primary else theme.textMuted, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                    }
+
+                    // 选项 4: 删除指令
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -825,11 +876,11 @@ fun TerminalAccessoryBar(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(17.dp))
                             Text("删除此快捷键", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
@@ -900,11 +951,11 @@ private fun UUTabItem(
 
 /**
  * 专为 LazyVerticalGrid 打造的高性能平滑拖拽重排状态管理器
- * 1. 彻底解决 pointerInput 键变动导致手势协程取消引发的卡死悬空问题；
- * 2. 基于真实物理视口像素坐标判定最近的 targetItem，100% 精确，绝不依赖粗糙 dp 估算；
- * 3. 交换瞬间反向补偿位移差量 (deltaX, deltaY)，实现视觉绝对位置零抖动连续吸附；
- * 4. 配合 LazyGridItemScope.animateItemPlacement() 实现被挤开卡片的物理弹簧让位动效；
- * 5. 拖拽结束或取消时严格重置状态与偏移，绝无卡片重叠与悬空 Bug。
+ * 极致体验与防抖架构：
+ * 1. 核心区同心命中判定 (Core Box Hit-Test)：目标卡片内缩 22% 宽度与 20% 高度，在卡片间建立 44%+ 物理死区，彻底消灭临界点震荡；
+ * 2. 240ms 让位冷却保护 (Swap Cooldown)：保证上一次平移动画从容就位，杜绝每秒几十次的疯狂来回互换，彻底根治周围卡片闪烁；
+ * 3. 刻度感单次触觉反馈：仅在成功换位瞬间触发一次清脆震动，告别马达高频狂震；
+ * 4. 坐标位移平滑差量补偿：卡片视觉位置绝对恒定跟随手指，松手平稳吸附。
  */
 class ReorderableLazyGridState(
     val gridState: LazyGridState,
@@ -914,18 +965,26 @@ class ReorderableLazyGridState(
     var dragOffset by mutableStateOf(Offset.Zero)
     var currentDraggingIndex by mutableStateOf<Int?>(null)
 
+    // 上一次触发交换的时间戳，用于严格防抖与防止反向回弹
+    private var lastSwapTimestamp = 0L
+
     val isDragging: Boolean get() = draggingKey != null
 
     fun onDragStart(key: Any, index: Int) {
         draggingKey = key
         currentDraggingIndex = index
         dragOffset = Offset.Zero
+        lastSwapTimestamp = System.currentTimeMillis()
     }
 
     fun onDrag(dragAmount: Offset, haptic: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
         dragOffset += dragAmount
 
         val currentIndex = currentDraggingIndex ?: return
+        val now = System.currentTimeMillis()
+        // 关键防抖 1：240ms 冷却保护，等待上一次让位动画平稳完成
+        if (now - lastSwapTimestamp < 240L) return
+
         val layoutInfo = gridState.layoutInfo
         val currentItem = layoutInfo.visibleItemsInfo.firstOrNull { it.key == draggingKey } ?: return
 
@@ -933,28 +992,33 @@ class ReorderableLazyGridState(
         val currentCenterX = currentItem.offset.x + currentItem.size.width / 2f + dragOffset.x
         val currentCenterY = currentItem.offset.y + currentItem.size.height / 2f + dragOffset.y
 
-        // 寻找与当前视觉中心最接近、且重叠度最高的目标卡片
+        // 关键防抖 2：严格的核心区死区判定 (Core Box Hit-Test)
+        // 目标卡片四周内缩 22% 宽度与 20% 高度，只有手指真正深潜入目标卡片的核心区域才判定意图交换
         val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { item ->
             if (item.key == draggingKey) return@firstOrNull false
-            val itemCenterX = item.offset.x + item.size.width / 2f
-            val itemCenterY = item.offset.y + item.size.height / 2f
-            val dx = currentCenterX - itemCenterX
-            val dy = currentCenterY - itemCenterY
-            val distSq = dx * dx + dy * dy
-            val threshold = (item.size.width * 0.6f) * (item.size.width * 0.6f) +
-                            (item.size.height * 0.6f) * (item.size.height * 0.6f)
-            distSq <= threshold
+            val coreMarginX = item.size.width * 0.22f
+            val coreMarginY = item.size.height * 0.20f
+            val coreLeft = item.offset.x + coreMarginX
+            val coreRight = item.offset.x + item.size.width - coreMarginX
+            val coreTop = item.offset.y + coreMarginY
+            val coreBottom = item.offset.y + item.size.height - coreMarginY
+
+            currentCenterX in coreLeft..coreRight && currentCenterY in coreTop..coreBottom
         }
 
         if (targetItem != null && targetItem.index != currentIndex) {
             val targetIndex = targetItem.index
-            // 计算坐标差，抵消重排导致的底层布局跳跃，使卡片平滑粘在手指下方
+
+            // 计算位移差，保持视觉绝对位置恒定无瞬移跳变
             val deltaX = currentItem.offset.x - targetItem.offset.x
             val deltaY = currentItem.offset.y - targetItem.offset.y
 
             onMove(currentIndex, targetIndex)
             currentDraggingIndex = targetIndex
+            lastSwapTimestamp = now
             dragOffset += Offset(deltaX.toFloat(), deltaY.toFloat())
+
+            // 仅在成功换位瞬间触发一次清脆刻度感震动，杜绝高频乱震
             haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
@@ -984,11 +1048,12 @@ fun rememberReorderableLazyGridState(
 
 /**
  * 快捷指令网格卡片 (双行显示：上部标题 + 下部中文注释)
- * 极致体验升级：
- * 1. 拖拽全域丝滑：专属大热区手柄按住即拖，无长按延迟；编辑模式下长按卡片亦可抓起；
- * 2. 状态机稳定：绑定稳定键值，绝不中断手势协程，彻底根除悬空重叠 Bug；
- * 3. 视觉触觉层次：抓起时放大 1.08 倍并投射悬浮阴影，拖动划过卡片带刻度感震动；
- * 4. 常用按键醒目：Ctrl+C 与 Ctrl+V 专属高亮与语义区分，操作一目了然。
+ * 极致去图标化极简重构：
+ * 1. 零视觉污染：彻底移除卡片上拥挤繁琐的铅笔图标与拖动手柄，文字排布舒展大气；
+ * 2. 随心编辑：编辑模式下轻触卡片任意位置，直接弹出快捷指令编辑对话框；
+ * 3. 全卡即手柄：编辑模式下按住卡片任意位置 (长按 100ms) 即可直接抓起丝滑拖拽；
+ * 4. 优雅删除：仅在编辑模式右上角保留一个精致微小的红色半透明删除角标；
+ * 5. 醒目语义：Ctrl+C 与 Ctrl+V 专属高亮区分，日常运维一目了然。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1009,7 +1074,7 @@ private fun QuickCommandCard(
     val haptic = LocalHapticFeedback.current
 
     val isDraggingThis = reorderState.draggingKey == command.id
-    val cardHeight = if (isLandscape) 40.dp else 56.dp
+    val cardHeight = if (isLandscape) 38.dp else 52.dp
 
     Surface(
         modifier = Modifier
@@ -1028,9 +1093,9 @@ private fun QuickCommandCard(
             .combinedClickable(
                 onClick = {
                     if (isEditMode) {
-                        onEdit()
+                        onEdit() // 编辑模式下轻点整张卡片任意位置直接编辑
                     } else {
-                        onClick()
+                        onClick() // 普通模式下执行指令
                     }
                 },
                 onLongClick = {
@@ -1044,6 +1109,7 @@ private fun QuickCommandCard(
             )
             .then(
                 if (isEditMode) {
+                    // 编辑模式下整张卡片都是拖拽热区，长按 100ms 震动抓起直接拖动
                     Modifier.pointerInput(command.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
@@ -1061,10 +1127,10 @@ private fun QuickCommandCard(
                 } else Modifier
             ),
         shape = RoundedCornerShape(8.dp),
-        color = if (isDraggingThis) theme.surfaceContainerHigh else theme.surfaceContainerLow,
+        color = if (isDraggingThis) theme.surfaceContainerHigh else if (isEditMode) theme.surfaceContainerHigh.copy(alpha = 0.7f) else theme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(
             if (isDraggingThis) 1.5.dp else 1.dp,
-            if (isDraggingThis) theme.primary else if (isEditMode) theme.primary.copy(alpha = 0.55f) else theme.outline.copy(alpha = 0.35f)
+            if (isDraggingThis) theme.primary else if (isEditMode) theme.primary.copy(alpha = 0.5f) else theme.outline.copy(alpha = 0.35f)
         ),
         shadowElevation = if (isDraggingThis) 12.dp else 0.dp
     ) {
@@ -1073,11 +1139,11 @@ private fun QuickCommandCard(
                 .fillMaxSize()
                 .padding(horizontal = 4.dp, vertical = if (isLandscape) 2.dp else 4.dp)
         ) {
-            // 中心标题与副标题
+            // 中心标题与副标题 (纯净居中排布，零多余图标遮挡，文字空间释放 100%)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = if (isEditMode) 14.dp else 2.dp),
+                    .padding(horizontal = if (isEditMode) 8.dp else 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -1106,32 +1172,14 @@ private fun QuickCommandCard(
                 }
             }
 
-            // 编辑状态下的操作界面：杜绝误触，分立清晰
+            // 编辑状态下仅在右上角保留一个精致小巧的深红半透明圆底删除角标 (完全不遮挡文字)
             if (isEditMode) {
-                // 左下角：清晰的编辑铅笔小标识
                 Box(
                     modifier = Modifier
-                        .size(if (isLandscape) 18.dp else 24.dp)
-                        .align(Alignment.BottomStart)
-                        .clip(CircleShape)
-                        .clickable(onClick = onEdit),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "Edit",
-                        tint = theme.primary,
-                        modifier = Modifier.size(if (isLandscape) 11.dp else 14.dp)
-                    )
-                }
-
-                // 右上角：明确的删除红色小按钮 (带圆底，防误触)
-                Box(
-                    modifier = Modifier
-                        .size(if (isLandscape) 18.dp else 24.dp)
+                        .size(if (isLandscape) 16.dp else 18.dp)
                         .align(Alignment.TopEnd)
                         .clip(CircleShape)
-                        .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                        .background(Color(0xFFEF4444).copy(alpha = 0.18f))
                         .clickable(onClick = onDelete),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1139,42 +1187,7 @@ private fun QuickCommandCard(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Delete",
                         tint = Color(0xFFEF4444),
-                        modifier = Modifier.size(if (isLandscape) 10.dp else 13.dp)
-                    )
-                }
-
-                // 右下角：高灵敏度专属拖动手柄（大热区，按住即刻拖动，零长按等待）
-                Box(
-                    modifier = Modifier
-                        .size(if (isLandscape) 28.dp else 36.dp)
-                        .align(Alignment.BottomEnd)
-                        .clip(RoundedCornerShape(topStart = 8.dp, bottomEnd = 8.dp))
-                        .background(if (isDraggingThis) theme.primary.copy(alpha = 0.25f) else Color.Transparent)
-                        .pointerInput(command.id) {
-                            detectDragGestures(
-                                onDragStart = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    reorderState.onDragStart(command.id, index)
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    reorderState.onDrag(dragAmount, haptic)
-                                },
-                                onDragEnd = {
-                                    reorderState.onDragEnd()
-                                },
-                                onDragCancel = {
-                                    reorderState.onDragCancel()
-                                }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DragHandle,
-                        contentDescription = "Drag Handle",
-                        tint = if (isDraggingThis) theme.primary else theme.textSecondary,
-                        modifier = Modifier.size(if (isLandscape) 14.dp else 18.dp)
+                        modifier = Modifier.size(if (isLandscape) 9.dp else 11.dp)
                     )
                 }
             }
