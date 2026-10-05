@@ -71,17 +71,18 @@ jobs:
           body: |
             # TermX Mobile ${{ github.ref_name }} 正式发布
 
-            TermX Mobile 是一款专为 Android 移动平台打造的现代、高性能终端仿真器与 SSH/SFTP 运维客户端。基于 Kotlin + Jetpack Compose 纯原生架构设计。
+            TermX Mobile 是一款专为 Android 移动平台打造的高性能终端仿真器、SSH/SFTP 运维工具与掌上自主 SRE 运维智能体。基于 Kotlin + Jetpack Compose 纯原生架构设计。
 
             > **Powered by codywon**
 
-            ### 🚀 首发核心特性
-            - **高性能 Canvas 终端引擎**：硬件加速渲染、140 列等宽宽屏漫游、VT100 Pending Wrap 规范折行与无损矩阵缩放。
-            - **流体手势快捷键与宏卡片**：支持物理吸附拖拽排序，默认配备高频 `Ctrl+C`、`Ctrl+V` 与三模输入切换。
-            - **高可靠 SFTP 引擎**：Coroutine Mutex 互斥防踩踏机制、纯内存流式安全读写、毫秒级面包屑导航与在线文本编辑。
-            - **连接自愈与系统级保活**：心跳保活检测、透明重连看门狗、前台服务守护及原生电池优化豁免。
-            - **统一安全凭据库 (Vault)**：集中式凭据加密管理，支持 Ed25519 / RSA / ECDSA 私钥与密码复用。
-            - **离线运维速查手册**：内置常用 Linux / Docker / 网络运维命令，支持即时模糊搜索与单键复制。
+            ### 🚀 核心特性与架构亮点
+            - **🤖 自主 SRE 运维智能体 (Pi-Agent)**：纯粹 ReAct 循环，深度感知目标系统环境（发行版/架构/包管理器/服务），按需下发 Bash 运维诊断命令。
+            - **🛡️ 生产级安全审批防线 (Human-in-the-Loop)**：严格正则拦截 `rm -rf`、关机、清空防火墙等高危操作，强制弹出人工审批卡片。
+            - **🌐 双通道极简联网检索**：内置必应 Bing CN 与 DuckDuckGo HTML，免搜索 API Key 即可实时排查 Linux/Docker 报错。
+            - **💻 高性能 Canvas 终端引擎**：硬件加速渲染、140 列等宽宽屏漫游、VT100 Pending Wrap 规范折行与无损矩阵手势缩放。
+            - **⌨️ 流体手势快捷键与宏卡片**：网格拖拽物理吸附让位，默认配备高频 `Ctrl+C`、`Ctrl+V` 与三模输入快速切换。
+            - **📁 并发安全 SFTP 引擎**：Coroutine Mutex 互斥排队机制、纯内存流式安全读写、毫秒级面包屑导航与全屏在线文本编辑。
+            - **⚡ 连接自愈与后台长连守护**：心跳保活检测、透明重连看门狗、前台服务守护及原生电池优化豁免。
 
             ### 📦 安装包下载
             - **Release 正式版 APK**：`TermX-Mobile-${{ github.ref_name }}-release.apk` (推荐安装)

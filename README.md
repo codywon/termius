@@ -3,10 +3,10 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-3DDC84.svg?style=flat-square&logo=android)](https://developer.android.com)
 [![Language](https://img.shields.io/badge/Language-Kotlin%202.0-7F52FF.svg?style=flat-square&logo=kotlin)](https://kotlinlang.org)
 [![Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?style=flat-square&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.0-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
 [![License](https://img.shields.io/badge/License-Non--Commercial%20Personal%20Use-blue.svg?style=flat-square)](./LICENSE)
 
-TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器与 SSH/SFTP 运维客户端。基于 Kotlin 与 Jetpack Compose 纯原生技术栈构建，专注于在移动触控屏幕上提供稳定、低延迟且符合工程直觉的远程服务器管理体验。
+TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器、SSH/SFTP 客户端与掌上自主 SRE 运维智能体。基于 Kotlin 与 Jetpack Compose 纯原生技术栈构建，专注于在移动触控屏幕上提供稳定、低延迟、深度环境感知与高安全护栏的远程服务器管理体验。
 
 > **Powered by codywon**
 
@@ -14,7 +14,14 @@ TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器与 
 
 ## 核心特性
 
-### 终端仿真 (Terminal Engine)
+### 🤖 自主 SRE 运维智能体 (Autonomous Ops Agent)
+- **极简 Pi-Agent 架构**：纯粹 ReAct 循环（Thought -> Action -> Observation -> Final Answer），流式打字与思考链深度解析，兼容 DeepSeek、通义千问、OpenAI、本地 Ollama 等任意接口。
+- **远程系统环境感知 (Environment-Aware)**：自动探测目标主机操作系统发行版（Ubuntu/Debian/CentOS/Alpine/Arch）、包管理器、内核架构与核心服务，100% 精准下发系统兼容命令。
+- **安全审批拦截 (Human-in-the-Loop)**：内置高危命令正则沙箱，针对 `rm -rf`、磁盘格式化、关机、清空防火墙等致命指令，强制挂起并弹出带风险说明的人工审批卡片，必须经用户亲自批准方可执行。
+- **终端屏幕一键感知**：一键提取当前终端屏幕最后 50~100 行可见输出，命令报错无需繁琐复制粘贴。
+- **双通道轻量联网搜索**：双轨引擎（必应 Bing CN + DuckDuckGo HTML），免配置任何第三方搜索 API Key 即可实时检索报错排障文档。
+
+### 💻 终端仿真 (Terminal Engine)
 - **硬件加速渲染**：基于 Canvas 原生绘制管线与 Run-Length 样式批处理算法，低功耗维持 60~120 FPS 满帧流式吞吐。
 - **宽屏漫游与自动折行**：支持标准的 140 列等宽显示与触控水平平滑漫游，完美适应 `docker ps`、`kubectl`、`htop` 等宽表输出；内置标准 VT100 Pending Wrap 延迟折行状态机。
 - **无损矩阵手势缩放**：双指捏合缩放字号全程通过 GPU 图层变换预览，手势释放时执行单次视口重排，杜绝频繁回流与闪烁。
