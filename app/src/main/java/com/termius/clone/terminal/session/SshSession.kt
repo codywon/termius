@@ -44,6 +44,7 @@ class SshSession(
 
     private val _sessionState = MutableStateFlow(SessionState.DISCONNECTED)
     val sessionState: StateFlow<SessionState> = _sessionState
+    val isConnected: Boolean get() = _sessionState.value == SessionState.CONNECTED
 
     private val _statusMessage = MutableStateFlow("")
     val statusMessage: StateFlow<String> = _statusMessage

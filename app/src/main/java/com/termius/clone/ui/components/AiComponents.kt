@@ -1,10 +1,19 @@
 package com.termius.clone.ui.components
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -24,7 +34,8 @@ import com.termius.clone.data.model.RiskLevel
 import com.termius.clone.ui.theme.LocalAppTheme
 
 /**
- * 生产级高危命令人工审批卡片 (Human-in-the-Loop Approval Card)
+ * 生产级 Linux 高危指令人工审批卡片 (Human-in-the-Loop Approval Card)
+ * 沉稳、专业、去戏剧化 UI 味，严谨呈现特征与影响
  */
 @Composable
 fun DangerousActionApprovalCard(
@@ -34,28 +45,29 @@ fun DangerousActionApprovalCard(
     modifier: Modifier = Modifier
 ) {
     val theme = LocalAppTheme.current
+    val context = LocalContext.current
 
     val (badgeBg, badgeText, headerTitle) = when (request.riskLevel) {
-        RiskLevel.CRITICAL -> Triple(Color(0xFFEF4444), "CRITICAL 灾难级破坏操作", "⚠️ 拦截到毁灭性系统指令")
-        RiskLevel.HIGH -> Triple(Color(0xFFF97316), "HIGH 高风险变更操作", "⚠️ 拦截到高危变更指令")
-        RiskLevel.MEDIUM -> Triple(Color(0xFFF59E0B), "MEDIUM 服务/配置变更", "🔔 核心服务或配置变更提醒")
-        RiskLevel.LOW -> Triple(Color(0xFF3B82F6), "LOW 常规指令", "提示")
+        RiskLevel.CRITICAL -> Triple(Color(0xFFDC2626), "不可逆操作", "高危操作确认")
+        RiskLevel.HIGH -> Triple(Color(0xFFEA580C), "高风险变更", "变更操作确认")
+        RiskLevel.MEDIUM -> Triple(Color(0xFFD97706), "服务变更", "服务操作确认")
+        RiskLevel.LOW -> Triple(Color(0xFF2563EB), "常规指令", "操作确认")
     }
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = theme.surfaceContainerLow),
-        border = BorderStroke(1.2.dp, badgeBg.copy(alpha = 0.8f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        border = BorderStroke(1.dp, badgeBg.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header Bar
+            // Header Bar: 单一盾牌图标 + 沉稳标题 + 右侧不折行微徽标
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -63,33 +75,34 @@ fun DangerousActionApprovalCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Security,
                         contentDescription = null,
                         tint = badgeBg,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                     Text(
                         text = headerTitle,
-                        fontSize = 13.5.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = theme.textPrimary
                     )
                 }
 
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = badgeBg.copy(alpha = 0.15f),
-                    border = BorderStroke(0.6.dp, badgeBg.copy(alpha = 0.5f))
+                    shape = RoundedCornerShape(4.dp),
+                    color = badgeBg.copy(alpha = 0.12f),
+                    border = BorderStroke(0.6.dp, badgeBg.copy(alpha = 0.35f))
                 ) {
                     Text(
                         text = badgeText,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = badgeBg,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        maxLines = 1
                     )
                 }
             }
@@ -99,45 +112,76 @@ fun DangerousActionApprovalCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("目标主机:", fontSize = 12.sp, color = theme.textSecondary)
+                Text("目标主机:", fontSize = 11.5.sp, color = theme.textMuted)
                 Text(
                     text = request.hostLabel,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = theme.primary
-                )
-            }
-
-            // Command Box
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF181825))
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = request.command,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 12.5.sp,
-                    color = Color(0xFFF38BA8),
-                    lineHeight = 17.sp
+                    color = theme.textSecondary
                 )
             }
 
-            // Reason & Impact
+            // Command Box with Copy Button
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF181825),
+                border = BorderStroke(0.6.dp, Color(0xFF313244)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$ ",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color(0xFF6C7086)
+                    )
+                    Text(
+                        text = request.command,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = Color(0xFFF38BA8),
+                        lineHeight = 16.sp,
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState())
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("command", request.command))
+                        },
+                        modifier = Modifier.size(20.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "复制命令",
+                            tint = Color(0xFFA6ADC8),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+            }
+
+            // 风险特征与潜在影响提炼（紧凑沉稳，去除浮夸底色）
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(badgeBg.copy(alpha = 0.08f))
-                    .padding(10.dp),
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(theme.surfaceContainer.copy(alpha = 0.5f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "• 拦截原因: ${request.reason}",
+                    text = "• 风险特征: ${request.reason}",
                     fontSize = 11.5.sp,
-                    color = theme.textPrimary,
+                    color = theme.textSecondary,
                     lineHeight = 16.sp
                 )
                 Text(
@@ -145,7 +189,7 @@ fun DangerousActionApprovalCard(
                     fontSize = 11.5.sp,
                     color = badgeBg,
                     lineHeight = 16.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Medium
                 )
             }
 
@@ -153,30 +197,30 @@ fun DangerousActionApprovalCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .padding(top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
                     onClick = onReject,
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f))
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textSecondary),
+                    border = BorderStroke(0.8.dp, theme.outline.copy(alpha = 0.4f))
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("拒绝执行", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                    Text("拒绝执行", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
 
                 Button(
                     onClick = onApprove,
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = badgeBg)
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("批准执行", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("批准执行", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }
@@ -197,8 +241,8 @@ fun AiThinkingCard(
     if (reasoningContent.isBlank()) return
 
     Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = theme.surfaceContainer.copy(alpha = 0.6f)),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = theme.surfaceContainer.copy(alpha = 0.45f)),
         border = BorderStroke(0.6.dp, theme.outline.copy(alpha = 0.2f)),
         modifier = modifier.fillMaxWidth()
     ) {
@@ -213,13 +257,13 @@ fun AiThinkingCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Psychology,
                         contentDescription = null,
                         tint = theme.primary,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Text(
                         text = "思考过程 (${reasoningContent.length} 字符)",
@@ -233,11 +277,15 @@ fun AiThinkingCard(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = null,
                     tint = theme.textMuted,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
             }
 
-            AnimatedVisibility(visible = isExpanded) {
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
                 Column(modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)) {
                     HorizontalDivider(color = theme.outline.copy(alpha = 0.15f), thickness = 0.5.dp)
                     Spacer(modifier = Modifier.height(6.dp))
@@ -250,43 +298,6 @@ fun AiThinkingCard(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * 工具动作状态胶囊 (正在执行命令 / 联网搜索等)
- */
-@Composable
-fun AiToolActionPill(
-    actionText: String,
-    modifier: Modifier = Modifier
-) {
-    val theme = LocalAppTheme.current
-    if (actionText.isBlank()) return
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = theme.primary.copy(alpha = 0.12f),
-        border = BorderStroke(0.8.dp, theme.primary.copy(alpha = 0.35f)),
-        modifier = modifier.padding(vertical = 4.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 1.6.dp,
-                color = theme.primary
-            )
-            Text(
-                text = actionText,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                color = theme.primary
-            )
         }
     }
 }

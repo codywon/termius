@@ -17,6 +17,16 @@ data class AiAgentConfig(
 )
 
 /**
+ * AI 对话会话模型 (支持历史多会话隔离与快速切换)
+ */
+data class AiChatSession(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String = "新会话",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+/**
  * 对话消息模型 (支持正文、深度思考链与工具调用状态)
  */
 data class AiChatMessage(
@@ -38,7 +48,7 @@ enum class RiskLevel {
     LOW,       // 只读查询 (如 uptime, uname, df -h, cat)
     MEDIUM,    // 状态变更/服务控制 (如 systemctl restart, apt update)
     HIGH,      // 配置修改/高风险影响 (如 iptables -F, rm 目录, userdel)
-    CRITICAL   // 灾难性破坏命令 (如 rm -rf /, mkfs, dd, shutdown, drop database)
+    CRITICAL   // 破坏性/不可逆操作 (如 rm -rf, mkfs, dd, shutdown, drop database)
 }
 
 /**

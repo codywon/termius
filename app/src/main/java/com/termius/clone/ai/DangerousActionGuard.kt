@@ -12,7 +12,7 @@ import java.util.regex.Pattern
 object DangerousActionGuard {
 
     private val CRITICAL_PATTERNS = listOf(
-        // 根目录与核心目录递归删除
+        // 根目录与核心系统目录递归删除
         Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\s+.*(/|/\*|~|${'$'}HOME|\.\.|\*)\b""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\s+.*(/etc|/var|/usr|/boot|/bin|/sbin|/lib|/sys|/dev)\b""", Pattern.CASE_INSENSITIVE),
         // 磁盘格式化与裸写
@@ -35,7 +35,7 @@ object DangerousActionGuard {
     )
 
     private val HIGH_PATTERNS = listOf(
-        // 普通目录递归删除 rm -rf
+        // 普通路径递归或强制删除 rm -rf / rm -f
         Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\b""", Pattern.CASE_INSENSITIVE),
         // 清空防火墙与关闭网络防护
         Pattern.compile("""\biptables\s+(-F|-X|-t\s+nat\s+-F)\b""", Pattern.CASE_INSENSITIVE),
@@ -58,47 +58,94 @@ object DangerousActionGuard {
     )
 
     /**
-     * 判定命令是否包含危险操作
-     * @return 若危险，返回结构化的危险请求对象；若安全，返回 null
+     * 判定命令是否包含危险操作，并生成专业的风险描述与影响分析
+     * 去除浮夸套话，精准呈现事实
      */
     fun checkCommandRisk(command: String, hostLabel: String): DangerousActionRequest? {
         val trimmed = command.trim()
 
-        // 1. CRITICAL
+        // 1. 优先针对最常见的删除操作做精准提炼
+        val isRmRecursive = Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\b""", Pattern.CASE_INSENSITIVE).matcher(trimmed).find()
+        if (isRmRecursive) {
+            val isSystemRoot = CRITICAL_PATTERNS[0].matcher(trimmed).find() || CRITICAL_PATTERNS[1].matcher(trimmed).find()
+            return DangerousActionRequest(
+                command = trimmed,
+                hostLabel = hostLabel,
+                riskLevel = if (isSystemRoot) RiskLevel.CRITICAL else RiskLevel.HIGH,
+                reason = if (isSystemRoot) "包含系统核心目录递归强制删除操作" else "包含不可逆递归删除参数 (`rm -rf`)",
+                impact = if (isSystemRoot) "根目录或系统核心文件将被清除，将导致操作系统损坏" else "目标路径文件与目录将被永久移除，无法撤销恢复"
+            )
+        }
+
+        // 2. 磁盘格式化与裸写
+        if (CRITICAL_PATTERNS[2].matcher(trimmed).find() || CRITICAL_PATTERNS[3].matcher(trimmed).find() ||
+            CRITICAL_PATTERNS[4].matcher(trimmed).find() || CRITICAL_PATTERNS[5].matcher(trimmed).find()) {
+            return DangerousActionRequest(
+                command = trimmed,
+                hostLabel = hostLabel,
+                riskLevel = RiskLevel.CRITICAL,
+                reason = "检测到磁盘底层覆写或格式化指令 (`mkfs/dd/fdisk`)",
+                impact = "目标块设备现有文件系统将被覆盖，现有数据将被清空"
+            )
+        }
+
+        // 3. 关机与重启
+        if (CRITICAL_PATTERNS[6].matcher(trimmed).find() || CRITICAL_PATTERNS[7].matcher(trimmed).find()) {
+            return DangerousActionRequest(
+                command = trimmed,
+                hostLabel = hostLabel,
+                riskLevel = RiskLevel.CRITICAL,
+                reason = "检测到系统关机或重启指令",
+                impact = "主机将立即重启或关闭，现有网络连接与运行服务将中断"
+            )
+        }
+
+        // 4. 其它 CRITICAL 命令
         for (pattern in CRITICAL_PATTERNS) {
             if (pattern.matcher(trimmed).find()) {
                 return DangerousActionRequest(
                     command = trimmed,
                     hostLabel = hostLabel,
                     riskLevel = RiskLevel.CRITICAL,
-                    reason = "检测到灾难性破坏命令 (如全盘删除/磁盘格式化/关机/权限彻底破坏)",
-                    impact = "执行后可能导致整个操作系统瘫痪、数据永久损毁或服务器彻底失联！"
+                    reason = "检测到系统关键权限修改或高风险破坏指令",
+                    impact = "可能导致核心服务异常或主机权限体系受损"
                 )
             }
         }
 
-        // 2. HIGH
+        // 5. 防火墙与网络变更
+        if (HIGH_PATTERNS[1].matcher(trimmed).find() || HIGH_PATTERNS[2].matcher(trimmed).find() || HIGH_PATTERNS[3].matcher(trimmed).find()) {
+            return DangerousActionRequest(
+                command = trimmed,
+                hostLabel = hostLabel,
+                riskLevel = RiskLevel.HIGH,
+                reason = "检测到防火墙规则清空或防护服务停用",
+                impact = "主机网络访问控制将被解除，对外端口可能无防护暴露"
+            )
+        }
+
+        // 6. 其它 HIGH 命令
         for (pattern in HIGH_PATTERNS) {
             if (pattern.matcher(trimmed).find()) {
                 return DangerousActionRequest(
                     command = trimmed,
                     hostLabel = hostLabel,
                     riskLevel = RiskLevel.HIGH,
-                    reason = "检测到高危变更操作 (如递归强制删除文件、重置防火墙或删除用户)",
-                    impact = "执行后可能导致指定路径文件永久丢失、服务器端口暴露或认证失效。"
+                    reason = "检测到高风险系统变更指令",
+                    impact = "将修改系统核心用户、凭证或文件内容，影响后续运行"
                 )
             }
         }
 
-        // 3. MEDIUM
+        // 7. MEDIUM 命令 (服务停止/重启、配置覆盖)
         for (pattern in MEDIUM_PATTERNS) {
             if (pattern.matcher(trimmed).find()) {
                 return DangerousActionRequest(
                     command = trimmed,
                     hostLabel = hostLabel,
                     riskLevel = RiskLevel.MEDIUM,
-                    reason = "检测到核心系统服务状态变更或 /etc 系统配置重写",
-                    impact = "执行后可能导致远程 Web/数据库/容器服务短暂停机或配置生效风险。"
+                    reason = "检测到核心系统服务变更或 /etc 配置修改",
+                    impact = "相关服务可能短暂停机或重新加载配置，影响正在处理的业务请求"
                 )
             }
         }

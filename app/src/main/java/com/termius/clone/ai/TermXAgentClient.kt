@@ -20,7 +20,7 @@ import com.termius.clone.terminal.session.SessionManager
  * 1. 【纯粹 ReAct 循环】：Thought(推理思考) -> Action(工具调用) -> Observation(环境观测) -> Thought -> Final Answer；
  * 2. 【70% 上下文自动压缩】：动态感知 Token 水位，超阈值时自动触发无损记忆提炼；
  * 3. 【零外部重型库纯原生实现】：纯 HttpURLConnection + SSE 流式解析，全面兼容 DeepSeek、Qwen、OpenAI、Ollama 等；
- * 4. 【严谨 Null-Safe 协议清洗】：杜绝 Android 原生 JSONObject 将 null 解析为字符串 "null" 的经典巨坑。
+ * 4. 【行动驱动与授权执行保障】：杜绝答非所问，用户一旦确认方案立即执行工具！
  */
 class TermXAgentClient(
     private val toolRegistry: TermXAgentToolRegistry
@@ -30,32 +30,28 @@ class TermXAgentClient(
         private const val TAG = "TermXAgentClient"
 
         val DEFAULT_SYSTEM_PROMPT = """
-            你是一个内嵌在移动端终端管理神器「TermX Mobile」中的专业自动化 SRE 运维智能体 (TermX Ops Agent)。
+            你是一个内嵌在移动端终端管理工具「TermX Mobile」中的专业自动化 SRE 运维智能体 (TermX Ops Agent)。
             
-            【意图准则与行为模式】
-            1. 【日常会话与通用交流】：
-               当用户打招呼（如“你好”、“在吗”）、礼貌闲聊、或询问 Linux 命令用法、网络常识时，直接以亲切专业的工程师口吻回答。
-               ⚠️ 严禁无端调用工具！
-            2. 【自动化运维与排障 (ReAct 循环)】：
-               当用户明确提出运维目标（例如：“帮我看看服务器为什么卡”、“排查 Nginx 502”、“检查 Docker 容器为什么退出”、“帮我装个常用排查工具”、“看下磁盘空间”等）：
-               按需发起工具调用：Thought(分析需求) -> Action(调用工具) -> Observation(观察结果) -> Final Answer(给出结构化报告)。
+            【核心行为模式与铁律】
+            1. 【行动驱动 (Action-Driven) 与即刻执行】：
+               你不是一个只会纸上谈兵的聊天机器人，你拥有真正管理远程服务器的工具权限！
+               👉 当用户提出排查、体检、清理或执行需求时，优先调用对应工具获取真实数据！
+               👉 【方案确认与授权即刻执行铁律】：当你此前向用户提出了方案选择（如方案 A/B、清理步骤）或索取执行确认，而用户回复了选项或肯定词（如“1方案B 2同意”、“方案B”、“同意”、“好的执行”、“确认”等）时：
+                  ⚡ 你必须立即将其视为最高优先级的执行授权指令，立刻调用对应工具 (如 execute_shell_command) 执行清理或配置命令！
+                  ⚡ 严禁只做口头敷衍！严禁回复“好的收到”、“诊断已完成”、“请参考上述结果”而不调用工具！必须立刻行动！
             
-            【远程环境感知优先铁律 (Environment-Aware)】
-            1. 在向远程主机下发任何系统特定指令（如安装软件包、管理服务、修改配置）之前，强烈建议先调用 detect_host_environment 探测操作系统环境！
-            2. 严禁盲猜系统环境！例如在 Alpine Linux 上绝不执行 apt 或 systemctl，在 Debian/Ubuntu 上使用 apt，在 CentOS/RHEL 上使用 yum/dnf。
+            2. 【日常交流】：
+               当用户仅进行常规问候或纯知识问答时，以专业、沉稳的工程师口吻作答，不调用工具。
+            
+            【远程环境感知优先 (Environment-Aware)】
+            在下发任何系统特定指令（如包管理、服务管理）前，先调用 detect_host_environment 探测操作系统环境，严禁盲猜命令！
             
             【安全与人工审批规范 (Human-in-the-Loop)】
-            1. 优先使用无破坏性、只读探针命令 (如 uptime, free -h, df -h, ps aux, ss -tulpn)；
-            2. 当必须执行高危或状态变更命令 (如 rm -rf, iptables -F, systemctl stop, reboot) 时，底层工具箱会自动暂停并弹出人工审批卡片由用户确认。请向用户明确说明该操作的必要性与潜在影响；
-            3. 若用户在审批中点击拒绝，底层会返回拒绝通知，你必须立即尊重用户决定，并构思低风险/备份替代方案。
-            
-            【终端屏幕日志感知 (Screen Context)】
-            当用户表示“看下刚才报了什么错”、“刚才命令失败了帮我分析”时，可直接调用 read_active_terminal_screen 提取当前终端最后可见输出，免去用户手动复制的繁琐。
+            高危操作 (如 rm -rf, iptables -F, systemctl stop, reboot) 底层工具会自动弹出审批卡片。
+            向用户展示执行计划时，说明清楚具体路径与影响。
             
             【排障报告规范】
-            - 采用规范标准的 Markdown 呈现排障结果；
-            - 包含：1. 现状结论；2. 关键排障发现与数据；3. 处置建议与后续维护；
-            - 涉及的代码块请注明对应语言（如 bash, yaml, json, nginx 等）。
+            采用清晰工整的 Markdown 呈现排障或执行结果，包含：1. 执行总结；2. 实际释放/修复数据；3. 后续维护建议。
         """.trimIndent()
     }
 
@@ -100,7 +96,7 @@ class TermXAgentClient(
         val toolsJson = TermXAgentToolRegistry.getToolDefinitionsJson()
 
         var step = 0
-        val maxSteps = 5 // 移动端优化为 5 步收敛安全循环
+        val maxSteps = 6 // 增强为 6 步收敛安全循环，确保足够完成 工具调用 -> 观测 -> 最终报告
         val fullAccumulatedReasoning = StringBuilder()
         var finalAnswerContent = StringBuilder()
 
@@ -281,7 +277,11 @@ class TermXAgentClient(
                 val safeAnswer = if (rawAnswer.isNotEmpty() && rawAnswer != "null") {
                     rawAnswer
                 } else {
-                    "诊断已完成。请参考上述排障分析结果。"
+                    if (currentStepReasoning.isNotBlank()) {
+                        "已完成分析，请查看思考推理过程与执行详情。"
+                    } else {
+                        "执行已就绪，请输入下一步具体运维指令。"
+                    }
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
                 return@withContext
@@ -306,13 +306,13 @@ class TermXAgentClient(
                 val funcArgs = funcObj.optString("arguments", "{}")
 
                 val statusText = when (funcName) {
-                    "list_saved_hosts" -> "🖥️ [Action] 正在获取主机列表..."
-                    "select_target_host" -> "🎯 [Action] 正在切换目标主机..."
-                    "detect_host_environment" -> "🔍 [Action] 正在探测远程主机系统环境..."
-                    "execute_shell_command" -> "⚡ [Action] 正在执行 Shell 命令..."
-                    "read_active_terminal_screen" -> "📋 [Action] 正在读取当前终端屏幕日志..."
-                    "web_search" -> "🌐 [Action] 正在联网检索技术资料..."
-                    else -> "⚙️ [Action] 正在调用工具: $funcName..."
+                    "list_saved_hosts" -> "🖥️ 正在获取主机列表..."
+                    "select_target_host" -> "🎯 正在切换目标主机..."
+                    "detect_host_environment" -> "🔍 正在探测系统环境..."
+                    "execute_shell_command" -> "⚡ 正在执行 Shell 命令..."
+                    "read_active_terminal_screen" -> "📋 正在读取终端屏幕日志..."
+                    "web_search" -> "🌐 正在联网检索技术资料..."
+                    else -> "⚙️ 正在调用工具: $funcName..."
                 }
                 onToolAction(statusText)
 

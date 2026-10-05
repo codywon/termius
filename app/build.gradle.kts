@@ -106,8 +106,11 @@ dependencies {
     // HTTP & Download Engine (for GitHub multi-channel speed test and update)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Markdown Standard Renderer (Markwon)
-    implementation("io.noties.markwon:core:4.6.2")
+    // Markdown Standard Renderer (CommonMark + GFM Tables + Strikethrough + Autolink)
+    implementation("org.commonmark:commonmark:0.21.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.21.0")
+    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.21.0")
+    implementation("org.commonmark:commonmark-ext-autolink:0.21.0")
 
     // Test
     testImplementation("junit:junit:4.13.2")
