@@ -1,92 +1,99 @@
 # TermX Mobile
 
-一款专为移动端设计的现代、轻量、高性能 Android 原生 SSH 客户端与远程服务器运维工具。
+[![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-3DDC84.svg?style=flat-square&logo=android)](https://developer.android.com)
+[![Language](https://img.shields.io/badge/Language-Kotlin%202.0-7F52FF.svg?style=flat-square&logo=kotlin)](https://kotlinlang.org)
+[![Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?style=flat-square&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
+[![License](https://img.shields.io/badge/License-Non--Commercial%20Personal%20Use-blue.svg?style=flat-square)](./LICENSE)
 
-采用 **Kotlin + Jetpack Compose (Material 3)** 纯原生架构打造，内置自研高性能 VT100 / xterm 终端仿真器、SFTP 远程文件管理器与运维速查手册。
+TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器与 SSH/SFTP 运维客户端。基于 Kotlin 与 Jetpack Compose 纯原生技术栈构建，专注于在移动触控屏幕上提供稳定、低延迟且符合工程直觉的远程服务器管理体验。
 
 > **Powered by codywon**
 
 ---
 
-## 特性一览
+## 核心特性
 
-### 💻 现代原生终端仿真 (Terminal Engine)
-- **高性能 Canvas 渲染**：Run-Length 样式批处理与硬件加速，低功耗保持满帧流畅。
-- **宽屏漫游与自动折行**：支持标准 140 列宽屏输出（完美适配 `docker ps`、`kubectl`、`ps aux`），单指左右平滑漫游配合水平滚动指示条；具备标准的 VT100 Pending Wrap 自动折行机制。
-- **120 帧硬件级手势缩放**：双指捏合缩放字号全程使用 GPU 图层矩阵变换，抬手单次提交字号，零重排零重绘。
-- **三模辅助配件栏**：参考主流生产力工具设计，提供输入法横滑辅助键、快捷指令卡片宏、完整 PC 全键盘（F1-F12/PageUp/Delete）三模即时切换。
-- **横屏自适应空间优化**：横屏软键盘弹起时智能合并为 34dp 极简单行，最大化终端有效可视高度。
-- **全面屏手势自然回退**：边缘侧滑返回与物理返回键平滑回到主页，后台会话无缝保活，杜绝直接退出应用。
+### 终端仿真 (Terminal Engine)
+- **硬件加速渲染**：基于 Canvas 原生绘制管线与 Run-Length 样式批处理算法，低功耗维持 60~120 FPS 满帧流式吞吐。
+- **宽屏漫游与自动折行**：支持标准的 140 列等宽显示与触控水平平滑漫游，完美适应 `docker ps`、`kubectl`、`htop` 等宽表输出；内置标准 VT100 Pending Wrap 延迟折行状态机。
+- **无损矩阵手势缩放**：双指捏合缩放字号全程通过 GPU 图层变换预览，手势释放时执行单次视口重排，杜绝频繁回流与闪烁。
+- **原生触控导航交互**：支持系统全局返回手势平滑退回主页，后台 PTY 会话透明保活，避免误触丢失会话。
 
-### 📁 SFTP 远程文件管理
-- **面包屑路径浏览**：毫秒级进入远程目录，支持文件上传、下载、删除、重命名与权限查看。
-- **内置在线文本编辑器**：支持远程配置文件（nginx、systemd、docker-compose 等）全屏快速编辑与安全保存，键盘自动避让。
+### 辅助按键与卡片宏 (Accessory & Shortcuts)
+- **流体手势拖拽排序**：基于弹簧物理动画与位置占位推开算法的卡片排序系统，支持高频键位随心布局。
+- **高频操作即时响应**：默认预设 `Ctrl+C (中断/复制)`、`Ctrl+V (粘贴)`、方向键与常用控制序列，支持自定义快捷指令。
+- **三模输入快速切换**：在输入法辅助单行、指令宏卡片面板与完整 PC 全键盘（F1-F12、Tab、Esc、PageUp/Down）之间即时切换，横屏时自动折叠优化可视高度。
 
-### 📖 生产运维速查手册 (Cheatsheet)
-- 内置 Linux 系统维护、Docker 容器编排、网络端口排查、Systemd 服务管理等 30+ 条生产高频常用命令。
-- 支持分类快速过滤、即时模糊搜索、一键复制及个人常用指令扩展。
+### 远程文件传输 (SFTP Manager)
+- **并发互斥安全通道**：SFTP 底层驱动基于非阻塞 Coroutine Mutex 互斥排队机制，彻底解决并发调用导致的 Channel 踩踏与管道断流。
+- **纯内存流式传输**：文本查看与在线编辑直通内存缓冲流，无需本地零散临时文件落地，秒级加载与保存。
+- **即时面包屑导航**：毫秒级多级路径切转与分级浏览，支持文件批量管理、权限查看与远程服务配置即时更新。
 
-### ⚙️ 凭据管理与系统级守护
-- **Vault 安全凭据库**：支持密码与非对称私钥（Ed25519、RSA、ECDSA）统一加密管理与多主机复用。
-- **后台长连守护**：集成前台保活服务、CPU WakeLock 及 Wi-Fi 锁，设置页支持一键检测与申请原生电池优化豁免（Doze 模式）。
-- **极客主题配色**：内置黑曜石翡翠、极客冰蓝、复古琥珀、赛博霓虹 4 套极客终端配色方案，支持深浅色模式即时切换。
-- **断线智能自愈**：网络闪断自动定时重试连接，状态日志格式规范隔离。
+### 会话安全与网络自愈 (Connection & Reliability)
+- **统一凭据库 (Vault)**：集中式凭据加密存储，全面支持 Ed25519、RSA、ECDSA 密钥对与密码复用。
+- **透明重连与看门狗**：底层集成心跳保活（Keep-Alive）与断线自动探测，网络波动后提供非侵入式自愈连接。
+- **系统级长连保活**：支持 Android 前台服务、CPU WakeLock 与原生系统电池优化（Doze）白名单指引。
+- **离线运维手册**：内置常用 Linux 系统指令、Docker 容器操作及常用排障 Cheatsheet，支持即时模糊检索与单键复制。
 
 ---
 
-## 架构概览
+## 架构设计
 
 ```
 TermX Mobile
 ├── app/src/main/java/com/termius/clone/
 │   ├── terminal/
-│   │   ├── engine/          # 自研 VT100 终端解析器、单元格缓冲池与字符矩阵
-│   │   └── session/         # SSH 连接管理、PTY 分配、重连看门狗与 SFTP 客户端
+│   │   ├── engine/          # VT100/xterm 字符解析器、单元格缓冲池与视口矩阵
+│   │   └── session/         # SSH2 会话管理、PTY 分配、重连看门狗与互斥 SFTP 客户端
 │   ├── ui/
-│   │   ├── components/      # TerminalView (Canvas 绘制与手势)、AccessoryBar (三模按键)
-│   │   ├── screens/         # 主机资产、文件管理、速查手册、终端工作区与全局设置
-│   │   └── theme/           # Material 3 动态色彩、极客终端主题与字号状态系统
+│   │   ├── components/      # TerminalView (Canvas 绘制与手势)、AccessoryBar (辅助键与宏卡片)
+│   │   ├── screens/         # 主机资产、文件管理、速查手册、终端视口与全局设置
+│   │   └── theme/           # Material 3 动态配色系统与终端极客主题
 │   └── service/             # Android 前台长连保活与通知服务
 ```
 
-关于移动端终端在字符流状态机、多线程锁、视口尺寸重构（Resize）与 Android 软键盘适配的底层避坑与设计思考，请参阅：  
-👉 [TermX 移动端终端架构设计与避坑经验指南 (DEVELOPMENT_LESSONS.md)](./DEVELOPMENT_LESSONS.md)
+深入的技术演进与底层避坑总结，请参阅：  
+📘 [TermX 移动端终端架构设计与避坑经验指南 (DEVELOPMENT_LESSONS.md)](./DEVELOPMENT_LESSONS.md)
 
 ---
 
 ## 快速开始
 
-### 方式 1：直接下载安装包
-前往项目的 [Releases](../../releases) 页面，下载最新的正式版 APK（`TermX-Mobile-v1.0.0-release.apk`）直接安装使用。
+### 安装包下载
+前往项目的 [Releases](https://github.com/codywon/termius/releases) 页面，下载最新的首发正式安装包：
+- `TermX-Mobile-v1.0.0-release.apk`
 
-### 方式 2：本地源码编译
-**环境要求**：
+### 从源码构建
+
+#### 环境要求
 - Android Studio Ladybug (2024.2+) 或更高版本
-- JDK 17
-- Android SDK 35 (最低支持 Android 8.0, API 26)
+- JDK 17 (推荐 Eclipse Temurin 或 OpenJDK)
+- Android SDK 35 (最低支持 Android 8.0 / API 26)
 
+#### 构建步骤
 ```bash
-# 1. 克隆代码仓库
+# 1. 获取项目源码
 git clone https://github.com/codywon/termius.git
 cd termius
 
-# 2. 编译 Debug APK
-./gradlew assembleDebug
+# 2. 构建 Release APK
+./gradlew assembleRelease
 
-# 产物输出路径：app/build/outputs/apk/debug/app-debug.apk
+# 编译产物位于: app/build/outputs/apk/release/
 ```
 
 ---
 
 ## 许可证与使用条款
 
-本项目遵循 **个人学习与交流许可协议 (Personal Study and Communication License)**。
+本项目采用 **个人学习与交流许可证 (Personal Study and Communication License)** 发布。
 
-- **仅供学习与交流**：本项目源码与构建产物仅供个人学习、技术研究、学术交流及非商业场景下的评估测试使用。
-- **严禁商业用途**：任何个人或组织不得将本软件全部或部分代码用于商业盈利、商业项目集成、转售、分发闭源衍生品或作为收费服务提供。
-- **版权声明**：所有代码分发与衍生版本均须保留原作者版权声明及 `Powered by codywon` 署名。
+- **适用范围**：本项目源码及编译产物仅供个人学习、技术研究、学术交流与非商业环境下的性能评估使用。
+- **严禁商业用途**：任何个人或组织不得将本项目的全部或部分代码用于商业盈利、衍生收费软件、商业服务集成、付费二次分发或任何形式的商用闭源产品。
+- **版权保留**：所有分发与衍生用途必须完整保留原始版权声明及 `Powered by codywon` 标识。
 
-详细法律条款请阅读项目根目录下的 [LICENSE](./LICENSE) 文件。
+完整法律声明请参阅 [LICENSE](./LICENSE)。
 
 ---
 

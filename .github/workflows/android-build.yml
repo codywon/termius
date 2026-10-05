@@ -71,20 +71,21 @@ jobs:
           body: |
             # TermX Mobile ${{ github.ref_name }} 正式发布
 
-            一款专为移动端设计的现代、轻量、高性能 Android 原生 SSH 客户端与服务器运维工具。采用 Kotlin + Jetpack Compose (Material 3) 纯原生架构构建。
+            TermX Mobile 是一款专为 Android 移动平台打造的现代、高性能终端仿真器与 SSH/SFTP 运维客户端。基于 Kotlin + Jetpack Compose 纯原生架构设计。
 
             > **Powered by codywon**
 
-            ### 🌟 核心特性与架构亮点
-            - **高性能 VT100 / xterm 终端引擎**：硬件加速 Canvas 渲染、Pending Wrap 规范折行、140 列宽屏漫游与丝滑双指缩放。
-            - **全新丝滑拖拽重排与高频快捷键**：网格拖拽物理吸附让位，默认首行高频配备 `Ctrl+C (中断/复制)` 与 `Ctrl+V (粘贴剪贴)`。
-            - **SFTP 远程文件管理**：远程面包屑导航、文件极速上传下载与全屏在线文本编辑。
-            - **生产运维速查手册 (Cheatsheet)**：涵盖 Linux、Docker、网络、系统服务等高频常用命令。
-            - **Vault 凭据库与长连守护**：支持 Ed25519、RSA 等多种加密密钥，原生电池优化白名单守护后台保活。
+            ### 🚀 首发核心特性
+            - **高性能 Canvas 终端引擎**：硬件加速渲染、140 列等宽宽屏漫游、VT100 Pending Wrap 规范折行与无损矩阵缩放。
+            - **流体手势快捷键与宏卡片**：支持物理吸附拖拽排序，默认配备高频 `Ctrl+C`、`Ctrl+V` 与三模输入切换。
+            - **高可靠 SFTP 引擎**：Coroutine Mutex 互斥防踩踏机制、纯内存流式安全读写、毫秒级面包屑导航与在线文本编辑。
+            - **连接自愈与系统级保活**：心跳保活检测、透明重连看门狗、前台服务守护及原生电池优化豁免。
+            - **统一安全凭据库 (Vault)**：集中式凭据加密管理，支持 Ed25519 / RSA / ECDSA 私钥与密码复用。
+            - **离线运维速查手册**：内置常用 Linux / Docker / 网络运维命令，支持即时模糊搜索与单键复制。
 
-            ### 📱 安装包下载
-            - **Release 正式版 APK**：下载附件中的 `TermX-Mobile-${{ github.ref_name }}-release.apk`
-            - **Debug 调试版 APK**：下载附件中的 `TermX-Mobile-${{ github.ref_name }}-debug.apk`
+            ### 📦 安装包下载
+            - **Release 正式版 APK**：`TermX-Mobile-${{ github.ref_name }}-release.apk` (推荐安装)
+            - **Debug 调试版 APK**：`TermX-Mobile-${{ github.ref_name }}-debug.apk`
 
             ---
             *仅供个人学习与交流使用，严禁商业用途。*
