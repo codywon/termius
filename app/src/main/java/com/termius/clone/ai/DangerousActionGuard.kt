@@ -13,7 +13,7 @@ object DangerousActionGuard {
 
     private val CRITICAL_PATTERNS = listOf(
         // 根目录与核心目录递归删除
-        Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\s+.*(/|/\*|~|\$HOME|\.\.|\*)\b""", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\s+.*(/|/\*|~|${'$'}HOME|\.\.|\*)\b""", Pattern.CASE_INSENSITIVE),
         Pattern.compile("""\brm\s+.*(-[a-zA-Z]*[rf][a-zA-Z]*|--force|--recursive)\s+.*(/etc|/var|/usr|/boot|/bin|/sbin|/lib|/sys|/dev)\b""", Pattern.CASE_INSENSITIVE),
         // 磁盘格式化与裸写
         Pattern.compile("""\bmkfs(\.[a-z0-9]+)?\b""", Pattern.CASE_INSENSITIVE),

@@ -422,7 +422,7 @@ class TermXAgentToolRegistry(
                     val identity = host.identityId?.let { db.identityDao().getIdentityById(it) }
                     if (identity != null) {
                         val authUser = identity.username.ifBlank { username }
-                        if (identity.authType == AuthType.KEY && identity.privateKey.isNotBlank()) {
+                        if (identity.privateKey.isNotBlank()) {
                             val kp = if (identity.passphrase.isNotBlank()) {
                                 client.loadKeys(identity.privateKey, null, PasswordUtils.createOneOff(identity.passphrase.toCharArray()))
                             } else {

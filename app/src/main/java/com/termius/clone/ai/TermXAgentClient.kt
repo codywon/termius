@@ -11,6 +11,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import com.termius.clone.terminal.session.SessionManager
 
 /**
  * TermX Mobile 生产级极简 ReAct Agent 执行引擎 & OpenAI 兼容流式客户端：
@@ -329,6 +330,6 @@ class TermXAgentClient(
         }
 
         onToolAction("")
-        onComplete(currentStepContent.toString().trim(), fullAccumulatedReasoning.toString())
+        onComplete(finalAnswerContent.toString().trim(), fullAccumulatedReasoning.toString())
     }
 }
