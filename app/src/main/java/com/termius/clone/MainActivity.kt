@@ -65,13 +65,23 @@ class MainActivity : ComponentActivity() {
 
                     when (currentRoute) {
                         "main" -> MainScreen(
-                            onNavigateToTerminal = { currentRoute = "terminal" }
+                            onNavigateToTerminal = { currentRoute = "terminal" },
+                            onNavigateToAi = { currentRoute = "ai" }
                         )
                         "terminal" -> {
                             androidx.activity.compose.BackHandler {
                                 currentRoute = "main"
                             }
                             TerminalScreen(
+                                onNavigateBack = { currentRoute = "main" },
+                                onNavigateToAi = { currentRoute = "ai" }
+                            )
+                        }
+                        "ai" -> {
+                            androidx.activity.compose.BackHandler {
+                                currentRoute = "main"
+                            }
+                            com.termius.clone.ui.screens.AiChatScreen(
                                 onNavigateBack = { currentRoute = "main" }
                             )
                         }

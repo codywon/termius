@@ -37,7 +37,8 @@ import com.termius.clone.util.Strings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToAi: () -> Unit = {}
 ) {
     // 拦截系统返回手势（如屏幕边缘侧滑返回、物理返回键等），平滑退回到主页而不是直接将应用最小化
     BackHandler {
@@ -212,6 +213,19 @@ fun TerminalScreen(
                                     )
                                 }
                             }
+                        }
+
+                        // AI SRE 运维助手入口按钮 (璀璨星辉)
+                        IconButton(
+                            onClick = onNavigateToAi,
+                            modifier = if (isLandscape) Modifier.size(32.dp) else Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = "AI 智能运维助手",
+                                tint = theme.primary,
+                                modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(22.dp)
+                            )
                         }
                     }
                 }

@@ -44,7 +44,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun HostListScreen(
     onNavigateToTerminal: () -> Unit,
-    onNavigateToSftpForHost: (HostEntity) -> Unit
+    onNavigateToSftpForHost: (HostEntity) -> Unit,
+    onNavigateToAi: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -136,6 +137,20 @@ fun HostListScreen(
                                     )
                                 }
                             }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+
+                        // AI SRE 运维智能体入口按钮 (璀璨星辉)
+                        IconButton(
+                            onClick = onNavigateToAi,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI 智能运维助手",
+                                tint = theme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                     }
 

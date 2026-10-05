@@ -344,4 +344,14 @@ class TerminalBuffer(
         currentUnderline = false
         currentInverse = false
     }
+
+    fun getLineString(r: Int): String = synchronized(lock) {
+        val screen = if (isUsingAltScreen) altScreen else mainScreen
+        val line = screen.getOrNull(r) ?: return@synchronized ""
+        val sb = StringBuilder()
+        for (cell in line.cells) {
+            sb.append(cell.char)
+        }
+        sb.toString()
+    }
 }

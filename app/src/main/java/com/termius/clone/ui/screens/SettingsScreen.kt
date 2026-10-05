@@ -59,6 +59,10 @@ fun SettingsScreen() {
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
 
+    val aiConfigManager = remember { com.termius.clone.data.local.AiConfigManager(context) }
+    var aiConfig by remember { mutableStateOf(aiConfigManager.loadConfig()) }
+    var showAiSettingsDialog by remember { mutableStateOf(false) }
+
     // 交互优化：从系统设置或授权弹窗返回时自动刷新电池优化状态
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -379,7 +383,20 @@ fun SettingsScreen() {
                 )
                 DividerLine()
 
-                // ---------------- 4. 关于 ----------------
+                // ---------------- 4. AI 智能运维设置 ----------------
+                SettingsSectionHeader(title = if (Strings.isZh) "AI 运维智能体" else "AI Ops Agent")
+
+                SettingsItem(
+                    title = if (Strings.isZh) "大模型服务接口" else "LLM Model Configuration",
+                    subtitle = if (aiConfig.apiKey.isBlank()) (if (Strings.isZh) "未配置 API Key · 点击配置" else "Not configured · Tap to setup") else "${aiConfig.modelName} (${aiConfig.baseUrl})",
+                    onClick = { showAiSettingsDialog = true },
+                    trailingContent = {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                    }
+                )
+                DividerLine()
+
+                // ---------------- 5. 关于 ----------------
                 SettingsSectionHeader(title = Strings.groupAbout)
 
                 val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
@@ -653,6 +670,19 @@ fun SettingsScreen() {
                     showAddIdentityDialog = false
                     Toast.makeText(context, if (Strings.isZh) "凭据已保存" else "Saved", Toast.LENGTH_SHORT).show()
                 }
+            }
+        )
+    }
+
+    // AI 智能运维大模型设置对话框
+    if (showAiSettingsDialog) {
+        AiSettingsDialog(
+            initialConfig = aiConfig,
+            onDismiss = { showAiSettingsDialog = false },
+            onSaveConfig = { newConfig ->
+                aiConfig = newConfig
+                aiConfigManager.saveConfig(newConfig)
+                Toast.makeText(context, if (Strings.isZh) "AI 配置已保存" else "AI settings saved", Toast.LENGTH_SHORT).show()
             }
         )
     }

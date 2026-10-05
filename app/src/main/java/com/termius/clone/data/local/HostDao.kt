@@ -9,6 +9,9 @@ interface HostDao {
     @Query("SELECT * FROM hosts ORDER BY lastConnected DESC, label ASC")
     fun getAllHosts(): Flow<List<HostEntity>>
 
+    @Query("SELECT * FROM hosts ORDER BY lastConnected DESC, label ASC")
+    suspend fun getAllHostsSync(): List<HostEntity>
+
     @Query("SELECT * FROM hosts WHERE id = :id")
     suspend fun getHostById(id: Long): HostEntity?
 

@@ -28,7 +28,8 @@ enum class MainTab(val getTitle: () -> String, val icon: ImageVector) {
 
 @Composable
 fun MainScreen(
-    onNavigateToTerminal: () -> Unit
+    onNavigateToTerminal: () -> Unit,
+    onNavigateToAi: () -> Unit = {}
 ) {
     var currentTab by remember { mutableStateOf(MainTab.HOSTS) }
     var sftpHostTarget by remember { mutableStateOf<HostEntity?>(null) }
@@ -107,7 +108,8 @@ fun MainScreen(
                     onNavigateToSftpForHost = { host ->
                         sftpHostTarget = host
                         currentTab = MainTab.SFTP
-                    }
+                    },
+                    onNavigateToAi = onNavigateToAi
                 )
                 MainTab.SFTP -> SftpScreen(initialHost = sftpHostTarget)
                 MainTab.CHEATSHEET -> CommandCheatSheetScreen()
