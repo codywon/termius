@@ -4,6 +4,8 @@ import com.termius.clone.data.model.AuthType
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.data.model.IdentityEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.FileMode
@@ -44,6 +46,11 @@ class SftpClientManager {
 
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
+    private var lastHost: HostEntity? = null
+    private var lastIdentity: IdentityEntity? = null
+
+    // 协程互斥锁：彻底杜绝 SFTP 单通道并发调用导致的 Socket Abort
+    private val sftpMutex = Mutex()
 
     // 内存目录缓存 (路径 -> 缓存项)
     private val directoryCache = ConcurrentHashMap<String, CachedDirectory>()
@@ -58,11 +65,24 @@ class SftpClientManager {
         get() = sshClient?.isConnected == true && sftpClient != null
 
     suspend fun connect(host: HostEntity, identity: IdentityEntity? = null) = withContext(Dispatchers.IO) {
-        directoryCache.clear()
+        sftpMutex.withLock {
+            directoryCache.clear()
+            lastHost = host
+            lastIdentity = identity
+            connectInternal(host, identity)
+        }
+    }
+
+    private fun connectInternal(host: HostEntity, identity: IdentityEntity?) {
         com.termius.clone.TermiusApplication.setupBouncyCastle()
         val client = SSHClient()
         client.addHostKeyVerifier(PromiscuousVerifier())
+        client.timeout = 15_000
         client.connect(host.hostname, host.port)
+        // 开启 SSH 心跳保活，防止移动网络 NAT 超时切断连接
+        try {
+            client.connection.keepAlive.setKeepAliveInterval(15)
+        } catch (_: Exception) {}
 
         val username = if (host.authType == AuthType.IDENTITY_REF && identity != null) {
             identity.username
@@ -98,6 +118,59 @@ class SftpClientManager {
         sftpClient = client.newSFTPClient()
     }
 
+    private fun isNetworkDisconnection(e: Throwable): Boolean {
+        var cur: Throwable? = e
+        while (cur != null) {
+            val msg = cur.message?.lowercase() ?: ""
+            if (cur is java.net.SocketException ||
+                cur is net.schmizz.sshj.transport.TransportException ||
+                cur is java.io.EOFException ||
+                msg.contains("software caused connection abort") ||
+                msg.contains("broken pipe") ||
+                msg.contains("connection reset") ||
+                msg.contains("socket closed") ||
+                msg.contains("not connected")
+            ) {
+                return true
+            }
+            cur = cur.cause
+        }
+        return false
+    }
+
+    /**
+     * 线程安全且具备网络自愈重试的 SFTP 执行模板
+     */
+    private suspend fun <T> withSftp(block: (SFTPClient) -> T): T = withContext(Dispatchers.IO) {
+        sftpMutex.withLock {
+            val host = lastHost
+            if (host != null && (sshClient?.isConnected != true || sftpClient == null)) {
+                try {
+                    sftpClient?.close()
+                    sshClient?.disconnect()
+                } catch (_: Exception) {}
+                connectInternal(host, lastIdentity)
+            }
+
+            val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
+            try {
+                block(client)
+            } catch (e: Exception) {
+                if (isNetworkDisconnection(e) && host != null) {
+                    try {
+                        sftpClient?.close()
+                        sshClient?.disconnect()
+                    } catch (_: Exception) {}
+                    connectInternal(host, lastIdentity)
+                    val retryClient = sftpClient ?: throw e
+                    block(retryClient)
+                } else {
+                    throw e
+                }
+            }
+        }
+    }
+
     /**
      * 获取指定路径的缓存列表（用于 SWR 模式即时秒开呈现）
      */
@@ -125,7 +198,6 @@ class SftpClientManager {
             val normalized = path.trimEnd('/').ifEmpty { "/" }
             directoryCache.remove(normalized)
             directoryCache.remove("$normalized/")
-            // 同时失效父级目录以防统计状态过时
             val parent = File(normalized).parent?.replace("\\", "/")?.trimEnd('/')?.ifEmpty { "/" }
             if (parent != null) {
                 directoryCache.remove(parent)
@@ -135,7 +207,7 @@ class SftpClientManager {
     }
 
     /**
-     * 列出目录项（支持缓存与后台更新）
+     * 列出目录项（支持缓存、互斥访问与网络自愈重连）
      */
     suspend fun listDirectory(path: String, forceRefresh: Boolean = false): List<SftpItem> = withContext(Dispatchers.IO) {
         val normalizedPath = path.trimEnd('/').ifEmpty { "/" }
@@ -146,8 +218,9 @@ class SftpClientManager {
             }
         }
 
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        val remoteFiles: List<RemoteResourceInfo> = client.ls(path)
+        val remoteFiles: List<RemoteResourceInfo> = withSftp { client ->
+            client.ls(path)
+        }
 
         val items = remoteFiles.map { info ->
             val isDir = info.attributes.mode.type == FileMode.Type.DIRECTORY
@@ -166,77 +239,90 @@ class SftpClientManager {
     }
 
     suspend fun downloadFile(remotePath: String, localFile: File) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.get(remotePath, localFile.absolutePath)
+        withSftp { client ->
+            client.get(remotePath, localFile.absolutePath)
+        }
     }
 
     suspend fun uploadFile(localFile: File, remotePath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.put(localFile.absolutePath, remotePath)
+        withSftp { client ->
+            client.put(localFile.absolutePath, remotePath)
+        }
         invalidateCache(File(remotePath).parent)
     }
 
     suspend fun rename(oldPath: String, newPath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.rename(oldPath, newPath)
+        withSftp { client ->
+            client.rename(oldPath, newPath)
+        }
         invalidateCache(File(oldPath).parent)
         invalidateCache(File(newPath).parent)
     }
 
     suspend fun deleteFile(remotePath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.rm(remotePath)
+        withSftp { client ->
+            client.rm(remotePath)
+        }
         invalidateCache(File(remotePath).parent)
     }
 
     suspend fun deleteDirectory(remotePath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.rmdir(remotePath)
+        withSftp { client ->
+            client.rmdir(remotePath)
+        }
         invalidateCache(File(remotePath).parent)
         invalidateCache(remotePath)
     }
 
     suspend fun createDirectory(remotePath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
-        client.mkdirs(remotePath)
+        withSftp { client ->
+            client.mkdirs(remotePath)
+        }
         invalidateCache(File(remotePath).parent)
     }
 
     suspend fun createEmptyFile(remotePath: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
         val fileName = File(remotePath).name.ifEmpty { "new_file" }
         val source = MemorySourceFile(fileName, ByteArray(0))
-        client.put(source, remotePath)
+        withSftp { client ->
+            client.put(source, remotePath)
+        }
         invalidateCache(File(remotePath).parent)
     }
 
     suspend fun readTextFile(remotePath: String): String = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
         val dest = MemoryDestFile()
-        client.get(remotePath, dest)
+        withSftp { client ->
+            client.get(remotePath, dest)
+        }
         dest.bytes.toString(Charsets.UTF_8)
     }
 
     suspend fun writeTextFile(remotePath: String, content: String) = withContext(Dispatchers.IO) {
-        val client = sftpClient ?: throw IllegalStateException("SFTP 客户端未连接")
         val fileName = File(remotePath).name.ifEmpty { "file" }
         val bytes = content.toByteArray(Charsets.UTF_8)
         val source = MemorySourceFile(fileName, bytes)
-        client.put(source, remotePath)
+        withSftp { client ->
+            client.put(source, remotePath)
+        }
         invalidateCache(File(remotePath).parent)
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
-        try {
-            directoryCache.clear()
-            sftpClient?.close()
-            sshClient?.disconnect()
-            sshClient?.close()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            sftpClient = null
-            sshClient = null
+        sftpMutex.withLock {
+            try {
+                directoryCache.clear()
+                sftpClient?.close()
+                sshClient?.disconnect()
+                sshClient?.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                sftpClient = null
+                sshClient = null
+                lastHost = null
+                lastIdentity = null
+            }
         }
     }
 

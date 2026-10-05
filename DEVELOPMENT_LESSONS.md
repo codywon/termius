@@ -32,6 +32,7 @@
   - [2. 纯内存流传输消除移动端闪存临时文件 I/O 损耗](#2-纯内存流传输消除移动端闪存临时文件-io-损耗)
   - [3. Jetpack Compose 列表高频重绘与 SimpleDateFormat GC 压力收敛](#3-jetpack-compose-列表高频重绘与-simpledateformat-gc-压力收敛)
   - [4. 全屏阻塞黑屏向非侵入式后台进度反馈演进](#4-全屏阻塞黑屏向非侵入式后台进度反馈演进)
+  - [5. SFTP 单通道并发竞态死穴 (Software caused connection abort) 与网络自愈重连架构](#5-sftp-单通道并发竞态死穴-software-caused-connection-abort-与网络自愈重连架构)
 
 ---
 
@@ -336,5 +337,24 @@ SFTP 包含上百个文件时，在手机上上下滑动列表发生轻微掉帧
 
 ---
 
-> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
+### 5. SFTP 单通道并发竞态死穴 (Software caused connection abort) 与网络自愈重连架构
+
+#### ⚠️ 踩坑现象
+用户快速连续点击文件夹或面包屑返回上一级时，界面底部频发报错：`后台同步失败: Software caused connection abort` 或 `Socket closed`，连接瞬间断开且无法继续操作。
+
+#### 🔍 根因剖析
+1. **SFTP 单通道流式协议特性**：SFTP 子系统运行在 SSH 客户端与服务端的单一逻辑 Channel 之上，所有请求（`SSH_FXP_READDIR`、`SSH_FXP_OPEN` 等）共用底层的输入输出流；
+2. **多协程并发通道踩踏**：在异步 UI 中，若用户从目录 A 连续点入目录 B，未取消协程 A 的拉取任务，导致协程 A 与协程 B 同时向底层 SFTP Channel 并发写包/读包。SSH 数据包封包序号错乱、Payload 错位，远程 SSHD 或本地客户端立即触发保护性 RST，强行切断 Socket（抛出 `Software caused connection abort`）；
+3. **缺乏网络自愈机制**：一旦底层连接因移动网络 NAT 超时或通道并发异常断开，旧版未保存会话凭据且未做自动重连，所有后续操作全盘挂死。
+
+#### 💡 避坑准则与成熟方案
+1. **Mutex 协程互斥锁 (Channel Serialization)**：在 `SftpClientManager` 内部加入 `val sftpMutex = Mutex()`，所有对底层 `sftpClient` 的 I/O 挂起操作统一通过 `sftpMutex.withLock` 排队串行化，从物理上 100% 杜绝并发写通道；
+2. **Job 取消机制 (Single-Flight Pattern)**：在 UI 层维护 `var currentLoadJob: Job?`，每次触发新目录加载时，**立即调用 `currentLoadJob?.cancel()` 取消上一级拉取**，并精准拦截 `CancellationException` 静默处理，避免带宽与通道被废弃请求抢占；
+3. **SSH 心跳保活 (Keep-Alive)**：在建立连接时配置 `client.connection.keepAlive.setInterval(15)` 与 `client.timeout = 15_000`，主动向服务器发送心跳包，防止移动网络网关单向切断空闲 TCP 连接；
+4. **透明自愈重连 (Auto-Reconnect with Retry)**：在 `withSftp` 辅助模板中捕获 `SocketException` / `Broken pipe` / `Connection abort` 等瞬断异常，自动使用当前凭据无感重新握手并获取全新 `SFTPClient`，自动重试本次操作，对用户完全透明隐形。
+
+---
+
+> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
+
 

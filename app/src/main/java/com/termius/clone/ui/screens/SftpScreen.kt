@@ -42,7 +42,9 @@ import com.termius.clone.sftp.SftpClientManager
 import com.termius.clone.sftp.SftpItem
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.Strings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -87,34 +89,45 @@ fun SftpScreen(
     var showHeaderMenu by remember { mutableStateOf(false) }
 
     val sftpManager = remember { SftpClientManager() }
+    var currentLoadJob by remember { mutableStateOf<Job?>(null) }
 
     fun loadDir(path: String, forceRefresh: Boolean = false) {
+        // 1. 取消上一次正在执行的加载任务，彻底消除并发通道争抢
+        currentLoadJob?.cancel()
+
         val cached = sftpManager.getCachedItems(path)
         val isFresh = sftpManager.isCacheFresh(path)
+
+        // 2. 交互瞬切体验：无论有无缓存，立即将当前路径切到目标目录，面包屑立刻更新！
+        currentPath = path
 
         if (cached != null) {
             // SWR 策略：已有缓存数据瞬间呈现 (0ms 延迟)，彻底消除卡顿与白屏
             items = cached
-            currentPath = path
+            isLoading = false
             if (isFresh && !forceRefresh) {
+                isBackgroundRefreshing = false
                 return
             }
             isBackgroundRefreshing = true
         } else {
-            // 首次访问该路径无缓存，展示加载态
+            // 首次访问该路径无缓存，清空旧列表，进入新目录专属加载态
+            items = emptyList()
             isLoading = true
+            isBackgroundRefreshing = false
         }
 
-        scope.launch {
+        currentLoadJob = scope.launch {
             try {
                 val list = sftpManager.listDirectory(path, forceRefresh = forceRefresh)
                 items = list
-                currentPath = path
+            } catch (e: CancellationException) {
+                // 协程主动切换取消，绝不提示任何异常
             } catch (e: Exception) {
                 if (items.isEmpty()) {
                     Toast.makeText(context, if (Strings.isZh) "加载目录失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(context, if (Strings.isZh) "后台同步失败: ${e.message}" else "Sync failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    android.util.Log.w("SFTP", "Background refresh failed: ${e.message}")
                 }
             } finally {
                 isLoading = false
@@ -193,6 +206,7 @@ fun SftpScreen(
             val parent = File(currentPath).parent ?: "/"
             loadDir(parent.replace("\\", "/"))
         } else {
+            currentLoadJob?.cancel()
             scope.launch {
                 sftpManager.disconnect()
                 isConnected = false
@@ -327,6 +341,7 @@ fun SftpScreen(
                     ) {
                         if (isConnected) {
                             IconButton(onClick = {
+                                currentLoadJob?.cancel()
                                 scope.launch {
                                     sftpManager.disconnect()
                                     isConnected = false
@@ -406,6 +421,7 @@ fun SftpScreen(
 
                             // 断开连接
                             IconButton(onClick = {
+                                currentLoadJob?.cancel()
                                 scope.launch {
                                     sftpManager.disconnect()
                                     isConnected = false
