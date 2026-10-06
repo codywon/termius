@@ -102,6 +102,7 @@ class TermXAgentClient(
         var step = 0
         val maxSteps = 6 // 增强为 6 步收敛安全循环，确保足够完成 工具调用 -> 观测 -> 最终报告
         val fullAccumulatedReasoning = StringBuilder()
+        val fullAccumulatedContent = StringBuilder()
         var finalAnswerContent = StringBuilder()
 
         // 2. The ReAct Loop (Thought -> Action -> Observation)
@@ -199,6 +200,7 @@ class TermXAgentClient(
                                             val contentDelta = delta.optString("content", "")
                                             if (contentDelta.isNotEmpty() && contentDelta != "null") {
                                                 currentStepContent.append(contentDelta)
+                                                fullAccumulatedContent.append(contentDelta)
                                                 onChunk(contentDelta, false)
                                             }
                                         }
@@ -277,12 +279,12 @@ class TermXAgentClient(
             if (toolCallsDetected.isEmpty() || isFinalStep) {
                 finalAnswerContent = currentStepContent
                 onToolAction("")
-                val rawAnswer = finalAnswerContent.toString().trim()
+                val rawAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
                 val safeAnswer = if (rawAnswer.isNotEmpty() && rawAnswer != "null") {
                     rawAnswer
                 } else {
-                    if (currentStepReasoning.isNotBlank()) {
-                        currentStepReasoning.toString().trim()
+                    if (fullAccumulatedReasoning.isNotBlank()) {
+                        fullAccumulatedReasoning.toString().trim()
                     } else {
                         "已接收到您的运维需求。若前序操作曾被中断，建议直接输入具体命令（如「检查根分区并清理大文件」或「查看失败日志」），我将立刻为您执行。"
                     }
@@ -334,6 +336,7 @@ class TermXAgentClient(
         }
 
         onToolAction("")
-        onComplete(finalAnswerContent.toString().trim(), fullAccumulatedReasoning.toString())
+        val exitAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
+        onComplete(exitAnswer, fullAccumulatedReasoning.toString())
     }
 }

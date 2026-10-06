@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-3DDC84.svg?style=flat-square&logo=android)](https://developer.android.com)
 [![Language](https://img.shields.io/badge/Language-Kotlin%202.0-7F52FF.svg?style=flat-square&logo=kotlin)](https://kotlinlang.org)
 [![Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?style=flat-square&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
-[![Release](https://img.shields.io/badge/Release-v2.0.0-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
+[![Release](https://img.shields.io/badge/Release-v1.0.1-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
 [![License](https://img.shields.io/badge/License-Non--Commercial%20Personal%20Use-blue.svg?style=flat-square)](./LICENSE)
 
 TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器、SSH/SFTP 客户端与掌上自主 SRE 运维智能体。基于 Kotlin 与 Jetpack Compose 纯原生技术栈构建，专注于在移动触控屏幕上提供稳定、低延迟、深度环境感知与高安全护栏的远程服务器管理体验。
@@ -68,8 +68,8 @@ TermX Mobile
 ## 快速开始
 
 ### 安装包下载
-前往项目的 [Releases](https://github.com/codywon/termius/releases) 页面，下载最新的首发正式安装包：
-- `TermX-Mobile-v1.0.0-release.apk`
+前往项目的 [Releases](https://github.com/codywon/termius/releases) 页面，下载最新发布的正式安装包：
+- `TermX-Mobile-v1.0.1-release.apk`
 
 ### 从源码构建
 
