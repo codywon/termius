@@ -111,6 +111,7 @@ dependencies {
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.21.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.21.0")
     implementation("org.commonmark:commonmark-ext-autolink:0.21.0")
+    implementation("io.noties.markwon:core:4.6.2")
 
     // Test
     testImplementation("junit:junit:4.13.2")

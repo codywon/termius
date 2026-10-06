@@ -90,10 +90,14 @@ object CjkMarkdownNormalizer {
     private val OPEN_BOLD_REGEX = Regex("""([\u4e00-\u9fa5\w])(\*\*)($OPEN_PUNC)""")
     private val CLOSE_BOLD_REGEX = Regex("""($CLOSE_PUNC)(\*\*)([\u4e00-\u9fa5\w])""")
 
+    // 智能表格换行修复：
+    // 大模型输出表格时常将多行粘连为单行，例如 "| 说明 | |:---|:---| | TCP | ... | | TCP | ..."
+    // 将两行相接处的 "| |" 或 "||" 替换为 "|\n|"
+    private val TABLE_STICKY_ROW_REGEX = Regex("""\|\s*\|(?=\s*[:\w\-\./*\$#@~`\u4e00-\u9fa5])""")
+    private val TABLE_SEPARATOR_REGEX = Regex("""(?<!\n)(\|[^\n|]+?\|\s*)(\|(?:[\s:]*-+[\s:]*\|)+)""")
+
     fun normalize(rawMarkdown: String): String {
-        if (rawMarkdown.isEmpty() || (!rawMarkdown.contains("*") && !rawMarkdown.contains("_") && !rawMarkdown.contains("•"))) {
-            return rawMarkdown
-        }
+        if (rawMarkdown.isEmpty()) return rawMarkdown
 
         val matches = CODE_BLOCK_PATTERN.findAll(rawMarkdown).toList()
         if (matches.isEmpty()) {
@@ -118,11 +122,27 @@ object CjkMarkdownNormalizer {
     }
 
     private fun fixSegment(text: String): String {
-        var s = PSEUDO_LIST_REGEX.replace(text) { "${it.groupValues[1]}- " }
-        s = INNER_BOLD_WHITESPACE_ASTERISK.replace(s) { "**${it.groupValues[1]}**" }
-        s = INNER_BOLD_WHITESPACE_UNDERSCORE.replace(s) { "__${it.groupValues[1]}__" }
-        s = OPEN_BOLD_REGEX.replace(s) { m -> "${m.groupValues[1]} ${m.groupValues[2]}${m.groupValues[3]}" }
-        s = CLOSE_BOLD_REGEX.replace(s) { m -> "${m.groupValues[1]}${m.groupValues[2]} ${m.groupValues[3]}" }
+        var s = text
+
+        // 1. 自动修复大模型单行粘连表格（在表头、分隔线与数据行间安全插入换行）
+        if (s.contains("|") && s.contains("-")) {
+            s = TABLE_SEPARATOR_REGEX.replace(s) { "${it.groupValues[1]}\n${it.groupValues[2]}" }
+            s = TABLE_STICKY_ROW_REGEX.replace(s, "|\n|")
+        }
+
+        // 2. 规范化伪列表符号
+        if (s.contains("•") || s.contains("◦") || s.contains("▪")) {
+            s = PSEUDO_LIST_REGEX.replace(s) { "${it.groupValues[1]}- " }
+        }
+
+        // 3. 粗体与标点归一化
+        if (s.contains("*") || s.contains("_")) {
+            s = INNER_BOLD_WHITESPACE_ASTERISK.replace(s) { "**${it.groupValues[1]}**" }
+            s = INNER_BOLD_WHITESPACE_UNDERSCORE.replace(s) { "__${it.groupValues[1]}__" }
+            s = OPEN_BOLD_REGEX.replace(s) { m -> "${m.groupValues[1]} ${m.groupValues[2]}${m.groupValues[3]}" }
+            s = CLOSE_BOLD_REGEX.replace(s) { m -> "${m.groupValues[1]}${m.groupValues[2]} ${m.groupValues[3]}" }
+        }
+
         return s
     }
 }
