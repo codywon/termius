@@ -39,6 +39,14 @@ class TermXAgentClient(
                👉 【方案确认与授权即刻执行铁律】：当你此前向用户提出了方案选择（如方案 A/B、清理步骤）或索取执行确认，而用户回复了选项或肯定词（如“1方案B 2同意”、“方案B”、“同意”、“好的执行”、“确认”等）时：
                   ⚡ 你必须立即将其视为最高优先级的执行授权指令，立刻调用对应工具 (如 execute_shell_command) 执行清理或配置命令！
                   ⚡ 严禁只做口头敷衍！严禁回复“好的收到”、“诊断已完成”、“请参考上述结果”而不调用工具！必须立刻行动！
+               👉 【极简模糊推进铁律 (针对“继续”、“接着做”、“开始”、“搞一下”、“处理”等)】：
+                  当用户输入极简肯定词（如“继续”、“接着做”、“开始吧”、“好的处理”、“go”）时：
+                  ⚡ 严禁反问用户！严禁复读套话！严禁要求用户先提供具体命令！
+                  ⚡ 你必须向上回溯历史会话中用户此前最早提出的核心诉求（例如体检、清理磁盘、查网络报错、查端口服务等）：
+                     - 若历史涉及磁盘清理或体检：立刻调用 execute_shell_command 现场执行 df -h 查看根分区空间，并查找占用大文件展开处置！
+                     - 若历史涉及网络或服务报错：立刻调用 execute_shell_command 现场执行 systemctl --failed 或 journalctl -xe -n 30 抓取错误！
+                     - 若历史暂无明确线索：立刻调用 detect_host_environment 或执行 uptime、free -m 展开主动现场诊断！
+                  ⚡ 行动是唯一的回复！必须立即调用工具继续推进运维！
                👉 【引用上下文指令但历史中断时的现场重测铁律】：
                   当用户表示“按以上建议清理磁盘”、“解决上面的报错”，若历史中因中途停止而缺少具体指标或诊断数据：
                   ⚡ 绝不能直接回复空话！你应主动调用 execute_shell_command（如执行 df -h 查根目录、查看大文件或 journalctl）现场重新获取当前服务器状态并展开处置！
@@ -185,24 +193,32 @@ class TermXAgentClient(
                                     val choice = choices.getJSONObject(0)
                                     val delta = choice.optJSONObject("delta")
                                     if (delta != null) {
-                                        // 思考链增量
-                                        if (!delta.isNull("reasoning_content")) {
-                                            val reasoningDelta = delta.optString("reasoning_content", "")
-                                            if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
-                                                currentStepReasoning.append(reasoningDelta)
-                                                fullAccumulatedReasoning.append(reasoningDelta)
-                                                onChunk(reasoningDelta, true)
-                                            }
+                                        // 思考链增量 (兼容 reasoning_content, reasoning, thought)
+                                        val reasoningDelta = if (!delta.isNull("reasoning_content")) {
+                                            delta.optString("reasoning_content", "")
+                                        } else if (!delta.isNull("reasoning")) {
+                                            delta.optString("reasoning", "")
+                                        } else if (!delta.isNull("thought")) {
+                                            delta.optString("thought", "")
+                                        } else ""
+
+                                        if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
+                                            currentStepReasoning.append(reasoningDelta)
+                                            fullAccumulatedReasoning.append(reasoningDelta)
+                                            onChunk(reasoningDelta, true)
                                         }
 
-                                        // 正文打字机增量
-                                        if (!delta.isNull("content")) {
-                                            val contentDelta = delta.optString("content", "")
-                                            if (contentDelta.isNotEmpty() && contentDelta != "null") {
-                                                currentStepContent.append(contentDelta)
-                                                fullAccumulatedContent.append(contentDelta)
-                                                onChunk(contentDelta, false)
-                                            }
+                                        // 正文打字机增量 (兼容 content, text)
+                                        val contentDelta = if (!delta.isNull("content")) {
+                                            delta.optString("content", "")
+                                        } else if (!delta.isNull("text")) {
+                                            delta.optString("text", "")
+                                        } else ""
+
+                                        if (contentDelta.isNotEmpty() && contentDelta != "null") {
+                                            currentStepContent.append(contentDelta)
+                                            fullAccumulatedContent.append(contentDelta)
+                                            onChunk(contentDelta, false)
                                         }
 
                                         // 工具调用增量
@@ -210,7 +226,7 @@ class TermXAgentClient(
                                         if (deltaTools != null) {
                                             for (i in 0 until deltaTools.length()) {
                                                 val t = deltaTools.getJSONObject(i)
-                                                val idx = t.optInt("index", 0)
+                                                val idx = if (t.has("index")) t.optInt("index", i) else i
                                                 val id = if (!t.isNull("id")) t.optString("id", "") else ""
                                                 val func = t.optJSONObject("function")
                                                 val name = if (func != null && !func.isNull("name")) func.optString("name", "") else ""
@@ -223,6 +239,15 @@ class TermXAgentClient(
                                                 if (name.isNotEmpty() && name != "null" && triple.second.isEmpty()) triple.second.append(name)
                                                 if (argsPart.isNotEmpty()) triple.third.append(argsPart)
                                             }
+                                        }
+                                    } else {
+                                        // 非 delta 模式 (部分代理直接吐 message 或 text)
+                                        val fallbackMsg = choice.optJSONObject("message")
+                                        val fbContent = fallbackMsg?.optString("content", "") ?: choice.optString("text", "")
+                                        if (fbContent.isNotEmpty() && fbContent != "null") {
+                                            currentStepContent.append(fbContent)
+                                            fullAccumulatedContent.append(fbContent)
+                                            onChunk(fbContent, false)
                                         }
                                     }
                                 }
@@ -286,7 +311,12 @@ class TermXAgentClient(
                     if (fullAccumulatedReasoning.isNotBlank()) {
                         fullAccumulatedReasoning.toString().trim()
                     } else {
-                        "已接收到您的运维需求。若前序操作曾被中断，建议直接输入具体命令（如「检查根分区并清理大文件」或「查看失败日志」），我将立刻为您执行。"
+                        val lastUserText = conversationHistory.lastOrNull { it.role == "user" }?.content?.trim() ?: ""
+                        if (lastUserText.contains("继续") || lastUserText.contains("开始") || lastUserText.length <= 4) {
+                            "已接收到您的接续指令。当前已连接主机环境，建议直接点击下方快捷胶囊「🔍 系统全面体检」或输入排查需求，我将立即下发命令展开处置。"
+                        } else {
+                            "已接收到您的运维需求。若需要对主机进行状态诊断，建议直接点击下方「🔍 系统全面体检」或输入具体排障指令，我将立刻为您执行。"
+                        }
                     }
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
@@ -297,7 +327,11 @@ class TermXAgentClient(
             val assistantMsg = JSONObject().apply {
                 put("role", "assistant")
                 val cleanContent = currentStepContent.toString().trim()
-                put("content", if (cleanContent.isNotEmpty() && cleanContent != "null") cleanContent else "")
+                if (cleanContent.isNotEmpty() && cleanContent != "null") {
+                    put("content", cleanContent)
+                } else {
+                    put("content", JSONObject.NULL)
+                }
                 val callsArray = JSONArray()
                 for (t in toolCallsDetected) callsArray.put(t)
                 put("tool_calls", callsArray)
