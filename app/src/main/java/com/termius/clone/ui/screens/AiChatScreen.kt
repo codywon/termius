@@ -166,11 +166,11 @@ fun AiChatScreen(
         }
     }
 
-    // 1. 流式输出进行时：若用户在底部，瞬时跟随贴底推进 (使用超大 scrollOffset 确保绝对最底端完全可见，不截断)
+    // 1. 流式输出进行时：若用户在底部，瞬时跟随贴底推进
     LaunchedEffect(currentChunkText.length, currentActionText, isGenerating) {
         val total = listState.layoutInfo.totalItemsCount
         if (total > 0 && isAtBottom && isGenerating) {
-            listState.scrollToItem(total - 1, scrollOffset = 100000)
+            listState.scrollToItem(total - 1)
         }
     }
 
@@ -180,7 +180,7 @@ fun AiChatScreen(
             kotlinx.coroutines.delay(100L)
             val total = listState.layoutInfo.totalItemsCount
             if (total > 0) {
-                listState.animateScrollToItem(total - 1, scrollOffset = 100000)
+                listState.animateScrollToItem(total - 1)
             }
         }
     }
@@ -656,48 +656,50 @@ fun AiChatScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                     }
                 }
+            }
 
-                // 悬浮「↓ 回到底部」小胶囊 (当用户向上翻看历史离开底部时显现)
-                AnimatedVisibility(
-                    visible = !isAtBottom && messages.isNotEmpty(),
-                    enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
-                    exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+            // 悬浮「↓ 回到底部」小胶囊 (当用户向上翻看历史离开底部时显现)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !isAtBottom && messages.isNotEmpty(),
+                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp)
+            ) {
+                Surface(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 12.dp)
-                ) {
-                    Surface(
-                        onClick = {
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable {
                             scope.launch {
                                 val total = listState.layoutInfo.totalItemsCount
                                 if (total > 0) {
-                                    listState.animateScrollToItem(total - 1, scrollOffset = 100000)
+                                    listState.animateScrollToItem(total - 1)
                                 }
                             }
                         },
-                        shape = RoundedCornerShape(20.dp),
-                        color = theme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f)),
-                        shadowElevation = 6.dp
+                    shape = RoundedCornerShape(20.dp),
+                    color = theme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f)),
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ArrowDownward,
-                                contentDescription = "回到底部",
-                                tint = theme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "回到底部",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = theme.textPrimary
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.ArrowDownward,
+                            contentDescription = "回到底部",
+                            tint = theme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "回到底部",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = theme.textPrimary
+                        )
                     }
                 }
             }

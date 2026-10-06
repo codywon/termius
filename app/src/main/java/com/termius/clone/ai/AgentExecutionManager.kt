@@ -157,7 +157,7 @@ object AgentExecutionManager {
                             isGenerating = false,
                             currentActionText = ""
                         )
-                        withContext(Dispatchers.Main) {
+                        executionScope.launch(Dispatchers.Main) {
                             onSessionUpdated?.invoke()
                         }
                     },
@@ -173,7 +173,7 @@ object AgentExecutionManager {
                             isGenerating = false,
                             currentActionText = ""
                         )
-                        withContext(Dispatchers.Main) {
+                        executionScope.launch(Dispatchers.Main) {
                             onSessionUpdated?.invoke()
                         }
                     }
@@ -193,7 +193,7 @@ object AgentExecutionManager {
                     isGenerating = false,
                     currentActionText = ""
                 )
-                withContext(Dispatchers.Main) {
+                executionScope.launch(Dispatchers.Main) {
                     onSessionUpdated?.invoke()
                 }
             }
