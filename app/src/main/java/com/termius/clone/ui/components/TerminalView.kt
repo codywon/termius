@@ -122,18 +122,19 @@ fun TerminalView(
     }
     val baselineOffset = remember(textPaint) { -textPaint.fontMetrics.ascent }
 
-    // 行业最佳实践 (参考 Termius / ConnectBot)：
-    // 虚拟终端列数保底至少 140 列 (标准宽屏宽度)，确保远程命令 (如 docker ps, kubectl, ps aux) 
-    // 将所有列 (包括 STATUS, PORTS, NAMES 等) 全部完整输出，避免 Linux 工具主动将右侧表格截断丢弃
+    // 行业经典标准 (参考 ConnectBot 视口自适应黄金规范)：
+    // 虚拟终端列数严格根据当前 App 视口物理宽度自适应计算 (fittedCols)，
+    // 远程 Linux 工具 (如 ls, bash, vim, htop) 会精准按当前屏幕宽度排版并自然换行，
+    // 彻底告别每次看输出都需要手动向右滑动的糟糕体验！
     LaunchedEffect(viewSize, charWidth, charHeight) {
-        delay(250)
+        delay(120) // 120ms 防抖，键盘弹起或旋转屏幕时秒级自适应
         try {
             if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
-                val fittedCols = (viewSize.width / charWidth).toInt().coerceAtLeast(10)
-                val cols = maxOf(140, fittedCols)
+                val fittedCols = (viewSize.width / charWidth).toInt().coerceAtLeast(15)
                 val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
-                session.resize(cols, rows, viewSize.width, viewSize.height)
+                session.resize(fittedCols, rows, viewSize.width, viewSize.height)
                 scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
+                scrollOffsetX = 0f    // 自适应全屏后自动归位，杜绝非必要偏移
             }
         } catch (e: Throwable) {
             e.printStackTrace()
@@ -188,11 +189,11 @@ fun TerminalView(
                             if (centroid != Offset.Unspecified) {
                                 zoomPivot = centroid
                             }
-                            val nextZoom = (gestureZoom * zoom).coerceIn(0.5f, 2.5f)
+                            val nextZoom = (gestureZoom * zoom).coerceIn(0.35f, 2.5f)
                             gestureZoom = nextZoom
                             event.changes.forEach { it.consume() }
                         } else if (!isPinching) {
-                            // 2. 单指滑动：同时支持上下历史回溯与左右水平平移浏览长文本/表格 (参考 Termius / ConnectBot)
+                            // 2. 单指滑动：同时支持上下历史回溯与水平微调 (自适应模式下 maxScrollX 为 0，专心垂直滚动)
                             val pan = event.calculatePan()
                             val moveDelta = abs(pan.y) + abs(pan.x)
                             totalMovement += moveDelta
@@ -215,7 +216,7 @@ fun TerminalView(
                                     }
                                 }
 
-                                // 水平方向：向左滑动平移查看长行文本、超宽表格右侧内容
+                                // 水平方向：仅在内容确实超出视口时平移
                                 if (maxScrollX > 0f && abs(pan.x) > 0.5f) {
                                     scrollOffsetX = (scrollOffsetX - pan.x).coerceIn(0f, maxScrollX)
                                 }
@@ -225,9 +226,9 @@ fun TerminalView(
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵
+                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵 (最低支持 6 SP)
                     if (isPinching) {
-                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(8f, 26f)
+                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(6f, 26f)
                         gestureZoom = 1f
                         localFontSizeSp = finalSize
                         ThemeManager.setTerminalFontSize(finalSize)

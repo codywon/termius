@@ -150,7 +150,7 @@ object ThemeManager {
     }
 
     fun setTerminalFontSize(sizeSp: Float) {
-        val coerced = (Math.round(sizeSp * 2f) / 2f).coerceIn(9f, 26f) // 0.5 步进平滑吸附
+        val coerced = (Math.round(sizeSp * 2f) / 2f).coerceIn(6f, 26f) // 0.5 步进平滑吸附，最低支持 6 SP 超紧凑海量信息显示
         terminalFontSizeSp = coerced
         prefs?.edit()?.putFloat(KEY_FONT_SIZE, coerced)?.apply()
     }

@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-3DDC84.svg?style=flat-square&logo=android)](https://developer.android.com)
 [![Language](https://img.shields.io/badge/Language-Kotlin%202.0-7F52FF.svg?style=flat-square&logo=kotlin)](https://kotlinlang.org)
 [![Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?style=flat-square&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
-[![Release](https://img.shields.io/badge/Release-v2.0.1-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.2-success.svg?style=flat-square)](https://github.com/codywon/termius/releases)
 [![License](https://img.shields.io/badge/License-Non--Commercial%20Personal%20Use-blue.svg?style=flat-square)](./LICENSE)
 
 TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器、SSH/SFTP 客户端与掌上自主 SRE 运维智能体。基于 Kotlin 与 Jetpack Compose 纯原生技术栈构建，专注于在移动触控屏幕上提供稳定、低延迟、深度环境感知与高安全护栏的远程服务器管理体验。
@@ -23,7 +23,7 @@ TermX Mobile 是专为 Android 移动平台打造的高性能终端仿真器、S
 
 ### 💻 终端仿真 (Terminal Engine)
 - **硬件加速渲染**：基于 Canvas 原生绘制管线与 Run-Length 样式批处理算法，低功耗维持 60~120 FPS 满帧流式吞吐。
-- **宽屏漫游与自动折行**：支持标准的 140 列等宽显示与触控水平平滑漫游，完美适应 `docker ps`、`kubectl`、`htop` 等宽表输出；内置标准 VT100 Pending Wrap 延迟折行状态机。
+- **ConnectBot 黄金视口自适应与超小字号高密排版**：终端列数 100% 紧贴屏幕物理宽度自适应排版，告别向右滑动烦恼；支持 6~26 SP 超微型字号与双指捏合无感缩放，一屏尽览海量信息；内置标准 VT100 Pending Wrap 延迟折行状态机。
 - **无损矩阵手势缩放**：双指捏合缩放字号全程通过 GPU 图层变换预览，手势释放时执行单次视口重排，杜绝频繁回流与闪烁。
 - **原生触控导航交互**：支持系统全局返回手势平滑退回主页，后台 PTY 会话透明保活，避免误触丢失会话。
 
@@ -69,7 +69,7 @@ TermX Mobile
 
 ### 安装包下载
 前往项目的 [Releases](https://github.com/codywon/termius/releases) 页面，下载最新发布的正式安装包：
-- `TermX-Mobile-v2.0.1-release.apk`
+- `TermX-Mobile-v2.0.2-release.apk`
 
 ### 从源码构建
 

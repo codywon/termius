@@ -155,13 +155,18 @@ fun SettingsScreen() {
                 DividerLine()
 
                 // 终端字号
+                val fontSizeText = remember(ThemeManager.terminalFontSizeSp) {
+                    val s = ThemeManager.terminalFontSizeSp
+                    if (s % 1f == 0f) "${s.toInt()} SP" else "$s SP"
+                }
                 SettingsItem(
                     title = Strings.terminalFontSizeTitle,
-                    subtitle = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
+                    subtitle = "$fontSizeText (支持 6~26 SP 自适应全屏显示)",
                     trailingContent = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             FilledTonalIconButton(
                                 onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp - 1f) },
+                                enabled = ThemeManager.terminalFontSizeSp > 6f,
                                 modifier = Modifier.size(28.dp),
                                 colors = IconButtonDefaults.filledTonalIconButtonColors(
                                     containerColor = theme.surfaceContainerHigh,
@@ -172,7 +177,7 @@ fun SettingsScreen() {
                             }
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "${ThemeManager.terminalFontSizeSp.toInt()} SP",
+                                text = fontSizeText,
                                 fontSize = 12.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
@@ -181,6 +186,7 @@ fun SettingsScreen() {
                             Spacer(modifier = Modifier.width(8.dp))
                             FilledTonalIconButton(
                                 onClick = { ThemeManager.setTerminalFontSize(ThemeManager.terminalFontSizeSp + 1f) },
+                                enabled = ThemeManager.terminalFontSizeSp < 26f,
                                 modifier = Modifier.size(28.dp),
                                 colors = IconButtonDefaults.filledTonalIconButtonColors(
                                     containerColor = theme.surfaceContainerHigh,
