@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.termius.clone.ai.AgentExecutionManager
 import com.termius.clone.ai.TermXAgentClient
 import com.termius.clone.ai.TermXAgentToolRegistry
 import com.termius.clone.data.local.AiConfigManager
@@ -94,16 +95,22 @@ fun AiChatScreen(
     var sessionToDelete by remember { mutableStateOf<AiChatSession?>(null) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
-    // 生成与流式状态
-    var isGenerating by remember { mutableStateOf(false) }
-    var currentChunkText by remember { mutableStateOf("") }
-    var currentReasoningText by remember { mutableStateOf("") }
-    var currentActionText by remember { mutableStateOf("") }
-    var activeJob by remember { mutableStateOf<Job?>(null) }
+    // 全局单例后台 Agent 执行状态 (与 UI 生命周期完全解耦，切出应用/息屏均持续运行)
+    val executionState by AgentExecutionManager.state.collectAsState()
+    val isCurrentSessionActive = (executionState.sessionId == currentSessionId)
+    val isGenerating = executionState.isGenerating && isCurrentSessionActive
+    val currentChunkText = if (isCurrentSessionActive) executionState.currentChunkText else ""
+    val currentReasoningText = if (isCurrentSessionActive) executionState.currentReasoningText else ""
+    val currentActionText = if (isCurrentSessionActive) executionState.currentActionText else ""
+    val pendingApprovalRequest = if (isCurrentSessionActive) executionState.pendingApprovalRequest else null
 
-    // 人工审批闸口状态
-    var pendingApprovalRequest by remember { mutableStateOf<DangerousActionRequest?>(null) }
-    var pendingApprovalDeferred by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
+    // 当后台执行完成时自动从数据库重载当前会话消息
+    LaunchedEffect(executionState.isGenerating) {
+        if (!executionState.isGenerating && executionState.sessionId == currentSessionId) {
+            messages = configManager.loadMessages(currentSessionId)
+            sessions = configManager.loadSessions()
+        }
+    }
 
     // 附件状态 (支持上传 log, txt, conf, json 等)
     var attachedFile by remember { mutableStateOf<AttachedFileInfo?>(null) }
@@ -127,29 +134,6 @@ fun AiChatScreen(
         }
     }
 
-    // 初始化 ToolRegistry 与 AgentClient
-    val toolRegistry = remember {
-        TermXAgentToolRegistry(
-            context = context,
-            db = db,
-            approvalRequester = { request ->
-                val deferred = CompletableDeferred<Boolean>()
-                pendingApprovalRequest = request
-                pendingApprovalDeferred = deferred
-                try {
-                    deferred.await()
-                } finally {
-                    pendingApprovalRequest = null
-                    pendingApprovalDeferred = null
-                }
-            }
-        )
-    }
-
-    val agentClient = remember(toolRegistry) {
-        TermXAgentClient(toolRegistry)
-    }
-
     // 活跃会话与当前主机
     val activeSession = SessionManager.currentSession
     val targetHostTitle = activeSession?.host?.let { "${it.username}@${it.label}" } ?: "自动感知主机"
@@ -160,10 +144,6 @@ fun AiChatScreen(
         currentSessionId = targetId
         configManager.setCurrentSessionId(targetId)
         messages = configManager.loadMessages(targetId)
-        isGenerating = false
-        currentChunkText = ""
-        currentReasoningText = ""
-        currentActionText = ""
     }
 
     // 新建会话
@@ -173,12 +153,34 @@ fun AiChatScreen(
         switchSession(created.id)
     }
 
-    // 自动滚到底部
-    LaunchedEffect(messages.size, currentChunkText.length, currentActionText, pendingApprovalRequest) {
-        if (messages.isNotEmpty() || isGenerating || pendingApprovalRequest != null) {
-            val totalCount = messages.size + (if (isGenerating) 1 else 0) + (if (pendingApprovalRequest != null) 1 else 0)
-            if (totalCount > 0) {
-                listState.animateScrollToItem(totalCount - 1)
+    // 监测是否处于列表最底部附近 (容差 2 个 items，避免打扰用户手动上翻查阅历史)
+    val isAtBottom by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val total = layoutInfo.totalItemsCount
+            if (total <= 1) true
+            else {
+                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisible >= total - 2
+            }
+        }
+    }
+
+    // 1. 流式输出进行时：若用户在底部，瞬时跟随贴底推进 (使用超大 scrollOffset 确保绝对最底端完全可见，不截断)
+    LaunchedEffect(currentChunkText.length, currentActionText, isGenerating) {
+        val total = listState.layoutInfo.totalItemsCount
+        if (total > 0 && isAtBottom && isGenerating) {
+            listState.scrollToItem(total - 1, scrollOffset = 100000)
+        }
+    }
+
+    // 2. 发送消息或生成完成瞬间：预留微弱排版测量延迟后，顺滑动画平移到最底端 (彻底解决用户必须手动下滑的痛点)
+    LaunchedEffect(messages.size, isGenerating) {
+        if (messages.isNotEmpty()) {
+            kotlinx.coroutines.delay(100L)
+            val total = listState.layoutInfo.totalItemsCount
+            if (total > 0) {
+                listState.animateScrollToItem(total - 1, scrollOffset = 100000)
             }
         }
     }
@@ -205,56 +207,18 @@ fun AiChatScreen(
             configManager.saveMessages(currentSessionId, updatedList)
             sessions = configManager.loadSessions() // 刷新标题
 
-            isGenerating = true
-            currentChunkText = ""
-            currentReasoningText = ""
-            currentActionText = ""
-
-            activeJob = scope.launch {
-                agentClient.chatStream(
-                    config = aiConfig,
-                    conversationHistory = updatedList,
-                    onChunk = { delta, isThinking ->
-                        if (isThinking) {
-                            currentReasoningText += delta
-                        } else {
-                            currentChunkText += delta
-                        }
-                    },
-                    onToolAction = { action ->
-                        currentActionText = action
-                    },
-                    onError = { err ->
-                        val errMsg = AiChatMessage(
-                            role = "assistant",
-                            content = "❌ $err",
-                            isError = true
-                        )
-                        val afterError = messages + errMsg
-                        messages = afterError
-                        configManager.saveMessages(currentSessionId, afterError)
-                        isGenerating = false
-                        currentChunkText = ""
-                        currentReasoningText = ""
-                        currentActionText = ""
-                    },
-                    onComplete = { full, reasoning ->
-                        val assistantMsg = AiChatMessage(
-                            role = "assistant",
-                            content = full,
-                            reasoningContent = reasoning
-                        )
-                        val afterDone = messages + assistantMsg
-                        messages = afterDone
-                        configManager.saveMessages(currentSessionId, afterDone)
+            // 委托给 AgentExecutionManager 全局后台守护执行 (脱离 UI 生命周期，长任务切后台绝不中断)
+            AgentExecutionManager.executePrompt(
+                context = context,
+                sessionId = currentSessionId,
+                updatedMessages = updatedList,
+                onSessionUpdated = {
+                    if (currentSessionId == executionState.sessionId) {
+                        messages = configManager.loadMessages(currentSessionId)
                         sessions = configManager.loadSessions()
-                        isGenerating = false
-                        currentChunkText = ""
-                        currentReasoningText = ""
-                        currentActionText = ""
                     }
-                )
-            }
+                }
+            )
         }
     }
 
@@ -682,14 +646,58 @@ fun AiChatScreen(
                         item {
                             DangerousActionApprovalCard(
                                 request = req,
-                                onApprove = { pendingApprovalDeferred?.complete(true) },
-                                onReject = { pendingApprovalDeferred?.complete(false) }
+                                onApprove = { AgentExecutionManager.approveDangerousAction(true) },
+                                onReject = { AgentExecutionManager.approveDangerousAction(false) }
                             )
                         }
                     }
 
                     item {
                         Spacer(modifier = Modifier.height(6.dp))
+                    }
+                }
+
+                // 悬浮「↓ 回到底部」小胶囊 (当用户向上翻看历史离开底部时显现)
+                AnimatedVisibility(
+                    visible = !isAtBottom && messages.isNotEmpty(),
+                    enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                    exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            scope.launch {
+                                val total = listState.layoutInfo.totalItemsCount
+                                if (total > 0) {
+                                    listState.animateScrollToItem(total - 1, scrollOffset = 100000)
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = theme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f)),
+                        shadowElevation = 6.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDownward,
+                                contentDescription = "回到底部",
+                                tint = theme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "回到底部",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = theme.textPrimary
+                            )
+                        }
                     }
                 }
             }
@@ -875,7 +883,7 @@ fun AiChatScreen(
                                 .clip(CircleShape)
                                 .background(Color(0xFFDC2626))
                                 .clickable {
-                                    activeJob?.cancel()
+                                    AgentExecutionManager.stopExecution()
                                     val interruptedText = currentChunkText.trim()
                                     val savedContent = if (interruptedText.isNotBlank()) {
                                         "$interruptedText\n\n*(本次生成已由用户手动停止)*"
@@ -890,10 +898,7 @@ fun AiChatScreen(
                                     val updated = messages + assistantMsg
                                     messages = updated
                                     configManager.saveMessages(currentSessionId, updated)
-                                    isGenerating = false
-                                    currentChunkText = ""
-                                    currentReasoningText = ""
-                                    currentActionText = ""
+                                    sessions = configManager.loadSessions()
                                 },
                             contentAlignment = Alignment.Center
                         ) {
