@@ -88,15 +88,7 @@ object ContextCompactor {
         val thresholdLimit = (window * config.compactionThreshold).toInt()
 
         if (estimatedHistoryTokens < thresholdLimit) {
-            for (msg in historyList) {
-                if (msg.role == "system") continue
-                messagesJson.put(
-                    JSONObject().apply {
-                        put("role", msg.role)
-                        put("content", msg.content)
-                    }
-                )
-            }
+            appendNormalizedMessages(messagesJson, historyList)
             return messagesJson
         }
 
@@ -134,17 +126,50 @@ object ContextCompactor {
             )
         }
 
-        for (msg in recentHistory) {
-            if (msg.role == "system") continue
+        appendNormalizedMessages(messagesJson, recentHistory)
+        return messagesJson
+    }
+
+    /**
+     * 规范化并填充历史消息：
+     * 1. 过滤空内容；
+     * 2. 角色交替守卫 (Role Alternation Guard)：若存在连续两个相同的角色 (如用户在中断后连发两条 user 消息)，
+     *    自动安全合并为一条复合指令，彻底杜绝大模型 API 出现格式校验报错或空回复。
+     */
+    private fun appendNormalizedMessages(messagesJson: JSONArray, list: List<AiChatMessage>) {
+        val nonSystemList = list.filter { it.role != "system" && (it.content.isNotBlank() || it.reasoningContent.isNotBlank()) }
+        if (nonSystemList.isEmpty()) return
+
+        var lastRole: String? = null
+        var lastContent = StringBuilder()
+
+        for (msg in nonSystemList) {
+            val curContent = if (msg.content.isNotBlank()) msg.content.trim() else msg.reasoningContent.trim()
+            if (msg.role == lastRole) {
+                // 连续相同角色，合并换行
+                lastContent.append("\n\n[用户补充指令/上下文]:\n").append(curContent)
+            } else {
+                if (lastRole != null && lastContent.isNotBlank()) {
+                    messagesJson.put(
+                        JSONObject().apply {
+                            put("role", lastRole)
+                            put("content", lastContent.toString())
+                        }
+                    )
+                }
+                lastRole = msg.role
+                lastContent = StringBuilder(curContent)
+            }
+        }
+
+        if (lastRole != null && lastContent.isNotBlank()) {
             messagesJson.put(
                 JSONObject().apply {
-                    put("role", msg.role)
-                    put("content", msg.content)
+                    put("role", lastRole)
+                    put("content", lastContent.toString())
                 }
             )
         }
-
-        return messagesJson
     }
 
     fun compactActiveMessages(messages: JSONArray, config: AiAgentConfig): JSONArray {

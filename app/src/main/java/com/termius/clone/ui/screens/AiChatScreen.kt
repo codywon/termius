@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -665,7 +666,9 @@ fun AiChatScreen(
                                             modifier = Modifier.weight(1f, fill = false)
                                         ) {
                                             Box(modifier = Modifier.padding(14.dp)) {
-                                                MarkdownRenderer(content = currentChunkText, isUser = false)
+                                                SelectionContainer {
+                                                    MarkdownRenderer(content = currentChunkText, isUser = false)
+                                                }
                                             }
                                         }
                                     }
@@ -865,7 +868,7 @@ fun AiChatScreen(
                             )
                         }
                     } else if (isGenerating) {
-                        // 停止响应按钮 (紧凑沉稳)
+                        // 停止响应按钮 (优雅保留已生成内容，防止历史断裂)
                         Box(
                             modifier = Modifier
                                 .size(32.dp)
@@ -873,8 +876,23 @@ fun AiChatScreen(
                                 .background(Color(0xFFDC2626))
                                 .clickable {
                                     activeJob?.cancel()
+                                    val interruptedText = currentChunkText.trim()
+                                    val savedContent = if (interruptedText.isNotBlank()) {
+                                        "$interruptedText\n\n*(本次生成已由用户手动停止)*"
+                                    } else {
+                                        "*(本次操作已由用户手动停止)*"
+                                    }
+                                    val assistantMsg = AiChatMessage(
+                                        role = "assistant",
+                                        content = savedContent,
+                                        reasoningContent = currentReasoningText
+                                    )
+                                    val updated = messages + assistantMsg
+                                    messages = updated
+                                    configManager.saveMessages(currentSessionId, updated)
                                     isGenerating = false
                                     currentChunkText = ""
+                                    currentReasoningText = ""
                                     currentActionText = ""
                                 },
                             contentAlignment = Alignment.Center
@@ -1084,15 +1102,17 @@ private fun AiChatMessageItem(
                 shadowElevation = 0.5.dp
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    if (isUser) {
-                        Text(
-                            text = message.content,
-                            color = Color.White,
-                            fontSize = 13.5.sp,
-                            lineHeight = 19.sp
-                        )
-                    } else {
-                        MarkdownRenderer(content = message.content, isUser = false)
+                    SelectionContainer {
+                        if (isUser) {
+                            Text(
+                                text = message.content,
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                lineHeight = 19.sp
+                            )
+                        } else {
+                            MarkdownRenderer(content = message.content, isUser = false)
+                        }
                     }
 
                     // AI 回复底部复制栏
