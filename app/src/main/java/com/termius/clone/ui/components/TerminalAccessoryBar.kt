@@ -10,6 +10,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -36,6 +44,7 @@ import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -215,7 +224,7 @@ fun TerminalAccessoryBar(
                 ) {
                     AccessoryButton(label = "ESC", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.ESC) })
                     AccessoryButton(label = "TAB", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.TAB) })
-                    AccessoryButton(label = "⌫", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
+                    AccessoryButton(label = "⌫", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, autoRepeat = true, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
                     AccessoryButton(
                         label = "CTRL",
                         height = 26.dp,
@@ -399,7 +408,7 @@ fun TerminalAccessoryBar(
                 ) {
                     AccessoryButton(label = "ESC", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey(TerminalKeyCodes.ESC) })
                     AccessoryButton(label = "TAB", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey(TerminalKeyCodes.TAB) })
-                    AccessoryButton(label = "⌫", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
+                    AccessoryButton(label = "⌫", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
                     AccessoryButton(
                         label = "CTRL",
                         height = accessoryBtnHeight,
@@ -669,7 +678,7 @@ fun TerminalAccessoryBar(
                             modifier = Modifier.weight(1.1f)
                         ) { onToggleAlt() }
                         AccessoryButton("INS", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.INSERT) }
-                        AccessoryButton("DEL", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.DELETE) }
+                        AccessoryButton("DEL", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.DELETE) }
                     }
 
                     // 第 3 行：翻页与跳转
@@ -681,7 +690,7 @@ fun TerminalAccessoryBar(
                         AccessoryButton("END", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.END) }
                         AccessoryButton("PGUP", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_UP) }
                         AccessoryButton("PGDN", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_DOWN) }
-                        AccessoryButton("⌫ 退格", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, modifier = Modifier.weight(1.3f)) { onSendKey(TerminalKeyCodes.BACKSPACE) }
+                        AccessoryButton("⌫ 退格", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1.3f)) { onSendKey(TerminalKeyCodes.BACKSPACE) }
                         AccessoryButton(
                             "ENTER",
                             height = accessoryBtnHeight,
@@ -1322,7 +1331,7 @@ private fun CommandEditDialog(
 }
 
 /**
- * 经典辅助文字按键 (支持横竖屏自适应高度与字号)
+ * 经典辅助文字按键 (支持横竖屏自适应高度与字号，支持长按自动连发)
  */
 @Composable
 private fun AccessoryButton(
@@ -1334,26 +1343,53 @@ private fun AccessoryButton(
     bgColor: Color? = null,
     height: Dp = 34.dp,
     fontSize: TextUnit = 11.sp,
+    autoRepeat: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val theme = LocalAppTheme.current
+    val haptic = LocalHapticFeedback.current
+    var isPressed by remember { mutableStateOf(false) }
+
     val resolvedActiveBg = activeBg ?: theme.primary.copy(alpha = 0.2f)
     val resolvedActiveBorder = activeBorder ?: theme.primary
     val resolvedTextColor = textColor ?: theme.textPrimary
     val resolvedBgColor = bgColor ?: theme.surfaceContainerHigh
 
+    val clickModifier = if (autoRepeat) {
+        Modifier.repeatingClickable(
+            haptic = haptic,
+            onPressedChange = { isPressed = it },
+            onClick = onClick
+        )
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
+
+    val displayBg = when {
+        isPressed -> theme.primary.copy(alpha = 0.35f)
+        isActive -> resolvedActiveBg
+        else -> resolvedBgColor
+    }
+    val displayBorder = when {
+        isPressed -> theme.primary
+        isActive -> resolvedActiveBorder
+        else -> theme.outline.copy(alpha = 0.35f)
+    }
+    val displayTextColor = when {
+        isPressed -> theme.primary
+        isActive -> theme.primary
+        else -> resolvedTextColor
+    }
+
     Surface(
         modifier = modifier
             .height(height)
             .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick),
+            .then(clickModifier),
         shape = RoundedCornerShape(6.dp),
-        color = if (isActive) resolvedActiveBg else resolvedBgColor,
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (isActive) resolvedActiveBorder else theme.outline.copy(alpha = 0.35f)
-        )
+        color = displayBg,
+        border = androidx.compose.foundation.BorderStroke(1.dp, displayBorder)
     ) {
         Box(
             modifier = Modifier.padding(horizontal = if (height < 30.dp) 6.dp else 9.dp),
@@ -1363,7 +1399,7 @@ private fun AccessoryButton(
                 text = label,
                 fontSize = fontSize,
                 fontWeight = FontWeight.SemiBold,
-                color = if (isActive) theme.primary else resolvedTextColor,
+                color = displayTextColor,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 softWrap = false
@@ -1373,34 +1409,123 @@ private fun AccessoryButton(
 }
 
 /**
- * 经典辅助图标按键 (方向键等，支持横竖屏紧凑尺寸)
+ * 经典辅助图标按键 (方向键等，支持横竖屏紧凑尺寸，默认支持长按自动连发)
  */
 @Composable
 private fun AccessoryIconButton(
     icon: ImageVector,
     size: Dp = 34.dp,
+    autoRepeat: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val theme = LocalAppTheme.current
+    val haptic = LocalHapticFeedback.current
     val iconSize = if (size < 30.dp) 15.dp else 18.dp
+    var isPressed by remember { mutableStateOf(false) }
+
+    val clickModifier = if (autoRepeat) {
+        Modifier.repeatingClickable(
+            haptic = haptic,
+            onPressedChange = { isPressed = it },
+            onClick = onClick
+        )
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
+
+    val currentBg = if (isPressed) theme.primary.copy(alpha = 0.35f) else theme.surfaceContainerHigh
 
     Surface(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick),
+            .then(clickModifier),
         shape = RoundedCornerShape(6.dp),
-        color = theme.surfaceContainerHigh,
-        border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
+        color = currentBg,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isPressed) theme.primary else theme.outline.copy(alpha = 0.35f))
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = theme.textPrimary,
+                tint = if (isPressed) theme.primary else theme.textPrimary,
                 modifier = Modifier.size(iconSize)
             )
         }
     }
 }
+
+/**
+ * 长按按键自动高频连发 (Auto-Repeat) 修饰符
+ * - 单击（抬手前无长按、无拖移）：灵敏触发一次单击，触感反馈
+ * - 长按（持续按住 350ms）：进入连发循环，每 65ms 触发一次并伴随清脆刻度触感反馈
+ * - 拖动规避：移动距离超过系统 touchSlop 或父级滚动抢占时自动取消，绝不阻断列表横向滑动
+ */
+private fun Modifier.repeatingClickable(
+    enabled: Boolean = true,
+    initialDelayMillis: Long = 350L,
+    repeatIntervalMillis: Long = 65L,
+    haptic: HapticFeedback? = null,
+    onPressedChange: ((Boolean) -> Unit)? = null,
+    onClick: () -> Unit
+): Modifier = if (enabled) {
+    this.pointerInput(onClick) {
+        coroutineScope {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val downId = down.id
+                val downPos = down.position
+                onPressedChange?.invoke(true)
+
+                var isRepeating = false
+                var cancelled = false
+
+                val timerJob = launch {
+                    delay(initialDelayMillis)
+                    isRepeating = true
+                    haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                    while (isActive) {
+                        delay(repeatIntervalMillis)
+                        haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onClick()
+                    }
+                }
+
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == downId } ?: break
+
+                        if (change.isConsumed) {
+                            cancelled = true
+                            break
+                        }
+
+                        val distance = kotlin.math.hypot(
+                            change.position.x - downPos.x,
+                            change.position.y - downPos.y
+                        )
+                        if (distance > viewConfiguration.touchSlop) {
+                            cancelled = true
+                            break
+                        }
+
+                        if (!change.pressed) {
+                            change.consume()
+                            if (!isRepeating && !cancelled) {
+                                haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onClick()
+                            }
+                            break
+                        }
+                    }
+                } finally {
+                    timerJob.cancel()
+                    onPressedChange?.invoke(false)
+                }
+            }
+        }
+    }
+} else this
