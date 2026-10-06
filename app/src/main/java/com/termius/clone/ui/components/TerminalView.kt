@@ -122,15 +122,15 @@ fun TerminalView(
     }
     val baselineOffset = remember(textPaint) { -textPaint.fontMetrics.ascent }
 
-    // 行业经典标准 (参考 ConnectBot 视口自适应黄金规范)：
-    // 虚拟终端列数严格根据当前 App 视口物理宽度自适应计算 (fittedCols)，
-    // 远程 Linux 工具 (如 ls, bash, vim, htop) 会精准按当前屏幕宽度排版并自然换行，
-    // 彻底告别每次看输出都需要手动向右滑动的糟糕体验！
+    // 行业经典标准 (参考 ConnectBot 视口自适应黄金规范与安全下限保护)：
+    // 虚拟终端列数根据视口物理宽度自适应计算，同时设定 36 列硬安全下限 (coerceIn(36, 240))。
+    // 当字号放大时，绝不因屏幕过窄强行压缩至 15~24 列并切碎文本，超出的部分无缝激活平移画布；
+    // 正常字号下依然 100% 铺满自适应，告别向右滑动！
     LaunchedEffect(viewSize, charWidth, charHeight) {
         delay(120) // 120ms 防抖，键盘弹起或旋转屏幕时秒级自适应
         try {
             if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
-                val fittedCols = (viewSize.width / charWidth).toInt().coerceAtLeast(15)
+                val fittedCols = (viewSize.width / charWidth).toInt().coerceIn(36, 240)
                 val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
                 session.resize(fittedCols, rows, viewSize.width, viewSize.height)
                 scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
@@ -226,9 +226,9 @@ fun TerminalView(
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵 (最低支持 6 SP)
+                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵 (科学终端字号 7~20 SP)
                     if (isPinching) {
-                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(6f, 26f)
+                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(7f, 20f)
                         gestureZoom = 1f
                         localFontSizeSp = finalSize
                         ThemeManager.setTerminalFontSize(finalSize)
