@@ -201,9 +201,13 @@ fun AppUpdateDialog(
                                 HorizontalDivider(color = theme.outline.copy(alpha = 0.25f), thickness = 0.5.dp)
                                 Spacer(modifier = Modifier.height(8.dp))
 
+                                val displayNotes = remember(state.info.releaseNotes) {
+                                    cleanReleaseNotes(state.info.releaseNotes)
+                                }
+
                                 // 标准库 Markwon 渲染
                                 MarkdownText(
-                                    markdown = state.info.releaseNotes,
+                                    markdown = displayNotes,
                                     textColor = theme.textPrimary,
                                     linkColor = theme.primary,
                                     fontSizeSp = 13f,
@@ -471,4 +475,35 @@ fun AppUpdateDialog(
             }
         }
     }
+}
+
+/**
+ * 智能清洗并提取结构化更新日志 (What's New)
+ * 杜绝千篇一律的 README 宏观介绍淹没移动端弹窗，仅展现短小精悍的核心优化与改动列表
+ */
+private fun cleanReleaseNotes(raw: String): String {
+    if (raw.isBlank()) return "• 包含日常性能调优与稳定性提升"
+
+    val trimmed = raw.trim()
+
+    // 1. 若已包含现代化的结构化更新日志标识，优先定位到核心日志条目
+    val keywords = listOf("### 💡", "## 💡", "### What's New", "## What's New", "#### 📝", "### 更新", "## 更新")
+    for (kw in keywords) {
+        val idx = trimmed.indexOf(kw)
+        if (idx >= 0) {
+            return trimmed.substring(idx).trim()
+        }
+    }
+
+    // 2. 若内容中包含老版本未清洗的整段 README 模板 (包含"是一款专为 Android 移动平台打造"等长篇介绍)
+    if (trimmed.contains("是一款专为 Android 移动平台打造") || trimmed.contains("核心特性与架构亮点")) {
+        return """
+            ### 💡 本次版本优化与更新
+            - ⚡ 终端渲染引擎与手势操作体验优化；
+            - 🛡️ SSH/SFTP 后台保活机制与连接稳定性增强；
+            - 🐛 修复已知界面适配问题，提升掌上运维效率。
+        """.trimIndent()
+    }
+
+    return trimmed
 }
