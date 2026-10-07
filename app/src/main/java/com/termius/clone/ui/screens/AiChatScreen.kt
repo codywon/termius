@@ -23,7 +23,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -1109,16 +1111,30 @@ private fun AiChatMessageItem(
                 shadowElevation = 0.5.dp
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    SelectionContainer {
-                        if (isUser) {
-                            Text(
-                                text = message.content,
-                                color = Color.White,
-                                fontSize = 13.5.sp,
-                                lineHeight = 19.sp
-                            )
-                        } else {
-                            MarkdownRenderer(content = message.content, isUser = false)
+                    val customSelectionColors = if (isUser) {
+                        TextSelectionColors(
+                            handleColor = Color.White,
+                            backgroundColor = Color(0xFF022C0E).copy(alpha = 0.55f)
+                        )
+                    } else {
+                        TextSelectionColors(
+                            handleColor = theme.primary,
+                            backgroundColor = theme.primary.copy(alpha = 0.35f)
+                        )
+                    }
+
+                    CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
+                        SelectionContainer {
+                            if (isUser) {
+                                Text(
+                                    text = message.content,
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 19.sp
+                                )
+                            } else {
+                                MarkdownRenderer(content = message.content, isUser = false)
+                            }
                         }
                     }
 
