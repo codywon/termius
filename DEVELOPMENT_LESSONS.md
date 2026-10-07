@@ -33,6 +33,12 @@
   - [3. Jetpack Compose 列表高频重绘与 SimpleDateFormat GC 压力收敛](#3-jetpack-compose-列表高频重绘与-simpledateformat-gc-压力收敛)
   - [4. 全屏阻塞黑屏向非侵入式后台进度反馈演进](#4-全屏阻塞黑屏向非侵入式后台进度反馈演进)
   - [5. SFTP 单通道并发竞态死穴 (Software caused connection abort) 与网络自愈重连架构](#5-sftp-单通道并发竞态死穴-software-caused-connection-abort-与网络自愈重连架构)
+- [六、 移动端自动化 SRE 运维智能体架构 (AI Ops Agent & Pi-Engine)](#六-移动端自动化-sre-运维智能体架构-ai-ops-agent--pi-engine)
+  - [1. 假冒兜底文本制造推诿假象 (False Fallback Illusion) 与真实异常暴露](#1-假冒兜底文本制造推诿假象-false-fallback-illusion-与真实异常暴露)
+  - [2. 强依赖原生 tools 参数引发的模型休克与 Pi-Agent 免 tools 自适应降级自愈](#2-强依赖原生-tools-参数引发的模型休克与-pi-agent-免-tools-自适应降级自愈)
+  - [3. 流式 Content Block Array 解析盲区与多格式递归解包](#3-流式-content-block-array-解析盲区与多格式递归解包)
+  - [4. Pi-Agent 双轨工具派发引擎 (原生 Function Calling 与文本 ReAct 兼容)](#4-pi-agent-双轨工具派发引擎-原生-function-calling-与文本-react-兼容)
+  - [5. 软件与服务升级自主执行铁律 (Software Upgrade Paradigm)](#5-软件与服务升级自主执行铁律-software-upgrade-paradigm)
 
 ---
 
@@ -358,6 +364,118 @@ SFTP 包含上百个文件时，在手机上上下滑动列表发生轻微掉帧
 
 ---
 
-> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
+## 六、 移动端自动化 SRE 运维智能体架构 (AI Ops Agent & Pi-Engine)
+
+### 1. 假冒兜底文本制造推诿假象 (False Fallback Illusion) 与真实异常暴露
+
+#### ⚠️ 踩坑现象
+用户下发真实运维或应用升级需求（如“帮我升级cliproxyapi到最新版”），Agent 未执行任何 SSH 指令，反而回复死板的固定模板：“已接收到您的运维需求。若需要对主机进行状态诊断，建议直接点击下方「🔍 系统全面体检」...”。用户强烈误解为 Agent 在偷懒或敷衍。
+
+#### 🔍 根因剖析
+旧版代码在流式或工具解析失败（空响应）时，未向用户反馈真实网络或 API 异常，而是执行了硬编码兜底字符串：
+```kotlin
+if (rawAnswer.isEmpty() && fullAccumulatedReasoning.isBlank()) {
+    safeAnswer = "已接收到您的运维需求。若需要对主机进行状态诊断，建议直接点击下方「🔍 系统全面体检」..."
+}
+```
+这导致任何由中转网关、模型版本、Token 限流引起的底层通信异常被彻底掩盖为“机器人推诿不作为”。
+
+#### 💡 避坑准则与成熟方案
+彻底废除自作主张的假冒假话！真实暴露模型与通信状态：
+1. 遇到空返回时直接展示客观事实：“⚠️ 大模型服务本次未返回有效回答或工具调用（请检查 API 额度或模型支持）”；
+2. 结合自适应降级重试机制从根本上消除空返回。
+
+---
+
+### 2. 强依赖原生 tools 参数引发的模型休克与 Pi-Agent 免 tools 自适应降级自愈
+
+#### ⚠️ 踩坑现象
+同一个大模型在开源 Pi Agent (`pi-mono`) 中能完美调度工具执行运维，但在 TermX 中却彻底返回空白或报错。
+
+#### 🔍 根因剖析
+1. 并非所有大模型或第三方聚合代理都完美支持 OpenAI 的原生 Function Calling 规范；
+2. 当客户端在请求体中强行传入 `"tools": [...]` 和 `"tool_choice": "auto"` 时，不支持 tools 的模型或网关会出现流式管道阻塞、静默空响应甚至 HTTP 400 崩溃。
+
+#### 💡 避坑准则与成熟方案
+引入 **Pi-Agent 原生免 tools 降级自愈机制 (Adaptive No-Tools Fallback)**：
+1. 首轮以 `useNativeTools = true` 尝试原生调用；
+2. 若检测到模型返回彻底空白或明确拒绝 tools 参数，系统立即将 `useNativeTools` 设为 `false`，剥离请求体中的 `tools` 与 `tool_choice` 参数，在同一个 step 内自动以纯文本模式发起重试！
+3. 彻底打破第三方中转站与开源模型的兼容性壁垒。
+
+---
+
+### 3. 流式 Content Block Array 解析盲区与多格式递归解包
+
+#### ⚠️ 踩坑现象
+使用某些 API 网关（如 Claude/Gemini 兼容中转）时，大模型生成了文本但在界面上一个字都看不到，直接触发空响应。
+
+#### 🔍 根因剖析
+部分网关在流式输出时，`delta.content` 返回的是 Content Block 数组结构：`[{"type": "text", "text": "..."}]`。
+在 Android 原生 `JSONObject` 中，使用 `delta.optString("content")` 读取 `JSONArray` 时直接返回空字符串 `""`，导致流式打字机无法捕获文本。
+
+#### 💡 避坑准则与成熟方案
+构建 `extractContentText` 递归提取器，同时兼容 `String` 与 `JSONArray`：
+```kotlin
+private fun extractContentText(jsonObj: JSONObject, key: String): String {
+    if (jsonObj.isNull(key)) return ""
+    val raw = jsonObj.opt(key) ?: return ""
+    return when (raw) {
+        is String -> raw
+        is JSONArray -> {
+            val sb = StringBuilder()
+            for (i in 0 until raw.length()) {
+                val item = raw.optJSONObject(i)
+                if (item != null) {
+                    val text = item.optString("text", "")
+                    if (text.isNotEmpty()) sb.append(text)
+                } else {
+                    sb.append(raw.optString(i, ""))
+                }
+            }
+            sb.toString()
+        }
+        else -> raw.toString()
+    }
+}
+```
+
+---
+
+### 4. Pi-Agent 双轨工具派发引擎 (原生 Function Calling 与文本 ReAct 兼容)
+
+#### ⚠️ 踩坑现象
+纯文本模型（或推理模型如 DeepSeek-R1）无法输出结构化 `tool_calls` 字段，导致工具无法被触发。
+
+#### 💡 避坑准则与成熟方案
+建立 **双轨工具调度架构 (Hybrid Dual-Track Tool Dispatching)**：
+1. **轨 1 (标准 API)**：优先监听并提取 OpenAI 原生 `tool_calls`；
+2. **轨 2 (文本 ReAct 自动捕获)**：在 Prompt 中开放文本块工具协议：
+   ````markdown
+   ```tool:execute_shell_command
+   {"command": "docker ps -a"}
+   ```
+   或:
+   <tool_call>
+   {"name": "execute_shell_command", "arguments": {"command": "docker ps -a"}}
+   </tool_call>
+   ````
+3. 客户端在正文流式输出时增加正向拦截器（`extractTextualToolCalls`），一旦识别到代码块或标签，自动解析为 Action 并派发执行底层 SSH 命令，工具执行结果以 observation 形式透明回填会话上下文，真正做到全网所有模型 100% 具备工具调用能力！
+
+---
+
+### 5. 软件与服务升级自主执行铁律 (Software Upgrade Paradigm)
+
+#### ⚠️ 踩坑现象
+用户要求升级某专用应用（如 cliproxyapi / cpa manager plus），模型陷入防御性套话，反问用户具体命令。
+
+#### 💡 避坑准则与成熟方案
+在 System Prompt 中确立执行铁律，强制 Agent 形成自动行动闭环：
+1. **探测运行形态**：主动执行 `ps aux | grep -i <app>`、`docker ps -a | grep -i <app>`、`systemctl list-unit-files | grep -i <app>`、`which <app>`；
+2. **获取升级方案**：Docker 执行 `docker compose pull`，Git 源码执行 `git pull`，专有工具调用 `web_search` 搜索官方文档；
+3. **执行升级并验证状态**：完成升级后验证进程端口与版本输出，输出工整的 Markdown 对比报告。
+
+---
+
+> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、**Pi-Agent 双轨工具派发与自适应降级自愈架构**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
 
 
