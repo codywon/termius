@@ -9,6 +9,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -660,18 +662,19 @@ fun AiChatScreen(
                 }
             }
 
-            // 悬浮「↓ 回到底部」小胶囊 (当用户向上翻看历史离开底部时显现)
+            // 悬浮「↓ 回到底部」圆形按钮 (参考 OpenAI ChatGPT 风格：居中悬浮圆圈 + 向下箭头)
             androidx.compose.animation.AnimatedVisibility(
                 visible = !isAtBottom && messages.isNotEmpty(),
-                enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
-                exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                enter = fadeIn() + scaleIn(initialScale = 0.8f),
+                exit = fadeOut() + scaleOut(targetScale = 0.8f),
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 12.dp)
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp)
             ) {
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .size(38.dp)
+                        .clip(CircleShape)
                         .clickable {
                             scope.launch {
                                 val total = listState.layoutInfo.totalItemsCount
@@ -680,27 +683,20 @@ fun AiChatScreen(
                                 }
                             }
                         },
-                    shape = RoundedCornerShape(20.dp),
-                    color = theme.surfaceContainerHigh,
-                    border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f)),
-                    shadowElevation = 6.dp
+                    shape = CircleShape,
+                    color = theme.surfaceContainerHigh.copy(alpha = 0.95f),
+                    border = BorderStroke(1.dp, theme.outline.copy(alpha = 0.30f)),
+                    shadowElevation = 5.dp
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         Icon(
                             imageVector = Icons.Default.ArrowDownward,
                             contentDescription = "回到底部",
-                            tint = theme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "回到底部",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = theme.textPrimary
+                            tint = theme.textPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
