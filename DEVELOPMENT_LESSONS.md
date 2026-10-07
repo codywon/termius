@@ -474,8 +474,53 @@ private fun extractContentText(jsonObj: JSONObject, key: String): String {
 2. **获取升级方案**：Docker 执行 `docker compose pull`，Git 源码执行 `git pull`，专有工具调用 `web_search` 搜索官方文档；
 3. **执行升级并验证状态**：完成升级后验证进程端口与版本输出，输出工整的 Markdown 对比报告。
 
+### 6. 私有 CLI 代理网关 (如 CLIProxyAPI) 流式 Null 缺陷与三级自愈容错状态机
+
+#### ⚠️ 踩坑现象
+用户使用自建的开源反代网关（如 `router-for-me/CLIProxyAPI`）连接大模型，在终端助手输入排查或升级指令时，客户端恒定报错：“⚠️ 大模型服务本次未返回有效回答或工具调用”。即使客户端降级为免 tools 模式，依然报错。
+
+#### 🔍 根因剖析
+1. **反代网关的流式缓冲缺陷**：`CLIProxyAPI` 将本地 Claude Code、Codex、Gemini 等 CLI 工具包装为 OpenAI API 规范。在 `stream: true` 模式下，由于上游子进程管道输出缓冲未及时刷新或代理 SSE 转换逻辑缺陷，返回的 chunk 中恒定为 `delta: {"content": null}` 或连接过早截断（0 字节空响应）；
+2. **非流式模式的高度稳定性**：而在 `stream: false`（普通非流式单次 POST，`Accept: application/json`）模式下，该网关会等待子进程完全退出并汇总 stdout，100% 稳定返回标准 JSON！
+3. 若客户端降级重试时死守 `stream: true`，两次流式请求全被截断，最终导致空响应。
+
+#### 💡 避坑准则与成熟方案
+构建 **三级全自动自愈容错状态机 (Multi-Tier Resilient Engine)**：
+- **Tier 1 (原生流式)**：`stream = true, tools = true`（首选最优体验）；
+- **Tier 2 (纯文本流式)**：若报错拒绝 tools 或返回空响应，自适应降级为 `stream = true, tools = false`；
+- **Tier 3 (稳定非流式绝杀兜底)**：若流式通道仍无有效字节，**瞬间切入 `stream = false, tools = false`，请求头声明 `Accept: application/json`**，彻底终结 CLIProxyAPI 等所有 CLI 代理的流式 null 缺陷！
+- **会话持久化学习**：当前 Step 确定某一层成功后，会话级持久化记录该模式，后续 Step 直接继承，避免用户重复等待超时。
+
 ---
 
-> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、**Pi-Agent 双轨工具派发与自适应降级自愈架构**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
+### 7. 纯文本 ReAct 工具调用的 4 大主流语法协议全覆盖拦截
+
+#### ⚠️ 踩坑现象
+大模型在纯文本模式下回复时，有的输出 Markdown 代码块，有的输出 JSON，有的输出 XML 标签，有的输出 LangChain 经典语法，导致部分工具调用未能被客户端拦截，被直接当成普通文本展示，运维动作停滞。
+
+#### 💡 避坑准则与成熟方案
+在 `extractTextualToolCalls` 中构建四重正则表达式，实现全协议打通：
+1. **格式 1 (工具名代码块)**：````tool:execute_shell_command\n{...}```` 或 ````execute_shell_command\n{...}````；
+2. **格式 2 (通用 JSON 代码块)**：````json\n{"name": "...", "arguments": {...}}\n````（兼容 `tool`/`function`，兼容 `parameters`/`params`）；
+3. **格式 3 (XML 标签)**：`<tool_call>...</tool_call>` 或 `<tool>...</tool>` 或 `<action>...</action>`；
+4. **格式 4 (LangChain 经典 ReAct)**：
+   `Action: execute_shell_command`  
+   `Action Input: {"command": "ps aux"}` 或 `Action Input: ps aux`（若为裸命令字符串，客户端自动封装为规范参数 JSON）。
+
+---
+
+### 8. 降级重试状态机缓存回滚与原始响应透明诊断采样镜像 (Diagnostic Mirror)
+
+#### ⚠️ 踩坑现象
+1. 当 Step 发生自愈降级重试时，上一次尝试残留的残缺文字与思考链残留在 `StringBuilder` 中，造成正文脏数据污染；
+2. 当服务端发生未预期的空返回或代理网关抛出特定 HTML/错误码时，客户端提示千篇一律的通用套话，开发者与用户完全处于黑盒盲猜状态。
+
+#### 💡 避坑准则与成熟方案
+1. **严格游标回滚**：在 Step 初始记录 `stepStartContentLength` 与 `stepStartReasoningLength`，任何降级重试前强制 `fullAccumulatedContent.setLength(stepStartContentLength)` 回滚到初始位置；
+2. **透明诊断采样镜像 (Diagnostic Mirror)**：每次 HTTP 交互记录收到的原始报文前 240 字符。若经历三级自愈链路后依然为空，将服务端实际返回的原始数据采样（如 `0 字节空响应`、网关 HTML、特定代理错误）直接渲染在错误卡片中，并针对 `CLIProxyAPI` 提供上游 CLI 授权与超时的针对性排查指引，彻底消除黑盒盲猜。
+
+---
+
+> **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、**Pi-Agent 双轨工具派发与三级自愈容错架构**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
 
 
