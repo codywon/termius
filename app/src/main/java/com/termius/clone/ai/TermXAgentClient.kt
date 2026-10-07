@@ -101,6 +101,114 @@ class TermXAgentClient(
             1. 采用清晰工整的 Markdown 呈现排障或执行结果，包含：1. 执行总结；2. 关键指标或数据清单；3. 后续维护建议；
             2. 【表格换行强制要求】：输出表格时，表头行、分隔线 (|:---|:---|) 与每条数据行之间，必须使用独立的换行符 (\n) 分行书写，严禁将多行表格内容粘连在同一行！
         """.trimIndent()
+
+        val VALID_TOOL_NAMES = setOf(
+            "list_saved_hosts",
+            "select_target_host",
+            "detect_host_environment",
+            "execute_shell_command",
+            "read_active_terminal_screen",
+            "web_search"
+        )
+
+        /**
+         * 智能工具名称推断：
+         * 1. 优先从 function.name / tool.name 获取；
+         * 2. 当 name 为空时，从 id (如 execute_shell_command-1791345712310871728-67) 智能回溯识别！
+         */
+        fun resolveToolName(funcObj: JSONObject?, toolObj: JSONObject?, id: String = ""): String {
+            var name = when {
+                funcObj != null && !funcObj.isNull("name") -> funcObj.optString("name", "").trim()
+                toolObj != null && !toolObj.isNull("name") -> toolObj.optString("name", "").trim()
+                else -> ""
+            }
+            if (name.isNotEmpty() && name != "null") return name
+
+            // 从 id 智能回溯匹配 (兼容 Gemini / CLIProxyAPI 网关)
+            val cleanId = id.trim()
+            if (cleanId.isNotEmpty() && cleanId != "null") {
+                for (validTool in VALID_TOOL_NAMES) {
+                    if (cleanId.startsWith(validTool, ignoreCase = true) || cleanId.contains(validTool, ignoreCase = true)) {
+                        return validTool
+                    }
+                }
+                val match = Regex("^([a-zA-Z0-9_]+)[-_]").find(cleanId)
+                if (match != null) {
+                    val candidate = match.groupValues[1]
+                    if (candidate.isNotBlank() && candidate != "call") return candidate
+                }
+            }
+            return ""
+        }
+
+        /**
+         * 多态提取工具入参字符串：
+         * 兼容 arguments、args、parameters、input、params 等多种字段，
+         * 兼容 JSONObject、JSONArray、String 等多种数据类型。
+         */
+        fun extractToolArgumentsString(funcObj: JSONObject?, toolObj: JSONObject?): String {
+            val raw = funcObj?.opt("arguments")
+                ?: toolObj?.opt("arguments")
+                ?: funcObj?.opt("args")
+                ?: toolObj?.opt("args")
+                ?: funcObj?.opt("parameters")
+                ?: toolObj?.opt("parameters")
+                ?: funcObj?.opt("input")
+                ?: toolObj?.opt("input")
+                ?: funcObj?.opt("params")
+                ?: toolObj?.opt("params")
+                ?: return ""
+
+            return when (raw) {
+                is JSONObject -> raw.toString()
+                is JSONArray -> raw.toString()
+                is String -> {
+                    val trimmed = raw.trim()
+                    if (trimmed == "null") "" else raw
+                }
+                else -> raw.toString()
+            }
+        }
+
+        /**
+         * 将流式聚合的 toolCallMap 安全刷入 toolCallsDetected，自带智能 ID 回溯与去重
+         */
+        fun flushToolCallsFromMap(
+            toolCallMap: Map<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>,
+            toolCallsDetected: MutableList<JSONObject>
+        ) {
+            for ((_, triple) in toolCallMap) {
+                val id = triple.first.toString().trim()
+                var name = triple.second.toString().trim()
+                val args = triple.third.toString().trim()
+
+                if (name.isEmpty() && id.isNotEmpty()) {
+                    name = resolveToolName(null, null, id)
+                }
+
+                if (name.isNotEmpty()) {
+                    val finalId = if (id.isNotEmpty() && id != "null") id else "call_${System.currentTimeMillis()}_${toolCallsDetected.size}"
+                    val exists = toolCallsDetected.any {
+                        it.optString("id") == finalId || (it.optJSONObject("function")?.optString("name") == name && finalId.startsWith("call_"))
+                    }
+                    if (!exists) {
+                        toolCallsDetected.add(
+                            JSONObject().apply {
+                                put("id", finalId)
+                                put("type", "function")
+                                put(
+                                    "function",
+                                    JSONObject().apply {
+                                        put("name", name)
+                                        put("arguments", if (args.isNotBlank()) args else "{}")
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -306,53 +414,36 @@ class TermXAgentClient(
                                     val rawSnippetBuilder = StringBuilder()
                                     var currentLine: String? = firstLine
 
-                                    while (currentLine != null) {
-                                        val trimmed = currentLine.trim()
-                                        if (rawSnippetBuilder.length < 500) {
-                                            rawSnippetBuilder.append(trimmed).append("\n")
-                                        }
-                                        if (trimmed.startsWith("data:")) {
-                                            val payload = trimmed.substring(5).trim()
-                                            if (payload == "[DONE]") {
-                                                break
+                                    try {
+                                        while (currentLine != null) {
+                                            val trimmed = currentLine.trim()
+                                            if (rawSnippetBuilder.length < 500) {
+                                                rawSnippetBuilder.append(trimmed).append("\n")
                                             }
-                                            if (payload.isNotEmpty()) {
-                                                parseSseChunk(
-                                                    payload = payload,
-                                                    currentStepReasoning = currentStepReasoning,
-                                                    currentStepContent = currentStepContent,
-                                                    fullAccumulatedReasoning = fullAccumulatedReasoning,
-                                                    fullAccumulatedContent = fullAccumulatedContent,
-                                                    toolCallMap = toolCallMap,
-                                                    toolCallsDetected = toolCallsDetected,
-                                                    onChunk = onChunk
-                                                )
-                                            }
-                                        }
-                                        currentLine = reader.readLine()
-                                    }
-                                    lastRawSnippet = rawSnippetBuilder.toString().take(500)
-
-                                    // 汇总原生 Action
-                                    for ((_, triple) in toolCallMap) {
-                                        val id = triple.first.toString().trim()
-                                        val name = triple.second.toString().trim()
-                                        val args = triple.third.toString().trim()
-                                        if (name.isNotEmpty()) {
-                                            toolCallsDetected.add(
-                                                JSONObject().apply {
-                                                    put("id", if (id.isNotEmpty()) id else "call_${System.currentTimeMillis()}_${toolCallsDetected.size}")
-                                                    put("type", "function")
-                                                    put(
-                                                        "function",
-                                                        JSONObject().apply {
-                                                            put("name", name)
-                                                            put("arguments", if (args.isNotBlank()) args else "{}")
-                                                        }
+                                            if (trimmed.startsWith("data:")) {
+                                                val payload = trimmed.substring(5).trim()
+                                                if (payload == "[DONE]") {
+                                                    break
+                                                }
+                                                if (payload.isNotEmpty()) {
+                                                    parseSseChunk(
+                                                        payload = payload,
+                                                        currentStepReasoning = currentStepReasoning,
+                                                        currentStepContent = currentStepContent,
+                                                        fullAccumulatedReasoning = fullAccumulatedReasoning,
+                                                        fullAccumulatedContent = fullAccumulatedContent,
+                                                        toolCallMap = toolCallMap,
+                                                        toolCallsDetected = toolCallsDetected,
+                                                        onChunk = onChunk
                                                     )
                                                 }
-                                            )
+                                            }
+                                            currentLine = reader.readLine()
                                         }
+                                    } finally {
+                                        lastRawSnippet = rawSnippetBuilder.toString().take(500)
+                                        // 汇总原生 Action (自带智能 ID 回溯提取与多态参数兼容)
+                                        flushToolCallsFromMap(toolCallMap, toolCallsDetected)
                                     }
                                 }
                             }
@@ -560,7 +651,18 @@ class TermXAgentClient(
                     val toolsArr = message?.optJSONArray("tool_calls") ?: choice.optJSONArray("tool_calls")
                     if (toolsArr != null) {
                         for (i in 0 until toolsArr.length()) {
-                            toolCallsDetected.add(normalizeToolCall(toolsArr.getJSONObject(i)))
+                            val norm = normalizeToolCall(toolsArr.getJSONObject(i))
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
+                        }
+                    } else {
+                        val singleFunc = message?.optJSONObject("function_call") ?: choice.optJSONObject("function_call")
+                        if (singleFunc != null) {
+                            val norm = normalizeToolCall(singleFunc)
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
                         }
                     }
                 } else {
@@ -579,7 +681,18 @@ class TermXAgentClient(
                     val topTools = rootJson.optJSONArray("tool_calls")
                     if (topTools != null) {
                         for (i in 0 until topTools.length()) {
-                            toolCallsDetected.add(normalizeToolCall(topTools.getJSONObject(i)))
+                            val norm = normalizeToolCall(topTools.getJSONObject(i))
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
+                        }
+                    } else {
+                        val topSingleFunc = rootJson.optJSONObject("function_call")
+                        if (topSingleFunc != null) {
+                            val norm = normalizeToolCall(topSingleFunc)
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
                         }
                     }
                 }
@@ -673,7 +786,7 @@ class TermXAgentClient(
                     onChunk(contentDelta, false)
                 }
 
-                // 3. 工具调用增量
+                // 3. 工具调用增量 (兼容 tool_calls 列表与单数 function_call)
                 val toolsArr = delta?.optJSONArray("tool_calls")
                     ?: message?.optJSONArray("tool_calls")
                     ?: choice.optJSONArray("tool_calls")
@@ -682,24 +795,39 @@ class TermXAgentClient(
                     for (i in 0 until toolsArr.length()) {
                         val t = toolsArr.getJSONObject(i)
                         val idx = if (t.has("index")) t.optInt("index", i) else i
-                        val id = if (!t.isNull("id")) t.optString("id", "") else ""
-                        val func = t.optJSONObject("function")
-                        val name = if (func != null && !func.isNull("name")) {
-                            func.optString("name", "")
-                        } else if (!t.isNull("name")) {
-                            t.optString("name", "")
-                        } else ""
-                        val argsPart = if (func != null && !func.isNull("arguments")) {
-                            func.optString("arguments", "")
-                        } else if (!t.isNull("arguments")) {
-                            t.optString("arguments", "")
-                        } else ""
+                        val id = if (!t.isNull("id")) t.optString("id", "").trim() else ""
+                        val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
+                        val name = resolveToolName(func, t, id)
+                        val argsPart = extractToolArgumentsString(func, t)
 
                         val triple = toolCallMap.getOrPut(idx) {
                             Triple(StringBuilder(), StringBuilder(), StringBuilder())
                         }
                         if (id.isNotEmpty() && id != "null" && triple.first.isEmpty()) triple.first.append(id)
-                        if (name.isNotEmpty() && name != "null" && triple.second.isEmpty()) triple.second.append(name)
+                        if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
+                        if (argsPart.isNotEmpty()) {
+                            val currentArgs = triple.third.toString().trim()
+                            val isIncomingCompleteJson = argsPart.trim().startsWith("{") && argsPart.trim().endsWith("}")
+                            val isCurrentCompleteJson = currentArgs.startsWith("{") && currentArgs.endsWith("}")
+                            if (isIncomingCompleteJson && isCurrentCompleteJson) {
+                                triple.third.setLength(0)
+                                triple.third.append(argsPart.trim())
+                            } else {
+                                triple.third.append(argsPart)
+                            }
+                        }
+                    }
+                } else {
+                    val singleFunc = delta?.optJSONObject("function_call")
+                        ?: message?.optJSONObject("function_call")
+                        ?: choice.optJSONObject("function_call")
+                    if (singleFunc != null) {
+                        val name = resolveToolName(singleFunc, null, "")
+                        val argsPart = extractToolArgumentsString(singleFunc, null)
+                        val triple = toolCallMap.getOrPut(0) {
+                            Triple(StringBuilder(), StringBuilder(), StringBuilder())
+                        }
+                        if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
                         if (argsPart.isNotEmpty()) triple.third.append(argsPart)
                     }
                 }
@@ -726,7 +854,18 @@ class TermXAgentClient(
                 val topTools = json.optJSONArray("tool_calls")
                 if (topTools != null) {
                     for (i in 0 until topTools.length()) {
-                        toolCallsDetected.add(normalizeToolCall(topTools.getJSONObject(i)))
+                        val norm = normalizeToolCall(topTools.getJSONObject(i))
+                        if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                            toolCallsDetected.add(norm)
+                        }
+                    }
+                } else {
+                    val topSingleFunc = json.optJSONObject("function_call")
+                    if (topSingleFunc != null) {
+                        val norm = normalizeToolCall(topSingleFunc)
+                        if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                            toolCallsDetected.add(norm)
+                        }
                     }
                 }
             }
@@ -749,22 +888,13 @@ class TermXAgentClient(
     }
 
     /**
-     * 规范化工具调用对象（兼容顶层 name/arguments 与 function 嵌套层级）
+     * 规范化工具调用对象（兼容顶层 name/arguments 与 function 嵌套层级，支持智能 ID 回溯与多态参数提取）
      */
     private fun normalizeToolCall(t: JSONObject): JSONObject {
-        val id = if (!t.isNull("id")) t.optString("id", "") else "call_${System.currentTimeMillis()}"
-        val func = t.optJSONObject("function")
-        val name = if (func != null && !func.isNull("name")) {
-            func.optString("name", "")
-        } else if (!t.isNull("name")) {
-            t.optString("name", "")
-        } else ""
-        val rawArgs = func?.opt("arguments") ?: t.opt("arguments") ?: func?.opt("parameters") ?: t.opt("parameters")
-        val args = when (rawArgs) {
-            is JSONObject -> rawArgs.toString()
-            is String -> rawArgs
-            else -> rawArgs?.toString() ?: "{}"
-        }
+        val id = if (!t.isNull("id")) t.optString("id", "").trim() else "call_${System.currentTimeMillis()}"
+        val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
+        val name = resolveToolName(func, t, id)
+        val args = extractToolArgumentsString(func, t)
 
         return JSONObject().apply {
             put("id", id)
@@ -806,10 +936,6 @@ class TermXAgentClient(
      */
     private fun extractTextualToolCalls(content: String): List<JSONObject> {
         val results = mutableListOf<JSONObject>()
-        val validToolNames = setOf(
-            "list_saved_hosts", "select_target_host", "detect_host_environment",
-            "execute_shell_command", "read_active_terminal_screen", "web_search"
-        )
 
         // 格式 1: ```tool:execute_shell_command\n{"command": "..."}\n``` 或 ```execute_shell_command\n{...}\n```
         val directCodeBlockRegex = Regex("```(?:tool:)?([a-zA-Z0-9_]+)\\s*\\n([\\s\\S]*?)```")
@@ -817,7 +943,7 @@ class TermXAgentClient(
             val label = match.groupValues[1].trim()
             val blockBody = match.groupValues[2].trim()
 
-            if (validToolNames.contains(label) && blockBody.startsWith("{") && blockBody.endsWith("}")) {
+            if (VALID_TOOL_NAMES.contains(label) && blockBody.startsWith("{") && blockBody.endsWith("}")) {
                 results.add(JSONObject().apply {
                     put("id", "call_txt_${System.currentTimeMillis()}_${results.size}")
                     put("type", "function")
@@ -831,7 +957,7 @@ class TermXAgentClient(
                 try {
                     val parsed = JSONObject(blockBody)
                     val toolName = parsed.optString("name", "").ifEmpty { parsed.optString("tool", "") }.ifEmpty { parsed.optString("function", "") }
-                    if (validToolNames.contains(toolName)) {
+                    if (VALID_TOOL_NAMES.contains(toolName)) {
                         val argsObj = parsed.opt("arguments") ?: parsed.opt("parameters") ?: parsed.opt("params")
                         val argsStr = when (argsObj) {
                             is JSONObject -> argsObj.toString()
@@ -859,7 +985,7 @@ class TermXAgentClient(
             try {
                 val parsed = JSONObject(rawTag)
                 val toolName = parsed.optString("name", "").ifEmpty { parsed.optString("tool", "") }.ifEmpty { parsed.optString("function", "") }
-                if (validToolNames.contains(toolName)) {
+                if (VALID_TOOL_NAMES.contains(toolName)) {
                     val argsObj = parsed.opt("arguments") ?: parsed.opt("parameters") ?: parsed.opt("params")
                     val argsStr = when (argsObj) {
                         is JSONObject -> argsObj.toString()
@@ -885,7 +1011,7 @@ class TermXAgentClient(
         for (match in reactRegex.findAll(content)) {
             val toolName = match.groupValues[1].trim()
             val inputStr = match.groupValues[2].trim()
-            if (validToolNames.contains(toolName)) {
+            if (VALID_TOOL_NAMES.contains(toolName)) {
                 val finalArgs = if (inputStr.startsWith("{") && inputStr.endsWith("}")) {
                     inputStr
                 } else {
