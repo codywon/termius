@@ -15,6 +15,12 @@
 local.properties
 /build-output
 
-# 架构演进与内部开发经验总结文档 (仅本地保留，不上传远程仓库)
+# 文档安全与私密规范：仅允许 README.md 同步到 GitHub，排除忽略所有内部笔记、经验总结、架构演进与参考文档
+*.md
+!README.md
+!readme.md
 AI_AGENT_PI_ENGINE_REFACTORING.md
 DEVELOPMENT_LESSONS.md
+notes/
+reference/
+doc/notes/
