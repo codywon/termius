@@ -36,6 +36,7 @@ data class AiChatMessage(
     val reasoningContent: String = "",
     val toolCallsJson: String = "",
     val toolCallId: String = "",
+    val images: List<String> = emptyList(), // 多模态视觉图片 (Base64 Data URI)
     val timestamp: Long = System.currentTimeMillis(),
     val isThinking: Boolean = false,
     val isError: Boolean = false

@@ -16,8 +16,15 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.termius.clone.util.ImageUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -120,26 +127,34 @@ fun AiChatScreen(
         }
     }
 
-    // 附件状态 (支持上传 log, txt, conf, json 等)
+    // 附件状态 (支持图片视觉解析与日志/配置文本提取)
     var attachedFile by remember { mutableStateOf<AttachedFileInfo?>(null) }
+    var showAttachMenu by remember { mutableStateOf(false) }
+    var previewingImageBase64 by remember { mutableStateOf<String?>(null) } // 全屏大图预览状态
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
+    val handleSelectedUri: (Uri) -> Unit = { uri ->
+        scope.launch(Dispatchers.IO) {
             val fileInfo = getFileInfoFromUri(context, uri)
             if (fileInfo != null) {
-                attachedFile = fileInfo
+                withContext(Dispatchers.Main) {
+                    attachedFile = fileInfo
+                }
             }
         }
     }
 
-    val launchAttachmentPicker = remember {
-        {
-            try {
-                filePickerLauncher.launch(arrayOf("*/*"))
-            } catch (_: Exception) {}
-        }
+    // 1. 系统相册/图片多模态视觉选择器
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) handleSelectedUri(uri)
+    }
+
+    // 2. 通用文件/日志/配置文本选择器
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) handleSelectedUri(uri)
     }
 
     // 活跃会话与当前主机
@@ -199,15 +214,24 @@ fun AiChatScreen(
         val canProceed = (prompt.isNotBlank() || curAttached != null) && !isGenerating && pendingApprovalRequest == null
 
         if (canProceed) {
-            // 如果附带了日志/配置文件，读取前 8000 字符文本一并注入
-            val fullUserContent = if (curAttached != null) {
-                val fileContentText = readFileContentText(context, curAttached.uri, maxChars = 8000)
-                "【附加文件: ${curAttached.name}】\n```${curAttached.extension}\n$fileContentText\n```\n${prompt.ifBlank { "请帮我深入分析这份日志/配置文件的内容，排查异常或给出建议。" }}"
+            val (fullUserContent, imageList) = if (curAttached != null) {
+                if (curAttached.isImage && !curAttached.base64Data.isNullOrBlank()) {
+                    val text = prompt.ifBlank { "请帮我仔细观察分析这张图片中的架构拓扑、监控指标或异常报错，并给出详细的排障与处理方案。" }
+                    Pair(text, listOf(curAttached.base64Data))
+                } else {
+                    val fileContentText = readFileContentText(context, curAttached.uri, maxChars = 8000)
+                    val text = "【附加文件: ${curAttached.name}】\n```${curAttached.extension}\n$fileContentText\n```\n${prompt.ifBlank { "请帮我深入分析这份日志/配置文件的内容，排查异常或给出建议。" }}"
+                    Pair(text, emptyList<String>())
+                }
             } else {
-                prompt
+                Pair(prompt, emptyList<String>())
             }
 
-            val userMsg = AiChatMessage(role = "user", content = fullUserContent)
+            val userMsg = AiChatMessage(
+                role = "user",
+                content = fullUserContent,
+                images = imageList
+            )
             val updatedList = messages + userMsg
             messages = updatedList
             inputText = ""
@@ -596,7 +620,8 @@ fun AiChatScreen(
                     items(messages, key = { it.id }) { msg ->
                         AiChatMessageItem(
                             message = msg,
-                            onRetry = { sendMessage(it) }
+                            onRetry = { sendMessage(it) },
+                            onImageClick = { previewingImageBase64 = it }
                         )
                     }
 
@@ -722,7 +747,7 @@ fun AiChatScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                // 附加文件预览胶囊
+                // 附加文件预览胶囊 (支持图片缩略图与文本标识)
                 attachedFile?.let { file ->
                     Row(
                         modifier = Modifier
@@ -731,35 +756,76 @@ fun AiChatScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .background(theme.surfaceContainer)
                             .border(0.6.dp, theme.outline.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Description,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = theme.primary
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = file.name,
-                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = theme.textPrimary),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = formatFileSize(file.sizeBytes),
-                            style = TextStyle(fontSize = 10.sp, color = theme.textMuted, fontFamily = FontFamily.Monospace)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        if (file.isImage && file.base64Data != null) {
+                            val bitmap = remember(file.base64Data) { ImageUtils.decodeBase64ToImageBitmap(file.base64Data) }
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { previewingImageBase64 = file.base64Data },
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = Color(0xFF10B981)
+                                )
+                            }
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Description,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = theme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = file.name,
+                                    style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = theme.textPrimary),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (file.isImage) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFF10B981).copy(alpha = 0.15f),
+                                        border = BorderStroke(0.5.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+                                    ) {
+                                        Text(
+                                            text = "视觉解析",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981),
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = formatFileSize(file.sizeBytes),
+                                style = TextStyle(fontSize = 10.sp, color = theme.textMuted, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "移除附件",
                             tint = theme.textMuted,
                             modifier = Modifier
-                                .size(14.dp)
+                                .size(16.dp)
+                                .clip(CircleShape)
                                 .clickable { attachedFile = null }
                         )
                     }
@@ -812,17 +878,63 @@ fun AiChatScreen(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // [+] 添加日志/配置文件
-                    IconButton(
-                        onClick = launchAttachmentPicker,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "添加日志或文件",
-                            tint = theme.textPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    // [+] 添加图片/文件下拉菜单
+                    Box {
+                        IconButton(
+                            onClick = { showAttachMenu = true },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "添加图片或文件",
+                                tint = theme.textPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showAttachMenu,
+                            onDismissRequest = { showAttachMenu = false },
+                            modifier = Modifier.background(theme.surfaceContainerLow)
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("发送图片 / 屏幕截图", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = theme.textPrimary)
+                                            Text("提交给支持视觉的多模态大模型解析", fontSize = 10.sp, color = theme.textMuted)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    showAttachMenu = false
+                                    try {
+                                        imagePickerLauncher.launch("image/*")
+                                    } catch (_: Exception) {}
+                                }
+                            )
+                            HorizontalDivider(color = theme.outline.copy(alpha = 0.15f), thickness = 0.5.dp)
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.AttachFile, contentDescription = null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("发送日志 / 配置文件", fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = theme.textPrimary)
+                                            Text("自动提取文本前 8000 字符注入上下文", fontSize = 10.sp, color = theme.textMuted)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    showAttachMenu = false
+                                    try {
+                                        filePickerLauncher.launch(arrayOf("*/*"))
+                                    } catch (_: Exception) {}
+                                }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(4.dp))
@@ -842,7 +954,11 @@ fun AiChatScreen(
                             if (inputText.isEmpty()) {
                                 Text(
                                     text = if (attachedFile != null) {
-                                        "输入对「${attachedFile?.name}」的分析要求..."
+                                        if (attachedFile?.isImage == true) {
+                                            "输入对图片的分析要求 (如：分析架构拓扑 / 报错定位)..."
+                                        } else {
+                                            "输入对「${attachedFile?.name}」的分析要求..."
+                                        }
                                     } else if (isGenerating) {
                                         "智能体执行中..."
                                     } else if (pendingApprovalRequest != null) {
@@ -945,6 +1061,52 @@ fun AiChatScreen(
                 configManager.saveConfig(newConfig)
             }
         )
+    }
+
+    // ==========================================
+    // 4. 全屏大图沉浸式预览弹窗 (多模态视觉图片查看)
+    // ==========================================
+    previewingImageBase64?.let { base64Str ->
+        val previewBitmap = remember(base64Str) { ImageUtils.decodeBase64ToImageBitmap(base64Str) }
+        Dialog(
+            onDismissRequest = { previewingImageBase64 = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.94f))
+                    .clickable { previewingImageBase64 = null },
+                contentAlignment = Alignment.Center
+            ) {
+                if (previewBitmap != null) {
+                    Image(
+                        bitmap = previewBitmap,
+                        contentDescription = "大图预览",
+                        modifier = Modifier
+                            .fillMaxWidth(0.96f)
+                            .wrapContentHeight()
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                }
+
+                IconButton(
+                    onClick = { previewingImageBase64 = null },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 42.dp, end = 20.dp)
+                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "关闭预览",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1065,7 +1227,8 @@ private fun AiEmptyWelcomeView(
 @Composable
 private fun AiChatMessageItem(
     message: AiChatMessage,
-    onRetry: (String) -> Unit
+    onRetry: (String) -> Unit,
+    onImageClick: (String) -> Unit = {}
 ) {
     val theme = LocalAppTheme.current
     val context = LocalContext.current
@@ -1143,12 +1306,34 @@ private fun AiChatMessageItem(
                     CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
                         SelectionContainer {
                             if (isUser) {
-                                Text(
-                                    text = message.content,
-                                    color = Color.White,
-                                    fontSize = 13.5.sp,
-                                    lineHeight = 19.sp
-                                )
+                                Column {
+                                    if (message.images.isNotEmpty()) {
+                                        message.images.forEach { imgBase64 ->
+                                            val bitmap = remember(imgBase64) { ImageUtils.decodeBase64ToImageBitmap(imgBase64) }
+                                            if (bitmap != null) {
+                                                Image(
+                                                    bitmap = bitmap,
+                                                    contentDescription = "用户上传图片",
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .heightIn(max = 240.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable { onImageClick(imgBase64) }
+                                                        .padding(bottom = if (message.content.isNotBlank()) 6.dp else 0.dp),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (message.content.isNotBlank()) {
+                                        Text(
+                                            text = message.content,
+                                            color = Color.White,
+                                            fontSize = 13.5.sp,
+                                            lineHeight = 19.sp
+                                        )
+                                    }
+                                }
                             } else {
                                 MarkdownRenderer(content = message.content, isUser = false)
                             }
@@ -1219,7 +1404,9 @@ data class AttachedFileInfo(
     val uri: Uri,
     val name: String,
     val sizeBytes: Long,
-    val extension: String
+    val extension: String,
+    val isImage: Boolean = false,
+    val base64Data: String? = null
 )
 
 private fun getFileInfoFromUri(context: Context, uri: Uri): AttachedFileInfo? {
@@ -1236,7 +1423,13 @@ private fun getFileInfoFromUri(context: Context, uri: Uri): AttachedFileInfo? {
         }
     } catch (_: Exception) {}
     val ext = name.substringAfterLast('.', "").lowercase()
-    return AttachedFileInfo(uri, name, size, ext)
+    val isImg = ImageUtils.isImageFile(name, ext)
+    val base64 = if (isImg) {
+        ImageUtils.compressAndEncodeImageUri(context, uri)
+    } else {
+        null
+    }
+    return AttachedFileInfo(uri, name, size, ext, isImage = isImg, base64Data = base64)
 }
 
 private fun readFileContentText(context: Context, uri: Uri, maxChars: Int = 8000): String {
