@@ -666,14 +666,14 @@ fun AiChatScreen(
                 }
             }
 
-            // 悬浮「↓ 回到底部」圆形按钮 (参考 OpenAI ChatGPT 风格：居中悬浮圆圈 + 向下箭头)
+            // 悬浮「↓ 回到底部」圆形按钮 (参考 OpenAI ChatGPT 风格：右下角悬浮圆圈 + 向下箭头)
             androidx.compose.animation.AnimatedVisibility(
                 visible = !isAtBottom && messages.isNotEmpty(),
                 enter = fadeIn() + scaleIn(initialScale = 0.8f),
                 exit = fadeOut() + scaleOut(targetScale = 0.8f),
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp)
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 18.dp, bottom = 14.dp)
             ) {
                 Surface(
                     modifier = Modifier
