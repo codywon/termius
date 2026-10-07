@@ -37,9 +37,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.content.res.Configuration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -75,6 +77,8 @@ fun AiChatScreen(
 ) {
     val context = LocalContext.current
     val theme = LocalAppTheme.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val scope = rememberCoroutineScope()
     val db = remember { AppDatabase.getDatabase(context) }
     val configManager = remember { AiConfigManager(context) }
@@ -403,7 +407,7 @@ fun AiChatScreen(
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 170.dp)
+                                modifier = Modifier.widthIn(max = if (isLandscape) 360.dp else 170.dp)
                             )
                             Spacer(modifier = Modifier.width(2.dp))
                             Icon(
@@ -1020,7 +1024,7 @@ private fun AiEmptyWelcomeView(
 
         // 四大核心运维引导卡片
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.widthIn(max = 680.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             listOf(
@@ -1065,6 +1069,9 @@ private fun AiChatMessageItem(
 ) {
     val theme = LocalAppTheme.current
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val screenWidth = configuration.screenWidthDp.dp
     val isUser = message.role == "user"
 
     Row(
@@ -1086,7 +1093,21 @@ private fun AiChatMessageItem(
         }
 
         Column(
-            modifier = Modifier.widthIn(max = 310.dp),
+            modifier = if (isUser) {
+                // 用户提问消息：靠右展示，短文本紧凑包裹，长文本自适应最大宽度（横屏下不至于拉成细长单行）
+                val maxUserWidth = if (isLandscape) {
+                    (screenWidth * 0.70f).coerceIn(360.dp, 640.dp)
+                } else {
+                    (screenWidth * 0.85f).coerceAtLeast(280.dp)
+                }
+                Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = maxUserWidth)
+            } else {
+                // AI 智能体回答：横竖屏均自适应展开！
+                // 横屏下充分享受大屏宽幅，彻底舒展表格、长代码/命令与排障日志，消除右侧大面积黑屏空白
+                Modifier.weight(1f, fill = false)
+            },
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
             // 思考过程 (折叠)
@@ -1138,7 +1159,7 @@ private fun AiChatMessageItem(
                     if (!isUser && !message.isError && message.content.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.align(Alignment.End),
                             horizontalArrangement = Arrangement.End
                         ) {
                             Row(
