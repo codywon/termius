@@ -209,6 +209,99 @@ class TermXAgentClient(
                 }
             }
         }
+
+        /**
+         * 已执行自动化运维工具现场记录
+         */
+        data class ExecutedToolRecord(
+            val step: Int,
+            val toolName: String,
+            val commandOrArgs: String,
+            val observation: String
+        )
+
+        /**
+         * 为纯文本模式 (Tier 2 / Tier 3 / Final Step) 平滑净化上下文，杜绝无 tools 时的 role: "tool" 与 tool_calls 导致的 400 报错或网关崩溃
+         */
+        fun sanitizeMessagesForTextMode(source: JSONArray, isFinalStep: Boolean = false): JSONArray {
+            val clean = JSONArray()
+            for (i in 0 until source.length()) {
+                val msg = source.getJSONObject(i)
+                val role = msg.optString("role", "")
+                when (role) {
+                    "tool" -> {
+                        val toolName = msg.optString("name", "tool")
+                        val content = msg.optString("content", "")
+                        clean.put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", "【工具执行观测结果 (Tool Observation for $toolName)】:\n$content")
+                        })
+                    }
+                    "assistant" -> {
+                        val rawContent = msg.optString("content", "")
+                        val toolCalls = msg.optJSONArray("tool_calls")
+                        if (toolCalls != null && toolCalls.length() > 0) {
+                            val sb = StringBuilder()
+                            if (rawContent.isNotBlank() && rawContent != "null") {
+                                sb.append(rawContent).append("\n\n")
+                            }
+                            sb.append("【执行操作计划】:")
+                            for (j in 0 until toolCalls.length()) {
+                                val tc = toolCalls.getJSONObject(j)
+                                val fn = tc.optJSONObject("function")?.optString("name") ?: ""
+                                val args = tc.optJSONObject("function")?.optString("arguments") ?: ""
+                                sb.append("\n- 调用工具 `$fn` 参数: $args")
+                            }
+                            clean.put(JSONObject().apply {
+                                put("role", "assistant")
+                                put("content", sb.toString().trim())
+                            })
+                        } else {
+                            clean.put(JSONObject().apply {
+                                put("role", "assistant")
+                                put("content", if (rawContent.isNotBlank() && rawContent != "null") rawContent else "已规划下一步操作。")
+                            })
+                        }
+                    }
+                    else -> clean.put(msg)
+                }
+            }
+            if (isFinalStep) {
+                clean.put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", "【系统指令】: 自动化运维工具执行阶段已完成。请基于上述所有工具返回的真实观测结果与命令输出，向用户输出完整的 Markdown 格式运维总结报告与排障结论。无需再调用任何工具。")
+                })
+            }
+            return clean
+        }
+
+        /**
+         * 汇总已执行工具现场观测记录，生成专业自动化运维排障报告
+         */
+        fun buildExecutedToolsReport(records: List<ExecutedToolRecord>, hostLabel: String): String {
+            val sb = StringBuilder()
+            sb.append("### 🚀 自动化运维执行与排障报告\n\n")
+            sb.append("智能体已针对【$hostLabel】完成现场运维操作，以下为各步骤执行记录与命令观测输出：\n\n")
+            sb.append("| 步骤 | 调用的运维工具 | 目标指令 / 参数 | 执行状态 |\n")
+            sb.append("|:---|:---|:---|:---|\n")
+            for (r in records) {
+                val cleanArgs = r.commandOrArgs.replace("\n", " ").take(60)
+                val statusTag = if (r.observation.startsWith("SSH 连接失败") || r.observation.startsWith("命令不能为空") || r.observation.contains("error", ignoreCase = true)) "⚠️ 需关注" else "✅ 成功"
+                sb.append("| 第 ${r.step} 步 | `${r.toolName}` | `$cleanArgs` | $statusTag |\n")
+            }
+            sb.append("\n#### 📋 第一现场执行与观测详情\n\n")
+            for (r in records) {
+                sb.append("**第 ${r.step} 步 [${r.toolName}]**\n")
+                sb.append("```shell\n")
+                sb.append("# 执行指令 / 参数:\n")
+                sb.append(r.commandOrArgs.trim()).append("\n\n")
+                sb.append("# 真实输出与观测:\n")
+                sb.append(r.observation.trim()).append("\n")
+                sb.append("```\n\n")
+            }
+            sb.append("💡 **运维建议**：如需进一步针对上述服务或进程执行后续操作，您可以直接回复“继续”或下达具体指令。")
+            return sb.toString().trim()
+        }
     }
 
     /**
@@ -258,6 +351,7 @@ class TermXAgentClient(
         var finalAnswerContent = StringBuilder()
         var useNativeTools = true // 初始尝试原生 Function Calling，遇到空响应或不兼容时自动降级
         var useStream = true // 初始尝试 SSE 流式，遇到流式截断或 null 缺陷时自愈降级为稳定非流式
+        val executedToolRecords = mutableListOf<ExecutedToolRecord>()
 
         // 2. The ReAct Loop (Thought -> Action -> Observation)
         while (step < maxSteps) {
@@ -291,9 +385,15 @@ class TermXAgentClient(
                 val currentNativeTools = useNativeTools
                 val currentStream = useStream
 
+                val outgoingMessages = if (!currentNativeTools || isFinalStep) {
+                    sanitizeMessagesForTextMode(messagesArray, isFinalStep)
+                } else {
+                    messagesArray
+                }
+
                 val requestBody = JSONObject().apply {
                     put("model", config.modelName)
-                    put("messages", messagesArray)
+                    put("messages", outgoingMessages)
                     if (!isFinalStep && currentNativeTools) {
                         put("tools", toolsJson)
                         put("tool_choice", "auto")
@@ -372,7 +472,7 @@ class TermXAgentClient(
                         if (!currentStream) {
                             // 模式 1: 显式非流式单次请求 (针对 CLIProxyAPI 流式 null bug 的绝对克星)
                             val fullBody = reader.use { it.readText() }
-                            lastRawSnippet = fullBody.take(500)
+                            lastRawSnippet = fullBody.take(2000)
                             parseNonStreamResponse(
                                 fullJsonStr = fullBody,
                                 currentStepReasoning = currentStepReasoning,
@@ -398,7 +498,7 @@ class TermXAgentClient(
                                     // 服务端在 stream:true 下直接回送了整包 JSON (部分反代网关行为)
                                     val remainingText = reader.use { it.readText() }
                                     val fullJsonStr = firstLine + "\n" + remainingText
-                                    lastRawSnippet = fullJsonStr.take(500)
+                                    lastRawSnippet = fullJsonStr.take(2000)
                                     parseNonStreamResponse(
                                         fullJsonStr = fullJsonStr,
                                         currentStepReasoning = currentStepReasoning,
@@ -417,7 +517,7 @@ class TermXAgentClient(
                                     try {
                                         while (currentLine != null) {
                                             val trimmed = currentLine.trim()
-                                            if (rawSnippetBuilder.length < 500) {
+                                            if (rawSnippetBuilder.length < 2000) {
                                                 rawSnippetBuilder.append(trimmed).append("\n")
                                             }
                                             if (trimmed.startsWith("data:")) {
@@ -441,7 +541,7 @@ class TermXAgentClient(
                                             currentLine = reader.readLine()
                                         }
                                     } finally {
-                                        lastRawSnippet = rawSnippetBuilder.toString().take(500)
+                                        lastRawSnippet = rawSnippetBuilder.toString().take(2000)
                                         // 汇总原生 Action (自带智能 ID 回溯提取与多态参数兼容)
                                         flushToolCallsFromMap(toolCallMap, toolCallsDetected)
                                     }
@@ -504,9 +604,14 @@ class TermXAgentClient(
             }
 
             if (!stepSucceeded) {
-                val sampleSnippet = lastRawSnippet.trim().take(300)
+                if (executedToolRecords.isNotEmpty()) {
+                    val fallbackReport = buildExecutedToolsReport(executedToolRecords, activeHost?.label ?: "目标服务器")
+                    onComplete(fallbackReport, fullAccumulatedReasoning.toString())
+                    return@withContext
+                }
+                val sampleSnippet = lastRawSnippet.trim().take(2000)
                 val rawSampleText = when {
-                    sampleSnippet.isNotBlank() -> "\n\n【服务端原始响应采样镜像】:\n```\n$sampleSnippet\n```"
+                    sampleSnippet.isNotBlank() -> "\n\n【服务端原始响应采样镜像 (TermX v2.0.13 | Step $step/$maxSteps | Tier $tierAttempt)】:\n```\n$sampleSnippet\n```"
                     else -> "\n\n【响应诊断】: 服务端返回了 HTTP 200，但数据体为空 (0 字节空响应)。"
                 }
                 val failMsg = "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$rawSampleText\n\n💡 排查建议：\n1. 若使用 CLIProxyAPI，请检查其控制台日志是否提示上游 CLI (如 Claude/Gemini/Codex) 登录失效、限流或命令超时；\n2. 检查设置中的模型名称是否与后端代理配置一致；\n3. 检查 API 额度与网络连接状态。"
@@ -521,18 +626,20 @@ class TermXAgentClient(
                 val rawAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
                 val safeAnswer = if (rawAnswer.isNotBlank() && rawAnswer != "null") {
                     rawAnswer
+                } else if (fullAccumulatedReasoning.isNotBlank()) {
+                    fullAccumulatedReasoning.toString().trim()
+                } else if (executedToolRecords.isNotEmpty()) {
+                    // 🌟 核心突破：Observation-First 自愈兜底！
+                    // 若模型在多步执行中未给出最终总结文字，但此前工具已成功在服务器上执行，优先组织呈现真实运维排障报告！
+                    buildExecutedToolsReport(executedToolRecords, activeHost?.label ?: "目标服务器")
                 } else {
-                    if (fullAccumulatedReasoning.isNotBlank()) {
-                        fullAccumulatedReasoning.toString().trim()
+                    val sampleSnippet = lastRawSnippet.trim().take(2000)
+                    val diagDetail = if (sampleSnippet.isNotBlank()) {
+                        "\n\n【服务端原始响应采样镜像 (TermX v2.0.13 | Step $step/$maxSteps)】:\n```\n$sampleSnippet\n```"
                     } else {
-                        val sampleSnippet = lastRawSnippet.trim().take(300)
-                        val diagDetail = if (sampleSnippet.isNotBlank()) {
-                            "\n\n【服务端原始响应采样镜像】:\n```\n$sampleSnippet\n```"
-                        } else {
-                            "\n\n【传输诊断】: 服务端返回了 HTTP 200，但数据流中无任何有效文字 (仅接收到空白换行或 0 字节)。"
-                        }
-                        "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$diagDetail\n\n💡 建议排查方向：\n1. 检查后端代理 (如 CLIProxyAPI) 日志，确认上游 CLI (如 Claude/Gemini/Codex) 登录认证是否有效、是否发生进程超时或被防火墙拦截；\n2. 检查设置中的模型名称是否与后端代理所支持的模型一致；\n3. 检查 API 额度与主机网络连通性。"
+                        "\n\n【传输诊断】: 服务端返回了 HTTP 200，但数据流中无任何有效文字 (仅接收到空白换行或 0 字节)。"
                     }
+                    "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$diagDetail\n\n💡 建议排查方向：\n1. 检查后端代理 (如 CLIProxyAPI) 日志，确认上游 CLI (如 Claude/Gemini/Codex) 登录认证是否有效、是否发生进程超时或被防火墙拦截；\n2. 检查设置中的模型名称是否与后端代理所支持的模型一致；\n3. 检查 API 额度与主机网络连通性。"
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
                 return@withContext
@@ -576,6 +683,14 @@ class TermXAgentClient(
                 onToolAction(statusText)
 
                 val observation = toolRegistry.executeTool(funcName, funcArgs)
+                executedToolRecords.add(
+                    ExecutedToolRecord(
+                        step = step,
+                        toolName = funcName,
+                        commandOrArgs = funcArgs,
+                        observation = observation
+                    )
+                )
 
                 messagesArray.put(
                     JSONObject().apply {
@@ -595,7 +710,14 @@ class TermXAgentClient(
 
         onToolAction("")
         val exitAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
-        onComplete(exitAnswer, fullAccumulatedReasoning.toString())
+        val safeExitAnswer = if (exitAnswer.isNotBlank() && exitAnswer != "null") {
+            exitAnswer
+        } else if (executedToolRecords.isNotEmpty()) {
+            buildExecutedToolsReport(executedToolRecords, activeHost?.label ?: "目标服务器")
+        } else {
+            exitAnswer
+        }
+        onComplete(safeExitAnswer, fullAccumulatedReasoning.toString())
     }
 
     /**

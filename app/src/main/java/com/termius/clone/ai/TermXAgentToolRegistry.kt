@@ -168,13 +168,24 @@ class TermXAgentToolRegistry(
                 "select_target_host" -> handleSelectTargetHost(args.optLong("hostId", 0L))
                 "detect_host_environment" -> handleDetectHostEnvironment()
                 "execute_shell_command" -> {
-                    val cmd = args.optString("command", "").trim()
+                    val cmd = args.optString("command", "")
+                        .ifBlank { args.optString("cmd", "") }
+                        .ifBlank { args.optString("shell", "") }
+                        .ifBlank { args.optString("script", "") }
+                        .ifBlank { args.optString("input", "") }
+                        .ifBlank { if (!argsJson.trim().startsWith("{")) argsJson.trim() else "" }
+                        .trim()
                     val timeout = args.optInt("timeoutSeconds", 15)
                     handleExecuteShellCommand(cmd, timeout)
                 }
                 "read_active_terminal_screen" -> handleReadActiveTerminalScreen()
                 "web_search" -> {
-                    val query = args.optString("query", "").trim()
+                    val query = args.optString("query", "")
+                        .ifBlank { args.optString("q", "") }
+                        .ifBlank { args.optString("keyword", "") }
+                        .ifBlank { args.optString("input", "") }
+                        .ifBlank { if (!argsJson.trim().startsWith("{")) argsJson.trim() else "" }
+                        .trim()
                     handleWebSearch(query)
                 }
                 else -> "未知工具名称: $name"
