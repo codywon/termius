@@ -125,7 +125,21 @@ class AiConfigManager(context: Context) {
         val json = prefs.getString(PREFIX_SESSION_MESSAGES + sessionId, null) ?: return emptyList()
         return try {
             val type = object : TypeToken<List<AiChatMessage>>() {}.type
-            gson.fromJson(json, type) ?: emptyList()
+            val rawList: List<AiChatMessage>? = gson.fromJson(json, type)
+            rawList?.map { msg ->
+                AiChatMessage(
+                    id = msg.id ?: java.util.UUID.randomUUID().toString(),
+                    role = msg.role ?: "user",
+                    content = msg.safeContent,
+                    reasoningContent = msg.safeReasoning,
+                    toolCallsJson = msg.safeToolCalls,
+                    toolCallId = msg.safeToolCallId,
+                    images = msg.safeImages,
+                    timestamp = msg.timestamp,
+                    isThinking = msg.isThinking,
+                    isError = msg.isError
+                )
+            } ?: emptyList()
         } catch (_: Exception) {
             emptyList()
         }

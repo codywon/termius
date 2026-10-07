@@ -138,15 +138,15 @@ object ContextCompactor {
      */
     private fun appendNormalizedMessages(messagesJson: JSONArray, list: List<AiChatMessage>) {
         val nonSystemList = list.filter { 
-            it.role != "system" && (it.content.isNotBlank() || it.reasoningContent.isNotBlank() || it.images.isNotEmpty()) 
+            it.role != "system" && (it.safeContent.isNotBlank() || it.safeReasoning.isNotBlank() || it.safeImages.isNotEmpty()) 
         }
         if (nonSystemList.isEmpty()) return
 
         for (msg in nonSystemList) {
             val role = msg.role
-            val textContent = if (msg.content.isNotBlank()) msg.content.trim() else msg.reasoningContent.trim()
+            val textContent = if (msg.safeContent.isNotBlank()) msg.safeContent.trim() else msg.safeReasoning.trim()
 
-            if (role == "user" && msg.images.isNotEmpty()) {
+            if (role == "user" && msg.safeImages.isNotEmpty()) {
                 // 工业级标准 OpenAI Vision API 结构 (全面兼容 GPT-4o, Claude 3.5, Gemini, Qwen-VL 等)
                 val contentArray = JSONArray()
                 if (textContent.isNotEmpty()) {
@@ -155,7 +155,7 @@ object ContextCompactor {
                         put("text", textContent)
                     })
                 }
-                for (imgData in msg.images) {
+                for (imgData in msg.safeImages) {
                     val formattedUrl = if (imgData.startsWith("data:")) imgData else "data:image/jpeg;base64,$imgData"
                     contentArray.put(JSONObject().apply {
                         put("type", "image_url")

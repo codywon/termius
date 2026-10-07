@@ -1274,8 +1274,8 @@ private fun AiChatMessageItem(
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
             // 思考过程 (折叠)
-            if (!isUser && message.reasoningContent.isNotBlank()) {
-                AiThinkingCard(reasoningContent = message.reasoningContent, modifier = Modifier.padding(bottom = 6.dp))
+            if (!isUser && message.safeReasoning.isNotBlank()) {
+                AiThinkingCard(reasoningContent = message.safeReasoning, modifier = Modifier.padding(bottom = 6.dp))
             }
 
             // 消息主体
@@ -1307,8 +1307,8 @@ private fun AiChatMessageItem(
                         SelectionContainer {
                             if (isUser) {
                                 Column {
-                                    if (message.images.isNotEmpty()) {
-                                        message.images.forEach { imgBase64 ->
+                                    if (message.safeImages.isNotEmpty()) {
+                                        message.safeImages.forEach { imgBase64 ->
                                             val bitmap = remember(imgBase64) { ImageUtils.decodeBase64ToImageBitmap(imgBase64) }
                                             if (bitmap != null) {
                                                 Image(
@@ -1319,15 +1319,15 @@ private fun AiChatMessageItem(
                                                         .heightIn(max = 240.dp)
                                                         .clip(RoundedCornerShape(8.dp))
                                                         .clickable { onImageClick(imgBase64) }
-                                                        .padding(bottom = if (message.content.isNotBlank()) 6.dp else 0.dp),
+                                                        .padding(bottom = if (message.safeContent.isNotBlank()) 6.dp else 0.dp),
                                                     contentScale = ContentScale.Crop
                                                 )
                                             }
                                         }
                                     }
-                                    if (message.content.isNotBlank()) {
+                                    if (message.safeContent.isNotBlank()) {
                                         Text(
-                                            text = message.content,
+                                            text = message.safeContent,
                                             color = Color.White,
                                             fontSize = 13.5.sp,
                                             lineHeight = 19.sp
@@ -1335,13 +1335,13 @@ private fun AiChatMessageItem(
                                     }
                                 }
                             } else {
-                                MarkdownRenderer(content = message.content, isUser = false)
+                                MarkdownRenderer(content = message.safeContent, isUser = false)
                             }
                         }
                     }
 
                     // AI 回复底部复制栏
-                    if (!isUser && !message.isError && message.content.isNotBlank()) {
+                    if (!isUser && !message.isError && message.safeContent.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier.align(Alignment.End),
@@ -1352,7 +1352,7 @@ private fun AiChatMessageItem(
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AI回答", message.content))
+                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AI回答", message.safeContent))
                                     }
                                     .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically

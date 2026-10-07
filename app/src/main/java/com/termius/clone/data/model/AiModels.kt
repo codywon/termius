@@ -31,8 +31,8 @@ data class AiChatSession(
  */
 data class AiChatMessage(
     val id: String = UUID.randomUUID().toString(),
-    val role: String, // "user", "assistant", "system", "tool"
-    val content: String,
+    val role: String = "user", // "user", "assistant", "system", "tool"
+    val content: String = "",
     val reasoningContent: String = "",
     val toolCallsJson: String = "",
     val toolCallId: String = "",
@@ -40,7 +40,14 @@ data class AiChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val isThinking: Boolean = false,
     val isError: Boolean = false
-)
+) {
+    // 工业级防御：杜绝任何 Gson 反序列化破坏 Kotlin 非空契约导致的 NPE
+    val safeContent: String get() = (content as String?) ?: ""
+    val safeReasoning: String get() = (reasoningContent as String?) ?: ""
+    val safeToolCalls: String get() = (toolCallsJson as String?) ?: ""
+    val safeToolCallId: String get() = (toolCallId as String?) ?: ""
+    val safeImages: List<String> get() = (images as List<String>?) ?: emptyList()
+}
 
 /**
  * 命令风险级别
