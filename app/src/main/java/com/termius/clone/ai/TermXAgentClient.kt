@@ -47,9 +47,25 @@ class TermXAgentClient(
                      - 若历史涉及网络或服务报错：立刻调用 execute_shell_command 现场执行 systemctl --failed 或 journalctl -xe -n 30 抓取错误！
                      - 若历史暂无明确线索：立刻调用 detect_host_environment 或执行 uptime、free -m 展开主动现场诊断！
                   ⚡ 行动是唯一的回复！必须立即调用工具继续推进运维！
-               👉 【引用上下文指令但历史中断时的现场重测铁律】：
-                  当用户表示“按以上建议清理磁盘”、“解决上面的报错”，若历史中因中途停止而缺少具体指标或诊断数据：
-                  ⚡ 绝不能直接回复空话！你应主动调用 execute_shell_command（如执行 df -h 查根目录、查看大文件或 journalctl）现场重新获取当前服务器状态并展开处置！
+               👉 【软件与服务升级/更新执行铁律 (针对“帮我升级xxx”、“更新xxx到最新版”等)】：
+                  当用户提出软件、服务或开源工具的升级需求（如升级 cliproxyapi、cpa manager plus、docker 容器、nginx、node 等）：
+                  ⚡ 严禁纸上谈兵！严禁要求用户先提供具体升级命令！严禁口头敷衍！
+                  ⚡ 你必须立即调用 execute_shell_command 主动展开排查并闭环推进：
+                     第一步【探测运行环境与部署形态】：
+                        - 立即执行探测命令排查该软件在当前主机上的存在形式：
+                          例如：ps aux | grep -i <app> 查看运行进程；
+                          例如：docker ps -a | grep -i <app> 查看是否为 Docker 容器；
+                          例如：systemctl list-unit-files | grep -i <app> 查看是否为系统服务；
+                          例如：which <app>、find / -name <app> 2>/dev/null 查找文件与安装目录。
+                     第二步【获取版本与升级方案】：
+                        - 若为 Docker 部署：检查其 compose 文件位置或镜像 tag，执行 docker compose pull && docker compose up -d 或 docker pull；
+                        - 若为 Git 源码部署：进入其目录执行 git pull 与相关构建/重启命令；
+                        - 若为特定专用或私有工具 (如 cliproxyapi / cpa manager plus)：若不确定更新方式，立即调用 web_search 搜索其开源更新指南，或直接检查其安装目录下的 update.sh / package.json / 脚本；
+                     第三步【执行升级与验证状态】：
+                        - 明确执行升级指令，并在升级后检查进程状态、端口与 --version 输出，给用户呈现完整的升级前后状态对比报告！
+               👉 【未连接目标主机时的排查引导铁律】：
+                  若当前未连接具体 SSH 主机而用户提出了运维或升级诉求：
+                  ⚡ 立刻调用 list_saved_hosts 获取用户保存的所有主机列表并展示，友好询问用户准备连接哪台主机进行操作。
             
             2. 【日常交流】：
                当用户仅进行常规问候或纯知识问答时，以专业、沉稳的工程师口吻作答，不调用工具。
@@ -176,87 +192,169 @@ class TermXAgentClient(
                     }
 
                     val reader = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8))
-                    var line: String? = reader.readLine()
                     val toolCallMap = mutableMapOf<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>()
+                    
+                    // 读取首个非空行以探测是 SSE 流式协议还是整包 JSON
+                    var firstLine: String? = null
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        if (line.isNotBlank()) {
+                            firstLine = line.trim()
+                            break
+                        }
+                    }
 
-                    while (line != null) {
-                        val trimmed = line.trim()
-                        if (trimmed.startsWith("data:")) {
-                            val payload = trimmed.substring(5).trim()
-                            if (payload == "[DONE]") {
-                                break
-                            }
+                    if (firstLine != null) {
+                        if (firstLine.startsWith("{") || (!firstLine.startsWith("data:") && !firstLine.startsWith(":"))) {
+                            // 模式 A: 服务端返回了整包 JSON (部分反代或非流式兼容)
+                            val remainingText = reader.use { it.readText() }
+                            val fullJsonStr = firstLine + "\n" + remainingText
                             try {
-                                val json = JSONObject(payload)
-                                val choices = json.optJSONArray("choices")
+                                val rootJson = JSONObject(fullJsonStr)
+                                if (rootJson.has("error")) {
+                                    val errObj = rootJson.optJSONObject("error")
+                                    val errMsg = errObj?.optString("message", "") ?: rootJson.optString("error", "未知业务异常")
+                                    onError("大模型服务返回业务错误: $errMsg")
+                                    return@withContext
+                                }
+
+                                val choices = rootJson.optJSONArray("choices")
                                 if (choices != null && choices.length() > 0) {
                                     val choice = choices.getJSONObject(0)
-                                    val delta = choice.optJSONObject("delta")
-                                    if (delta != null) {
-                                        // 思考链增量 (兼容 reasoning_content, reasoning, thought)
-                                        val reasoningDelta = if (!delta.isNull("reasoning_content")) {
-                                            delta.optString("reasoning_content", "")
-                                        } else if (!delta.isNull("reasoning")) {
-                                            delta.optString("reasoning", "")
-                                        } else if (!delta.isNull("thought")) {
-                                            delta.optString("thought", "")
+                                    val message = choice.optJSONObject("message")
+                                    if (message != null) {
+                                        // 思考链
+                                        val reasoning = if (!message.isNull("reasoning_content")) {
+                                            message.optString("reasoning_content", "")
+                                        } else if (!message.isNull("reasoning")) {
+                                            message.optString("reasoning", "")
                                         } else ""
-
-                                        if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
-                                            currentStepReasoning.append(reasoningDelta)
-                                            fullAccumulatedReasoning.append(reasoningDelta)
-                                            onChunk(reasoningDelta, true)
+                                        if (reasoning.isNotBlank()) {
+                                            currentStepReasoning.append(reasoning)
+                                            fullAccumulatedReasoning.append(reasoning)
+                                            onChunk(reasoning, true)
                                         }
 
-                                        // 正文打字机增量 (兼容 content, text)
-                                        val contentDelta = if (!delta.isNull("content")) {
-                                            delta.optString("content", "")
-                                        } else if (!delta.isNull("text")) {
-                                            delta.optString("text", "")
-                                        } else ""
-
-                                        if (contentDelta.isNotEmpty() && contentDelta != "null") {
-                                            currentStepContent.append(contentDelta)
-                                            fullAccumulatedContent.append(contentDelta)
-                                            onChunk(contentDelta, false)
+                                        // 正文
+                                        val content = message.optString("content", "")
+                                        if (content.isNotBlank() && content != "null") {
+                                            currentStepContent.append(content)
+                                            fullAccumulatedContent.append(content)
+                                            onChunk(content, false)
                                         }
 
-                                        // 工具调用增量
-                                        val deltaTools = delta.optJSONArray("tool_calls")
-                                        if (deltaTools != null) {
-                                            for (i in 0 until deltaTools.length()) {
-                                                val t = deltaTools.getJSONObject(i)
-                                                val idx = if (t.has("index")) t.optInt("index", i) else i
-                                                val id = if (!t.isNull("id")) t.optString("id", "") else ""
-                                                val func = t.optJSONObject("function")
-                                                val name = if (func != null && !func.isNull("name")) func.optString("name", "") else ""
-                                                val argsPart = if (func != null && !func.isNull("arguments")) func.optString("arguments", "") else ""
-
-                                                val triple = toolCallMap.getOrPut(idx) {
-                                                    Triple(StringBuilder(), StringBuilder(), StringBuilder())
-                                                }
-                                                if (id.isNotEmpty() && id != "null" && triple.first.isEmpty()) triple.first.append(id)
-                                                if (name.isNotEmpty() && name != "null" && triple.second.isEmpty()) triple.second.append(name)
-                                                if (argsPart.isNotEmpty()) triple.third.append(argsPart)
+                                        // 工具调用
+                                        val toolsArr = message.optJSONArray("tool_calls")
+                                        if (toolsArr != null) {
+                                            for (i in 0 until toolsArr.length()) {
+                                                val t = toolsArr.getJSONObject(i)
+                                                toolCallsDetected.add(t)
                                             }
-                                        }
-                                    } else {
-                                        // 非 delta 模式 (部分代理直接吐 message 或 text)
-                                        val fallbackMsg = choice.optJSONObject("message")
-                                        val fbContent = fallbackMsg?.optString("content", "") ?: choice.optString("text", "")
-                                        if (fbContent.isNotEmpty() && fbContent != "null") {
-                                            currentStepContent.append(fbContent)
-                                            fullAccumulatedContent.append(fbContent)
-                                            onChunk(fbContent, false)
                                         }
                                     }
                                 }
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) {
+                                Log.e(TAG, "解析整包 JSON 异常", e)
+                            }
+                        } else {
+                            // 模式 B: 标准 SSE 流式解析
+                            var currentLine: String? = firstLine
+                            while (currentLine != null) {
+                                val trimmed = currentLine.trim()
+                                if (trimmed.startsWith("data:")) {
+                                    val payload = trimmed.substring(5).trim()
+                                    if (payload == "[DONE]") {
+                                        break
+                                    }
+                                    try {
+                                        val json = JSONObject(payload)
+                                        if (json.has("error")) {
+                                            val errObj = json.optJSONObject("error")
+                                            val errMsg = errObj?.optString("message", "") ?: json.optString("error", "流式通信错误")
+                                            onError("大模型服务返回业务错误: $errMsg")
+                                            return@withContext
+                                        }
+
+                                        val choices = json.optJSONArray("choices")
+                                        if (choices != null && choices.length() > 0) {
+                                            val choice = choices.getJSONObject(0)
+                                            val delta = choice.optJSONObject("delta")
+                                            if (delta != null) {
+                                                // 思考链增量
+                                                val reasoningDelta = if (!delta.isNull("reasoning_content")) {
+                                                    delta.optString("reasoning_content", "")
+                                                } else if (!delta.isNull("reasoning")) {
+                                                    delta.optString("reasoning", "")
+                                                } else if (!delta.isNull("thought")) {
+                                                    delta.optString("thought", "")
+                                                } else ""
+
+                                                if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
+                                                    currentStepReasoning.append(reasoningDelta)
+                                                    fullAccumulatedReasoning.append(reasoningDelta)
+                                                    onChunk(reasoningDelta, true)
+                                                }
+
+                                                // 正文打字机增量
+                                                val contentDelta = if (!delta.isNull("content")) {
+                                                    delta.optString("content", "")
+                                                } else if (!delta.isNull("text")) {
+                                                    delta.optString("text", "")
+                                                } else ""
+
+                                                if (contentDelta.isNotEmpty() && contentDelta != "null") {
+                                                    currentStepContent.append(contentDelta)
+                                                    fullAccumulatedContent.append(contentDelta)
+                                                    onChunk(contentDelta, false)
+                                                }
+
+                                                // 工具调用增量
+                                                val deltaTools = delta.optJSONArray("tool_calls")
+                                                if (deltaTools != null) {
+                                                    for (i in 0 until deltaTools.length()) {
+                                                        val t = deltaTools.getJSONObject(i)
+                                                        val idx = if (t.has("index")) t.optInt("index", i) else i
+                                                        val id = if (!t.isNull("id")) t.optString("id", "") else ""
+                                                        val func = t.optJSONObject("function")
+                                                        val name = if (func != null && !func.isNull("name")) func.optString("name", "") else ""
+                                                        val argsPart = if (func != null && !func.isNull("arguments")) func.optString("arguments", "") else ""
+
+                                                        val triple = toolCallMap.getOrPut(idx) {
+                                                            Triple(StringBuilder(), StringBuilder(), StringBuilder())
+                                                        }
+                                                        if (id.isNotEmpty() && id != "null" && triple.first.isEmpty()) triple.first.append(id)
+                                                        if (name.isNotEmpty() && name != "null" && triple.second.isEmpty()) triple.second.append(name)
+                                                        if (argsPart.isNotEmpty()) triple.third.append(argsPart)
+                                                    }
+                                                }
+                                            } else {
+                                                // 非 delta 模式 (部分代理直接吐 message)
+                                                val fallbackMsg = choice.optJSONObject("message")
+                                                val fbContent = fallbackMsg?.optString("content", "") ?: choice.optString("text", "")
+                                                if (fbContent.isNotEmpty() && fbContent != "null") {
+                                                    currentStepContent.append(fbContent)
+                                                    fullAccumulatedContent.append(fbContent)
+                                                    onChunk(fbContent, false)
+                                                }
+                                                val fbTools = fallbackMsg?.optJSONArray("tool_calls")
+                                                if (fbTools != null) {
+                                                    for (i in 0 until fbTools.length()) {
+                                                        val t = fbTools.getJSONObject(i)
+                                                        toolCallsDetected.add(t)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "解析 SSE payload 块异常: ${e.message}")
+                                    }
+                                }
+                                currentLine = reader.readLine()
+                            }
                         }
-                        line = reader.readLine()
                     }
 
-                    // 汇总当前步解析出来的 Action
+                    // 汇总流式解析出来的 Action
                     for ((_, triple) in toolCallMap) {
                         val id = triple.first.toString().trim()
                         val name = triple.second.toString().trim()
@@ -283,7 +381,7 @@ class TermXAgentClient(
                 } catch (e: Exception) {
                     lastException = e
                     conn?.disconnect()
-                    if (attempt < 3 && currentStepContent.isEmpty()) {
+                    if (attempt < 3 && currentStepContent.isEmpty() && toolCallsDetected.isEmpty()) {
                         onToolAction("网络连接不稳定，正在进行第 $attempt 次自动重试...")
                         kotlinx.coroutines.delay(attempt * 800L)
                     } else {
@@ -311,12 +409,7 @@ class TermXAgentClient(
                     if (fullAccumulatedReasoning.isNotBlank()) {
                         fullAccumulatedReasoning.toString().trim()
                     } else {
-                        val lastUserText = conversationHistory.lastOrNull { it.role == "user" }?.content?.trim() ?: ""
-                        if (lastUserText.contains("继续") || lastUserText.contains("开始") || lastUserText.length <= 4) {
-                            "已接收到您的接续指令。当前已连接主机环境，建议直接点击下方快捷胶囊「🔍 系统全面体检」或输入排查需求，我将立即下发命令展开处置。"
-                        } else {
-                            "已接收到您的运维需求。若需要对主机进行状态诊断，建议直接点击下方「🔍 系统全面体检」或输入具体排障指令，我将立刻为您执行。"
-                        }
+                        "⚠️ 大模型服务本次未返回有效回答或工具调用。请确认您在设置中配置的模型支持当前功能（推荐使用 deepseek-chat 或通义千问兼容模型），或检查 API 额度与网络连接后再次重试。"
                     }
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
