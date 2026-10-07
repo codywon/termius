@@ -13,8 +13,8 @@ android {
         applicationId = "com.termius.clone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "2.0.9"
+        versionCode = 14
+        versionName = "2.0.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

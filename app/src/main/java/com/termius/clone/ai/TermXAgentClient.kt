@@ -201,13 +201,17 @@ class TermXAgentClient(
                 for (attempt in 1..2) {
                     try {
                         val baseUrl = config.baseUrl.trim().trimEnd('/')
-                        val endpoint = if (baseUrl.endsWith("/v1")) "$baseUrl/chat/completions" else "$baseUrl/v1/chat/completions"
+                        val endpoint = when {
+                            baseUrl.endsWith("/chat/completions") -> baseUrl
+                            baseUrl.endsWith("/v1") -> "$baseUrl/chat/completions"
+                            else -> "$baseUrl/v1/chat/completions"
+                        }
                         val url = URL(endpoint)
 
                         conn = (url.openConnection() as HttpURLConnection).apply {
                             requestMethod = "POST"
                             connectTimeout = 15_000
-                            readTimeout = 60_000
+                            readTimeout = 90_000 // 放宽至 90 秒，保障 CLI 代理在非流式模式下有充裕时间完成子进程执行
                             doOutput = true
                             doInput = true
                             setRequestProperty("Authorization", "Bearer ${config.apiKey.trim()}")
@@ -358,7 +362,7 @@ class TermXAgentClient(
                         break
                     } catch (e: Exception) {
                         conn?.disconnect()
-                        if (attempt < 2 && currentStepContent.isEmpty() && toolCallsDetected.isEmpty()) {
+                        if (attempt < 2 && currentStepContent.isBlank() && toolCallsDetected.isEmpty()) {
                             onToolAction("网络通信波动，正在进行第 $attempt 次自动重试...")
                             kotlinx.coroutines.delay(800L)
                         } else {
@@ -369,36 +373,49 @@ class TermXAgentClient(
                     }
                 }
 
+                // 严格清洗纯空白不可见字符 (如单个换行符 \n 或空格)，杜绝误判
+                if (currentStepContent.isBlank()) {
+                    currentStepContent.clear()
+                }
+                if (currentStepReasoning.isBlank()) {
+                    currentStepReasoning.clear()
+                }
+
                 // 统一双轨文本 ReAct 工具抽取
-                if (toolCallsDetected.isEmpty() && currentStepContent.isNotEmpty()) {
+                if (toolCallsDetected.isEmpty() && currentStepContent.isNotBlank()) {
                     val textTools = extractTextualToolCalls(currentStepContent.toString())
                     if (textTools.isNotEmpty()) {
                         toolCallsDetected.addAll(textTools)
                     }
                 }
 
-                // 核心自愈判断：是否拿到了任何有效数据 (正文、思考链或工具调用)
-                val hasValidOutput = currentStepContent.isNotEmpty() ||
-                        currentStepReasoning.isNotEmpty() ||
+                // 核心自愈判断：是否拿到了任何有效数据 (必须使用 isNotBlank 严格过滤纯空白字符)
+                val hasValidOutput = currentStepContent.isNotBlank() ||
+                        currentStepReasoning.isNotBlank() ||
                         toolCallsDetected.isNotEmpty()
 
                 if (hasValidOutput) {
                     stepSucceeded = true
                 } else {
-                    Log.w(TAG, "本次 Tier 请求返回空白 (useNativeTools=$currentNativeTools, useStream=$currentStream)")
+                    // 恢复全量累积缓存，杜绝无效空白字符残留污染
+                    fullAccumulatedContent.setLength(stepStartContentLength)
+                    fullAccumulatedReasoning.setLength(stepStartReasoningLength)
+
+                    Log.w(TAG, "本次 Tier 请求未获取到有效非空白数据 (useNativeTools=$currentNativeTools, useStream=$currentStream)")
                     if (useNativeTools) {
                         useNativeTools = false
-                        onToolAction("模型未返回工具指令，自适应降级为纯文本工具模式...")
+                        onToolAction("模型未返回有效工具调用，自适应降级为纯文本工具模式重试...")
                     } else if (useStream) {
                         useStream = false
-                        onToolAction("流式传输未接收到数据 (CLIProxyAPI 兼容降级)，自适应切换为非流式稳定模式...")
+                        onToolAction("流式传输未接收到有效数据 (CLIProxyAPI 兼容降级)，自适应切换为非流式稳定模式重试...")
                     }
                 }
             }
 
             if (!stepSucceeded) {
+                val sampleSnippet = lastRawSnippet.trim().take(300)
                 val rawSampleText = when {
-                    lastRawSnippet.isNotBlank() -> "\n\n【服务端原始响应采样】:\n```\n${lastRawSnippet.take(240)}\n```"
+                    sampleSnippet.isNotBlank() -> "\n\n【服务端原始响应采样镜像】:\n```\n$sampleSnippet\n```"
                     else -> "\n\n【响应诊断】: 服务端返回了 HTTP 200，但数据体为空 (0 字节空响应)。"
                 }
                 val failMsg = "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$rawSampleText\n\n💡 排查建议：\n1. 若使用 CLIProxyAPI，请检查其控制台日志是否提示上游 CLI (如 Claude/Gemini/Codex) 登录失效、限流或命令超时；\n2. 检查设置中的模型名称是否与后端代理配置一致；\n3. 检查 API 额度与网络连接状态。"
@@ -411,13 +428,19 @@ class TermXAgentClient(
                 finalAnswerContent = currentStepContent
                 onToolAction("")
                 val rawAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
-                val safeAnswer = if (rawAnswer.isNotEmpty() && rawAnswer != "null") {
+                val safeAnswer = if (rawAnswer.isNotBlank() && rawAnswer != "null") {
                     rawAnswer
                 } else {
                     if (fullAccumulatedReasoning.isNotBlank()) {
                         fullAccumulatedReasoning.toString().trim()
                     } else {
-                        "⚠️ 大模型服务本次未返回有效回答或工具调用。已尝试多级自愈降级链路。建议检查后端代理日志及上游授权状态后再次重试。"
+                        val sampleSnippet = lastRawSnippet.trim().take(300)
+                        val diagDetail = if (sampleSnippet.isNotBlank()) {
+                            "\n\n【服务端原始响应采样镜像】:\n```\n$sampleSnippet\n```"
+                        } else {
+                            "\n\n【传输诊断】: 服务端返回了 HTTP 200，但数据流中无任何有效文字 (仅接收到空白换行或 0 字节)。"
+                        }
+                        "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$diagDetail\n\n💡 建议排查方向：\n1. 检查后端代理 (如 CLIProxyAPI) 日志，确认上游 CLI (如 Claude/Gemini/Codex) 登录认证是否有效、是否发生进程超时或被防火墙拦截；\n2. 检查设置中的模型名称是否与后端代理所支持的模型一致；\n3. 检查 API 额度与主机网络连通性。"
                     }
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
@@ -496,77 +519,95 @@ class TermXAgentClient(
         toolCallsDetected: MutableList<JSONObject>,
         onChunk: (delta: String, isThinking: Boolean) -> Unit
     ) {
+        val trimmed = fullJsonStr.trim()
+        if (trimmed.isEmpty()) return
+
         try {
-            val rootJson = JSONObject(fullJsonStr)
-            if (rootJson.has("error")) {
-                val errObj = rootJson.optJSONObject("error")
-                val errMsg = errObj?.optString("message", "") ?: rootJson.optString("error", "未知业务异常")
-                Log.w(TAG, "非流式返回业务错误: $errMsg")
-                return
-            }
-
-            var extractedReasoning = ""
-            var extractedContent = ""
-
-            val choices = rootJson.optJSONArray("choices")
-            if (choices != null && choices.length() > 0) {
-                val choice = choices.getJSONObject(0)
-                val message = choice.optJSONObject("message")
-
-                extractedReasoning = if (message != null) {
-                    extractContentText(message, "reasoning_content")
-                        .ifEmpty { extractContentText(message, "reasoning") }
-                        .ifEmpty { extractContentText(message, "thought") }
-                } else {
-                    extractContentText(choice, "reasoning_content")
-                        .ifEmpty { extractContentText(choice, "reasoning") }
+            if (trimmed.startsWith("{")) {
+                val rootJson = JSONObject(trimmed)
+                if (rootJson.has("error")) {
+                    val errObj = rootJson.optJSONObject("error")
+                    val errMsg = errObj?.optString("message", "") ?: rootJson.optString("error", "未知业务异常")
+                    Log.w(TAG, "非流式返回业务错误: $errMsg")
+                    return
                 }
 
-                extractedContent = if (message != null) {
-                    extractContentText(message, "content")
-                        .ifEmpty { extractContentText(message, "text") }
-                } else {
-                    extractContentText(choice, "text")
-                        .ifEmpty { extractContentText(choice, "content") }
-                }
+                var extractedReasoning = ""
+                var extractedContent = ""
 
-                val toolsArr = message?.optJSONArray("tool_calls") ?: choice.optJSONArray("tool_calls")
-                if (toolsArr != null) {
-                    for (i in 0 until toolsArr.length()) {
-                        toolCallsDetected.add(normalizeToolCall(toolsArr.getJSONObject(i)))
+                val choices = rootJson.optJSONArray("choices")
+                if (choices != null && choices.length() > 0) {
+                    val choice = choices.getJSONObject(0)
+                    val message = choice.optJSONObject("message")
+
+                    extractedReasoning = if (message != null) {
+                        extractContentText(message, "reasoning_content")
+                            .ifEmpty { extractContentText(message, "reasoning") }
+                            .ifEmpty { extractContentText(message, "thought") }
+                    } else {
+                        extractContentText(choice, "reasoning_content")
+                            .ifEmpty { extractContentText(choice, "reasoning") }
+                    }
+
+                    extractedContent = if (message != null) {
+                        extractContentText(message, "content")
+                            .ifEmpty { extractContentText(message, "text") }
+                    } else {
+                        extractContentText(choice, "text")
+                            .ifEmpty { extractContentText(choice, "content") }
+                    }
+
+                    val toolsArr = message?.optJSONArray("tool_calls") ?: choice.optJSONArray("tool_calls")
+                    if (toolsArr != null) {
+                        for (i in 0 until toolsArr.length()) {
+                            toolCallsDetected.add(normalizeToolCall(toolsArr.getJSONObject(i)))
+                        }
+                    }
+                } else {
+                    // 顶层提取 (兼容各类轻量 CLI 包装代理、Ollama、自定义反代)
+                    extractedReasoning = extractContentText(rootJson, "reasoning_content")
+                        .ifEmpty { extractContentText(rootJson, "reasoning") }
+                        .ifEmpty { extractContentText(rootJson, "thought") }
+
+                    extractedContent = extractContentText(rootJson, "content")
+                        .ifEmpty { extractContentText(rootJson, "text") }
+                        .ifEmpty { extractContentText(rootJson, "response") }
+                        .ifEmpty { extractContentText(rootJson, "result") }
+                        .ifEmpty { extractContentText(rootJson, "output") }
+                        .ifEmpty { extractContentText(rootJson, "answer") }
+
+                    val topTools = rootJson.optJSONArray("tool_calls")
+                    if (topTools != null) {
+                        for (i in 0 until topTools.length()) {
+                            toolCallsDetected.add(normalizeToolCall(topTools.getJSONObject(i)))
+                        }
                     }
                 }
-            } else {
-                // 顶层提取 (兼容 Ollama 与各类轻量 CLI 包装代理)
-                extractedReasoning = extractContentText(rootJson, "reasoning_content")
-                    .ifEmpty { extractContentText(rootJson, "reasoning") }
-                    .ifEmpty { extractContentText(rootJson, "thought") }
 
-                extractedContent = extractContentText(rootJson, "content")
-                    .ifEmpty { extractContentText(rootJson, "text") }
-                    .ifEmpty { extractContentText(rootJson, "response") }
-
-                val topTools = rootJson.optJSONArray("tool_calls")
-                if (topTools != null) {
-                    for (i in 0 until topTools.length()) {
-                        toolCallsDetected.add(normalizeToolCall(topTools.getJSONObject(i)))
-                    }
+                if (extractedReasoning.isNotBlank() && extractedReasoning != "null") {
+                    currentStepReasoning.append(extractedReasoning)
+                    fullAccumulatedReasoning.append(extractedReasoning)
+                    onChunk(extractedReasoning, true)
                 }
-            }
 
-            if (extractedReasoning.isNotBlank() && extractedReasoning != "null") {
-                currentStepReasoning.append(extractedReasoning)
-                fullAccumulatedReasoning.append(extractedReasoning)
-                onChunk(extractedReasoning, true)
-            }
-
-            if (extractedContent.isNotBlank() && extractedContent != "null") {
-                currentStepContent.append(extractedContent)
-                fullAccumulatedContent.append(extractedContent)
-                onChunk(extractedContent, false)
+                if (extractedContent.isNotBlank() && extractedContent != "null") {
+                    currentStepContent.append(extractedContent)
+                    fullAccumulatedContent.append(extractedContent)
+                    onChunk(extractedContent, false)
+                }
+            } else if (!trimmed.startsWith("<")) {
+                // 服务端以纯文本形式直接返回了大模型输出 (部分反代透传 stdout)
+                currentStepContent.append(trimmed)
+                fullAccumulatedContent.append(trimmed)
+                onChunk(trimmed, false)
             }
         } catch (e: Exception) {
             Log.e(TAG, "解析整包 JSON 异常: ${e.message}", e)
+            if (!trimmed.startsWith("<") && trimmed.isNotBlank()) {
+                currentStepContent.append(trimmed)
+                fullAccumulatedContent.append(trimmed)
+                onChunk(trimmed, false)
+            }
         }
     }
 
@@ -718,18 +759,19 @@ class TermXAgentClient(
         } else if (!t.isNull("name")) {
             t.optString("name", "")
         } else ""
-        val args = if (func != null && !func.isNull("arguments")) {
-            func.optString("arguments", "{}")
-        } else if (!t.isNull("arguments")) {
-            t.optString("arguments", "{}")
-        } else "{}"
+        val rawArgs = func?.opt("arguments") ?: t.opt("arguments") ?: func?.opt("parameters") ?: t.opt("parameters")
+        val args = when (rawArgs) {
+            is JSONObject -> rawArgs.toString()
+            is String -> rawArgs
+            else -> rawArgs?.toString() ?: "{}"
+        }
 
         return JSONObject().apply {
             put("id", id)
             put("type", "function")
             put("function", JSONObject().apply {
                 put("name", name)
-                put("arguments", args)
+                put("arguments", if (args.isNotBlank()) args else "{}")
             })
         }
     }

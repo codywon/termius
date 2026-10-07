@@ -517,10 +517,26 @@ private fun extractContentText(jsonObj: JSONObject, key: String): String {
 
 #### 💡 避坑准则与成熟方案
 1. **严格游标回滚**：在 Step 初始记录 `stepStartContentLength` 与 `stepStartReasoningLength`，任何降级重试前强制 `fullAccumulatedContent.setLength(stepStartContentLength)` 回滚到初始位置；
-2. **透明诊断采样镜像 (Diagnostic Mirror)**：每次 HTTP 交互记录收到的原始报文前 240 字符。若经历三级自愈链路后依然为空，将服务端实际返回的原始数据采样（如 `0 字节空响应`、网关 HTML、特定代理错误）直接渲染在错误卡片中，并针对 `CLIProxyAPI` 提供上游 CLI 授权与超时的针对性排查指引，彻底消除黑盒盲猜。
+### 9. 流式通信不可见空白字符陷阱 (Whitespace False-Positive) 与降级状态机过早截断规避
+
+#### ⚠️ 踩坑现象
+客户端设计了完善的三级自愈链路（原生流式 &rarr; 文本流式 &rarr; 稳定非流式），但在遇到特定反代网关时，界面依然弹出没有实际内容的兜底警告，且未展示任何诊断信息，三级自愈链路似乎根本没有触发。
+
+#### 🔍 根因剖析
+1. **空白字符误判 (Whitespace False-Positive)**：许多反代网关在遇到上游模型异常或提前截断流前，会吐出一个仅包含单个换行符 `\n` 或空格的 chunk；
+2. **逻辑断层 (Logic Discrepancy)**：
+   - 降级状态机使用的是 `currentStepContent.isNotEmpty()`。因为 `"\n".length > 0`，状态机**误判为已成功获取到输出**，从而直接停止后续的 Tier 2 / Tier 3 降级；
+   - 但在终答判定阶段，代码却使用 `rawAnswer.trim().isNotEmpty()`，此时 `\n` 被去除变为空字符串 `""`，从而瞬间落入静态兜底卡片！
+3. **后果**：一个微不足道的 `\n` 骗过了状态机，导致非流式自愈链路未能执行。
+
+#### 💡 避坑准则与成熟方案
+1. **全链路严格使用 `isNotBlank()`**：降级判定必须严格使用 `isNotBlank()`，绝不能使用 `isNotEmpty()`；
+2. **状态机前置过滤与清空**：在解析完毕后，若 `currentStepContent.isBlank()`，强制执行 `currentStepContent.clear()` 并回滚累积缓存长度；
+3. **终答兜底全面挂载诊断采样镜像**：即便最终依然为空，在终答卡片中也必须将 `lastRawSnippet` 打印出来，彻底杜绝任何无信息的静态套话。
 
 ---
 
 > **总结**：移动端终端与运维应用不是简单的“UI 套壳”，其核心在于**严谨的 VT 字符流状态机**、**线程安全的底层缓冲区**、**高延迟移动网络下的毫秒级缓存响应策略**、**单通道传输防并发踩踏互斥机制**、**Pi-Agent 双轨工具派发与三级自愈容错架构**、以及**对移动端屏幕尺寸与软键盘交互特性的深度敬畏**。遵循上述最佳实践，方能打造出媲美桌面级终端体验的硬核移动生产力工具。
+
 
 

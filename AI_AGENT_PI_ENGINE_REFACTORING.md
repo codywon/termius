@@ -1,6 +1,6 @@
 # TermX AI SRE 智能体深度演进与 Pi-Agent 双轨兼容架构设计总结
 
-> **版本追踪**：`v2.0.7` (Code 11) &rarr; `v2.0.8` (Code 12) &rarr; `v2.0.9` (Code 13)  
+> **版本追踪**：`v2.0.7` (Code 11) &rarr; `v2.0.8` (Code 12) &rarr; `v2.0.9` (Code 13) &rarr; `v2.0.10` (Code 14)  
 > **核心主题**：软件升级自主执行铁律、假冒套话根除、Pi-Agent 双轨 ReAct 引擎、CLIProxyAPI 流式 Null 根治与三级自愈容错架构
 
 ---
@@ -272,7 +272,11 @@ if (!stepSucceeded) {
    - GitHub Actions 自动化构建全绿。
 3. **v2.0.9 (`versionCode = 13`)**：
    - 落地三级自愈容错状态机（流式原生 &rarr; 文本流式 &rarr; 稳定非流式）；
-   - 彻底治愈了 `CLIProxyAPI` 与各种私有反代网关在流式模式下恒定返回 null 或截断的已知 Bug；
-   - 全面打通 4 类主流纯文本 ReAct 语法拦截；
-   - 引入透明诊断采样镜像，彻底消除黑盒盲猜；
-   - GitHub Actions 构建全绿并正式发布 Release。
+   - 彻底治愈了 `CLIProxyAPI` 与私有反代网关在流式模式下恒定返回 null 或截断的已知 Bug；
+   - 全面打通 4 类主流纯文本 ReAct 语法拦截。
+4. **v2.0.10 (`versionCode = 14`) · 根治“空白字符陷阱”与终答诊断镜像全覆盖**：
+   - **破案根因（空白字符误判）**：反代网关在流式断开前常吐出一个仅包含换行符 `\n` 或空格的 chunk，旧版使用 `isNotEmpty()` 导致 `hasValidOutput` 误判为成功，从而将三级自愈状态机提前掐断（Tier 2 / Tier 3 降级未被触发），最终在终答判定时又因 trim 为空而落入警告；
+   - **彻底重构判定**：全量改用 `isNotBlank()` 严格校验，若为纯空白字符强制清空并不予计入成功，确保 100% 顺畅流转至 Tier 3 稳定非流式模式；
+   - **终答诊断镜像全面下沉**：在 Final Answer 兜底逻辑中同步挂载 `lastRawSnippet` 诊断采样镜像，彻底消灭任何静态无信息报错；
+   - **非流式全能容错**：支持纯文本命令行透传、顶层 `result`/`output`/`answer` 字段提取与 `JSONObject` 格式的 `arguments`/`parameters` 参数解析；
+   - **GitHub Actions 构建全绿并正式发布**。
