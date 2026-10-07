@@ -128,7 +128,33 @@ private fun extractContentText(jsonObj: JSONObject, key: String): String {
 
 ---
 
-## 五、 发布与验证状态
+## 五、 v2.0.9 深度进化：彻底治愈 CLIProxyAPI 流式 Null 与复杂反代网关
+
+在 `v2.0.8` 发布后，针对用户反馈的特定代理（如自建的 `CLIProxyAPI` / `CPA Manager Plus`）依然偶发空响应的问题，我们进行了深度网络报文与网关源码剖析：
+
+### 1. CLIProxyAPI 的流式缺陷本质
+- **环境特点**：CLIProxyAPI（`router-for-me/CLIProxyAPI`）是一个将 Claude Code、Codex CLI、Gemini CLI 等本地命令行包装为 OpenAI API 规范的开源反代网关。
+- **致命弱点**：在 `stream: true` 模式下，针对特定上游，其 SSE 管道极容易出现 `delta: {"content": null}` 或因为进程缓冲机制导致连接提前断开、吐出 0 字节 payload；而在 `stream: false`（普通非流式 POST，`Accept: application/json`）模式下，它会完整等待本地 CLI 进程执行完毕，并 100% 稳定返回标准 JSON！
+- **旧版死穴**：旧版降级重试时依然使用 `stream: true`，导致两次流式尝试全被 CLIProxyAPI 的流式 null bug 拦截。
+
+### 2. v2.0.9 核心自愈升级与护城河架构
+1. **三级全自动自愈容错链路 (Multi-Tier Resilient Engine)**：
+   - **Tier 1 (原生流式)**：`useStream = true, useNativeTools = true`（首选最优体验）；
+   - **Tier 2 (流式纯文本)**：`useStream = true, useNativeTools = false`（若遇 tools 报错或空响应，切入流式 ReAct 纯文本模式）；
+   - **Tier 3 (终极稳定兜底)**：`useStream = false, useNativeTools = false`（若流式仍返回空白，立即切为非流式单次 POST 请求，`Accept: application/json`），直接终结 CLIProxyAPI 流式 null 缺陷！
+   - **会话持久化记忆**：一旦某一层判定成功，后续执行步骤自动继承该稳定模式，避免用户反复等待超时重试。
+2. **全能型字段提取器 (Universal Extractor)**：
+   - 兼容 SSE 与整包 JSON 中的 `choices[0].delta`、`choices[0].text`（传统 Completion 结构）、`choices[0].content`；
+   - 兼容顶层 `text`、`content`、`response` 等各类轻量 CLI 包装代理结构。
+3. **ReAct 工具块全协议支持**：
+   - 全面支持 ````tool:name````、````json {"name": "..."}````、`<tool_call>...</tool_call>` 以及 LangChain 经典 `Action: xxx\nAction Input: yyy` 4 种主流文本调用格式。
+4. **状态回滚与原始响应透明镜像 (Diagnostic Mirror)**：
+   - 降级重试前彻底清除脏数据缓存；
+   - 若三级自愈链路全部尝试后服务端依然返回空，错误卡片将直接把服务端实际返回的原始数据采样（前 240 字符，如空字节或网关报错）直观呈现给用户，并附带针对 CLIProxyAPI 的排查建议，彻底打破黑盒盲猜。
+
+---
+
+## 六、 发布与验证状态
 
 1. **v2.0.7 (`versionCode = 11`)**：
    - 彻底移除了假冒推诿套话；
@@ -137,4 +163,9 @@ private fun extractContentText(jsonObj: JSONObject, key: String): String {
 2. **v2.0.8 (`versionCode = 12`)**：
    - 完整落地了 Pi-Agent 双轨工具派发引擎与自适应免 tools 降级自愈；
    - 彻底解决了不同大模型、中转代理与反向网关之间的兼容性壁垒；
-   - CI/CD 自动化构建全绿，正式发布。
+   - CI/CD 自动化构建全绿。
+3. **v2.0.9 (`versionCode = 13`)**：
+   - 落地三级自愈容错引擎（流式原生 &rarr; 流式免tools &rarr; 非流式稳定单包）；
+   - 专克 `CLIProxyAPI` 流式 null bug 与截断丢包；
+   - 集成透明诊断采样镜像，彻底消除黑盒盲猜；
+   - CI/CD 自动化构建全绿发布。
