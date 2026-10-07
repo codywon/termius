@@ -38,8 +38,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.ui.graphics.graphicsLayer
@@ -117,7 +121,13 @@ fun TerminalAccessoryBar(
     var isEditMode by remember { mutableStateOf(false) }
     var editingCommand by remember { mutableStateOf<QuickCommand?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showResetConfirmDialog by remember { mutableStateOf(false) }
     var contextMenuCommand by remember { mutableStateOf<QuickCommand?>(null) }
+
+    var isComboMode by remember { mutableStateOf(false) }
+    var isShiftActive by remember { mutableStateOf(false) }
+    var isWinActive by remember { mutableStateOf(false) }
+    var isCapsActive by remember { mutableStateOf(false) }
 
     // 如果处于 HIDDEN 状态，不渲染主体
     if (currentMode == TerminalInputMode.HIDDEN) {
@@ -374,9 +384,57 @@ fun TerminalAccessoryBar(
                     }
                 )
 
+                // 当处于快捷键编辑模式时，在关闭按钮左侧展示 [还原] 与 [完成] 胶囊 (参考网易 UU 远程)
+                if (currentMode == TerminalInputMode.SHORTCUTS && isEditMode) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 6.dp),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .height(if (isLandscape) 22.dp else 28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { showResetConfirmDialog = true },
+                            shape = RoundedCornerShape(6.dp),
+                            color = theme.surfaceContainerHigh,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = "还原", tint = theme.textSecondary, modifier = Modifier.size(13.dp))
+                                Text("还原", color = theme.textSecondary, fontSize = if (isLandscape) 10.sp else 11.sp)
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .height(if (isLandscape) 22.dp else 28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { isEditMode = false },
+                            shape = RoundedCornerShape(6.dp),
+                            color = theme.primary.copy(alpha = 0.2f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "完成", tint = theme.primary, modifier = Modifier.size(13.dp))
+                                Text("完成", color = theme.primary, fontSize = if (isLandscape) 10.sp else 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
                 // 关闭按钮 (X)
                 IconButton(
                     onClick = {
+                        isEditMode = false
                         keyboardController?.hide()
                         onModeChange(TerminalInputMode.HIDDEN)
                     },
@@ -469,130 +527,115 @@ fun TerminalAccessoryBar(
             }
 
             TerminalInputMode.SHORTCUTS -> {
-                // 快捷键模式：竖屏 270dp 3列，横屏 148dp 5列紧凑排布 (参考网易 UU 远程，只占大半屏，终端清晰可见)
-                val shortcutsPanelHeight = if (isLandscape) 148.dp else 270.dp
+                // 快捷键模式：完全对齐网易 UU 远程规范，彻底移除左侧狭窄工具条，100% 宽度用于卡片网格
+                // 竖屏 3 列 (首项为编辑/添加卡片)，横屏 5 列
+                val shortcutsPanelHeight = if (isLandscape) 148.dp else 268.dp
                 val gridColumns = if (isLandscape) 5 else 3
+                val actionCardHeight = if (isLandscape) 38.dp else 52.dp
 
-                Row(
+                val gridState = rememberLazyGridState()
+                val reorderState = rememberReorderableLazyGridState(
+                    gridState = gridState,
+                    commandsProvider = { commands },
+                    onMove = { fromIndex, toIndex ->
+                        QuickCommandManager.move(fromIndex, toIndex)
+                    }
+                )
+
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(shortcutsPanelHeight)
-                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
                 ) {
-                    // 左侧工具操作列 (紧凑优雅型，仅占 50dp，将 85%+ 空间全部留给卡片网格)
-                    Column(
-                        modifier = Modifier
-                            .width(if (isLandscape) 44.dp else 50.dp)
-                            .fillMaxHeight(),
-                        verticalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // 编辑 / 完成 按钮
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(if (isLandscape) 38.dp else 48.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { isEditMode = !isEditMode },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isEditMode) theme.primary.copy(alpha = 0.2f) else theme.surfaceContainerHigh,
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isEditMode) theme.primary else theme.outline.copy(alpha = 0.4f)
-                            )
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = if (isEditMode) Icons.Default.Check else Icons.Default.Edit,
-                                    contentDescription = "Edit",
-                                    tint = if (isEditMode) theme.primary else theme.textSecondary,
-                                    modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text(
-                                    text = if (isEditMode) "完成" else "编辑",
-                                    color = if (isEditMode) theme.primary else theme.textSecondary,
-                                    fontSize = if (isLandscape) 9.sp else 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-
-                        // 新增指令按钮
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(if (isLandscape) 38.dp else 48.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showAddDialog = true },
-                            shape = RoundedCornerShape(8.dp),
-                            color = theme.surfaceContainerHigh,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "Add",
-                                    tint = theme.primary,
-                                    modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text("添加", color = theme.primary, fontSize = if (isLandscape) 9.sp else 10.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-
-                        if (isEditMode) {
-                            // 恢复默认按钮
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(if (isLandscape) 34.dp else 44.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { QuickCommandManager.resetToDefaults() },
-                                shape = RoundedCornerShape(8.dp),
-                                color = theme.surfaceContainer,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = theme.textMuted, modifier = Modifier.size(13.dp))
-                                    Text("重置", color = theme.textMuted, fontSize = 9.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    val gridState = rememberLazyGridState()
-                    val reorderState = rememberReorderableLazyGridState(
-                        gridState = gridState,
-                        onMove = { fromIndex, toIndex ->
-                            QuickCommandManager.move(fromIndex, toIndex)
-                        }
-                    )
-
-                    // 右侧指令网格 (自适应列数：竖屏 3 列，横屏 5 列)
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
                         state = gridState,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(bottom = 6.dp)
                     ) {
+                        // 首项功能卡片：非编辑状态为 [ ✏️ 编辑 ]，编辑状态为 [ ➕ 添加 ] (带虚线边框)
+                        item(key = "__ACTION_CARD__") {
+                            if (!isEditMode) {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(actionCardHeight)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { isEditMode = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = theme.surfaceContainerHigh,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.35f))
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "编辑快捷键",
+                                            tint = theme.primary,
+                                            modifier = Modifier.size(if (isLandscape) 15.dp else 18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Text(
+                                            text = "编辑",
+                                            color = theme.textPrimary,
+                                            fontSize = if (isLandscape) 10.sp else 11.5.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            } else {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(actionCardHeight)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .drawWithContent {
+                                            drawContent()
+                                            val stroke = Stroke(
+                                                width = 1.5.dp.toPx(),
+                                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
+                                            )
+                                            drawRoundRect(
+                                                color = theme.primary.copy(alpha = 0.8f),
+                                                size = size,
+                                                cornerRadius = CornerRadius(8.dp.toPx()),
+                                                style = stroke
+                                            )
+                                        }
+                                        .clickable { showAddDialog = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = theme.primary.copy(alpha = 0.08f)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "添加快捷指令",
+                                            tint = theme.primary,
+                                            modifier = Modifier.size(if (isLandscape) 17.dp else 20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Text(
+                                            text = "添加",
+                                            color = theme.primary,
+                                            fontSize = if (isLandscape) 10.sp else 11.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 后续快捷指令卡片列表
                         itemsIndexed(commands, key = { _, item -> item.id }) { index, item ->
                             val isDraggingThis = reorderState.draggingKey == item.id
                             Box(
@@ -620,104 +663,172 @@ fun TerminalAccessoryBar(
             }
 
             TerminalInputMode.PC_KEYBOARD -> {
-                // 电脑全键盘模式：竖屏 270dp，横屏 148dp 精致紧凑 4 行 (参考网易 UU 远程，只占大半屏，终端清晰可见)
-                val pcPanelHeight = if (isLandscape) 148.dp else 270.dp
-                val rowSpacing = if (isLandscape) 3.dp else 5.dp
+                // 电脑全键盘模式：100% 吸收网易 UU 远程 5 行 6 列对称矩阵与组合键锁定模式
+                val pcPanelHeight = if (isLandscape) 150.dp else 268.dp
+                val keyBtnHeight = if (isLandscape) 21.dp else 34.dp
+                val keyFontSize = if (isLandscape) 9.sp else 11.sp
+                val rowSpacing = if (isLandscape) 2.dp else 4.dp
+                val colSpacing = if (isLandscape) 2.dp else 3.dp
+
+                // 按键分发与组合键消耗控制助手
+                fun sendPcKey(key: String, consumeModifiers: Boolean = true) {
+                    onSendKey(key)
+                    if (!isComboMode && consumeModifiers) {
+                        if (isCtrlActive) onToggleCtrl()
+                        if (isAltActive) onToggleAlt()
+                        if (isShiftActive) isShiftActive = false
+                        if (isWinActive) isWinActive = false
+                    }
+                }
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(pcPanelHeight)
-                        .padding(horizontal = 6.dp, vertical = if (isLandscape) 4.dp else 6.dp),
+                        .padding(horizontal = 6.dp, vertical = if (isLandscape) 2.dp else 4.dp),
                     verticalArrangement = Arrangement.spacedBy(rowSpacing)
                 ) {
-                    // 第 1 行：F1 - F12
+                    // 第 0 行：组合键模式复选框 + 修饰键群 (Ctrl, Shift, Alt, Win)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 3.dp else 4.dp)
+                            .height(if (isLandscape) 24.dp else 34.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
                     ) {
-                        AccessoryButton("F1", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F1) }
-                        AccessoryButton("F2", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F2) }
-                        AccessoryButton("F3", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F3) }
-                        AccessoryButton("F4", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F4) }
-                        AccessoryButton("F5", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F5) }
-                        AccessoryButton("F6", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F6) }
-                        AccessoryButton("F7", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F7) }
-                        AccessoryButton("F8", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F8) }
-                        AccessoryButton("F9", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F9) }
-                        AccessoryButton("F10", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F10) }
-                        AccessoryButton("F11", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F11) }
-                        AccessoryButton("F12", height = accessoryBtnHeight, fontSize = accessoryFontSize) { onSendKey(TerminalKeyCodes.F12) }
-                    }
+                        // 左侧：组合键模式复选框 (勾选后修饰键常亮不自动弹起)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { isComboMode = !isComboMode }
+                                .padding(end = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = isComboMode,
+                                onCheckedChange = { isComboMode = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = theme.primary,
+                                    uncheckedColor = theme.outline
+                                ),
+                                modifier = Modifier.size(if (isLandscape) 20.dp else 26.dp)
+                            )
+                            Text(
+                                text = "组合键模式",
+                                fontSize = if (isLandscape) 9.5.sp else 11.sp,
+                                color = if (isComboMode) theme.primary else theme.textPrimary,
+                                fontWeight = if (isComboMode) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
 
-                    // 第 2 行：编辑控制键
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 3.dp else 4.dp)
-                    ) {
-                        AccessoryButton("ESC", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.ESC) }
-                        AccessoryButton("TAB", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.TAB) }
+                        Spacer(modifier = Modifier.width(2.dp))
+
+                        // 右侧：4 个修饰键大胶囊
                         AccessoryButton(
-                            "CTRL",
-                            height = accessoryBtnHeight,
-                            fontSize = accessoryFontSize,
+                            label = "Ctrl",
                             isActive = isCtrlActive,
-                            activeBg = ObsidianPrimary.copy(alpha = 0.25f),
-                            activeBorder = ObsidianPrimary,
-                            modifier = Modifier.weight(1.1f)
+                            activeBg = theme.primary.copy(alpha = 0.25f),
+                            activeBorder = theme.primary,
+                            height = if (isLandscape) 22.dp else 34.dp,
+                            fontSize = keyFontSize,
+                            modifier = Modifier.weight(1f)
                         ) { onToggleCtrl() }
+
                         AccessoryButton(
-                            "ALT",
-                            height = accessoryBtnHeight,
-                            fontSize = accessoryFontSize,
+                            label = "Shift",
+                            isActive = isShiftActive,
+                            activeBg = theme.primary.copy(alpha = 0.25f),
+                            activeBorder = theme.primary,
+                            height = if (isLandscape) 22.dp else 34.dp,
+                            fontSize = keyFontSize,
+                            modifier = Modifier.weight(1f)
+                        ) { isShiftActive = !isShiftActive }
+
+                        AccessoryButton(
+                            label = "Alt",
                             isActive = isAltActive,
-                            activeBg = ObsidianPrimary.copy(alpha = 0.25f),
-                            activeBorder = ObsidianPrimary,
-                            modifier = Modifier.weight(1.1f)
+                            activeBg = theme.primary.copy(alpha = 0.25f),
+                            activeBorder = theme.primary,
+                            height = if (isLandscape) 22.dp else 34.dp,
+                            fontSize = keyFontSize,
+                            modifier = Modifier.weight(1f)
                         ) { onToggleAlt() }
-                        AccessoryButton("INS", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.INSERT) }
-                        AccessoryButton("DEL", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.DELETE) }
-                    }
 
-                    // 第 3 行：翻页与跳转
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 3.dp else 4.dp)
-                    ) {
-                        AccessoryButton("HOME", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.HOME) }
-                        AccessoryButton("END", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.END) }
-                        AccessoryButton("PGUP", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_UP) }
-                        AccessoryButton("PGDN", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.PAGE_DOWN) }
-                        AccessoryButton("⌫ 退格", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1.3f)) { onSendKey(TerminalKeyCodes.BACKSPACE) }
                         AccessoryButton(
-                            "ENTER",
-                            height = accessoryBtnHeight,
-                            fontSize = accessoryFontSize,
-                            textColor = Color.Black,
-                            bgColor = ObsidianPrimary,
-                            modifier = Modifier.weight(1.4f)
-                        ) { onSendKey(TerminalKeyCodes.ENTER) }
+                            label = "Win",
+                            isActive = isWinActive,
+                            activeBg = theme.primary.copy(alpha = 0.25f),
+                            activeBorder = theme.primary,
+                            height = if (isLandscape) 22.dp else 34.dp,
+                            fontSize = keyFontSize,
+                            modifier = Modifier.weight(1f)
+                        ) { isWinActive = !isWinActive }
                     }
 
-                    // 第 4 行：十字全向键 + 核心符号
+                    // 主体 5 行 6 列标准矩阵 (零横向滚动，一览无余)
+                    // Row 1: Esc, Tab, ~ `, PrtScr, ScrLK, Pause
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 3.dp else 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
                     ) {
-                        AccessoryButton("/", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(0.9f)) { onSendKey("/") }
-                        AccessoryButton("|", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(0.9f)) { onSendKey("|") }
-                        AccessoryButton("~", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(0.9f)) { onSendKey("~") }
-                        AccessoryButton(":", height = accessoryBtnHeight, fontSize = accessoryFontSize, modifier = Modifier.weight(0.9f)) { onSendKey(":") }
+                        AccessoryButton("Esc", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ESC) }
+                        AccessoryButton("Tab", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.TAB) }
+                        AccessoryButton("~ `", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey("~") }
+                        AccessoryButton("PrtScr", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey("\u001B[32~") }
+                        AccessoryButton("ScrLK", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey("\u001B[33~") }
+                        AccessoryButton("Pause", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey("\u001B[34~") }
+                    }
 
-                        Spacer(modifier = Modifier.width(if (isLandscape) 3.dp else 4.dp))
+                    // Row 2: F1, F2, F3, Ins, Home, PgUp
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
+                    ) {
+                        AccessoryButton("F1", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F1) }
+                        AccessoryButton("F2", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F2) }
+                        AccessoryButton("F3", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F3) }
+                        AccessoryButton("Ins", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.INSERT) }
+                        AccessoryButton("Home", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.HOME) }
+                        AccessoryButton("PgUp", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.PAGE_UP) }
+                    }
 
-                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = accessoryBtnHeight, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.ARROW_LEFT) }
-                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = accessoryBtnHeight, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.ARROW_UP) }
-                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = accessoryBtnHeight, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.ARROW_DOWN) }
-                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = accessoryBtnHeight, modifier = Modifier.weight(1f)) { onSendKey(TerminalKeyCodes.ARROW_RIGHT) }
+                    // Row 3: F4, F5, F6, Del, End, PgDn
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
+                    ) {
+                        AccessoryButton("F4", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F4) }
+                        AccessoryButton("F5", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F5) }
+                        AccessoryButton("F6", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F6) }
+                        AccessoryButton("Del", height = keyBtnHeight, fontSize = keyFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.DELETE, consumeModifiers = false) }
+                        AccessoryButton("End", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.END) }
+                        AccessoryButton("PgDn", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.PAGE_DOWN) }
+                    }
+
+                    // Row 4: F7, F8, F9, Caps, Enter, ▲
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
+                    ) {
+                        AccessoryButton("F7", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F7) }
+                        AccessoryButton("F8", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F8) }
+                        AccessoryButton("F9", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F9) }
+                        AccessoryButton("Caps", height = keyBtnHeight, fontSize = keyFontSize, isActive = isCapsActive, activeBg = theme.primary.copy(alpha = 0.25f), modifier = Modifier.weight(1f)) { isCapsActive = !isCapsActive }
+                        AccessoryButton("Enter", height = keyBtnHeight, fontSize = keyFontSize, textColor = if (theme.isDark) Color.Black else Color.White, bgColor = theme.primary, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ENTER, consumeModifiers = false) }
+                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_UP, consumeModifiers = false) }
+                    }
+
+                    // Row 5: F10, F11, F12, ◀, ▼, ▶
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(colSpacing)
+                    ) {
+                        AccessoryButton("F10", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F10) }
+                        AccessoryButton("F11", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F11) }
+                        AccessoryButton("F12", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F12) }
+                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_LEFT, consumeModifiers = false) }
+                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_DOWN, consumeModifiers = false) }
+                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_RIGHT, consumeModifiers = false) }
                     }
                 }
             }
@@ -904,6 +1015,49 @@ fun TerminalAccessoryBar(
             containerColor = theme.surfaceContainerLow
         )
     }
+    // 恢复默认快捷指令确认弹窗
+    if (showResetConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmDialog = false },
+            title = {
+                Text(
+                    text = "恢复默认快捷指令",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = theme.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "确定要将快捷指令重置为系统默认配置吗？自定义添加的指令将被清除。",
+                    fontSize = 13.sp,
+                    color = theme.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        QuickCommandManager.resetToDefaults()
+                        showResetConfirmDialog = false
+                        Toast.makeText(context, "已恢复默认快捷指令", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = theme.primary,
+                        contentColor = if (theme.isDark) Color.Black else Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("确定恢复", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmDialog = false }) {
+                    Text("取消", color = theme.textSecondary)
+                }
+            },
+            containerColor = theme.surfaceContainerLow
+        )
+    }
 }
 
 /**
@@ -968,6 +1122,7 @@ private fun UUTabItem(
  */
 class ReorderableLazyGridState(
     val gridState: LazyGridState,
+    val commandsProvider: () -> List<QuickCommand>,
     val onMove: (fromIndex: Int, toIndex: Int) -> Unit
 ) {
     var draggingKey by mutableStateOf<Any?>(null)
@@ -1001,10 +1156,9 @@ class ReorderableLazyGridState(
         val currentCenterX = currentItem.offset.x + currentItem.size.width / 2f + dragOffset.x
         val currentCenterY = currentItem.offset.y + currentItem.size.height / 2f + dragOffset.y
 
-        // 关键防抖 2：严格的核心区死区判定 (Core Box Hit-Test)
-        // 目标卡片四周内缩 22% 宽度与 20% 高度，只有手指真正深潜入目标卡片的核心区域才判定意图交换
+        // 关键防抖 2：严格的核心区死区判定 (Core Box Hit-Test)，自动跳过首项操作卡片
         val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { item ->
-            if (item.key == draggingKey) return@firstOrNull false
+            if (item.key == draggingKey || item.key == "__ACTION_CARD__") return@firstOrNull false
             val coreMarginX = item.size.width * 0.22f
             val coreMarginY = item.size.height * 0.20f
             val coreLeft = item.offset.x + coreMarginX
@@ -1015,20 +1169,23 @@ class ReorderableLazyGridState(
             currentCenterX in coreLeft..coreRight && currentCenterY in coreTop..coreBottom
         }
 
-        if (targetItem != null && targetItem.index != currentIndex) {
-            val targetIndex = targetItem.index
+        if (targetItem != null) {
+            val cmds = commandsProvider()
+            val fromIndex = cmds.indexOfFirst { it.id == draggingKey }
+            val toIndex = cmds.indexOfFirst { it.id == targetItem.key }
+            if (fromIndex >= 0 && toIndex >= 0 && fromIndex != toIndex) {
+                // 计算位移差，保持视觉绝对位置恒定无瞬移跳变
+                val deltaX = currentItem.offset.x - targetItem.offset.x
+                val deltaY = currentItem.offset.y - targetItem.offset.y
 
-            // 计算位移差，保持视觉绝对位置恒定无瞬移跳变
-            val deltaX = currentItem.offset.x - targetItem.offset.x
-            val deltaY = currentItem.offset.y - targetItem.offset.y
+                onMove(fromIndex, toIndex)
+                currentDraggingIndex = toIndex
+                lastSwapTimestamp = now
+                dragOffset += Offset(deltaX.toFloat(), deltaY.toFloat())
 
-            onMove(currentIndex, targetIndex)
-            currentDraggingIndex = targetIndex
-            lastSwapTimestamp = now
-            dragOffset += Offset(deltaX.toFloat(), deltaY.toFloat())
-
-            // 仅在成功换位瞬间触发一次清脆刻度感震动，杜绝高频乱震
-            haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                // 仅在成功换位瞬间触发一次清脆刻度感震动，杜绝高频乱震
+                haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
         }
     }
 
@@ -1048,21 +1205,22 @@ class ReorderableLazyGridState(
 @Composable
 fun rememberReorderableLazyGridState(
     gridState: LazyGridState,
+    commandsProvider: () -> List<QuickCommand>,
     onMove: (fromIndex: Int, toIndex: Int) -> Unit
 ): ReorderableLazyGridState {
     return remember(gridState) {
-        ReorderableLazyGridState(gridState, onMove)
+        ReorderableLazyGridState(gridState, commandsProvider, onMove)
     }
 }
 
 /**
- * 快捷指令网格卡片 (双行显示：上部标题 + 下部中文注释)
+ * 快捷指令网格卡片 (双行显示：上部标题 + 下部中文注释，对齐网易 UU 远程规范)
  * 极致去图标化极简重构：
- * 1. 零视觉污染：彻底移除卡片上拥挤繁琐的铅笔图标与拖动手柄，文字排布舒展大气；
+ * 1. 纯净双行：上行大号加粗命令名，下行灰色注释，一目了然；
  * 2. 随心编辑：编辑模式下轻触卡片任意位置，直接弹出快捷指令编辑对话框；
  * 3. 全卡即手柄：编辑模式下按住卡片任意位置 (长按 100ms) 即可直接抓起丝滑拖拽；
- * 4. 优雅删除：仅在编辑模式右上角保留一个精致微小的红色半透明删除角标；
- * 5. 醒目语义：Ctrl+C 与 Ctrl+V 专属高亮区分，日常运维一目了然。
+ * 4. 醒目删除：编辑模式右上角展示网易 UU 风格的圆形红色减号角标，一触即删；
+ * 5. 语义高亮：Ctrl+C 与 Ctrl+V 专属高亮区分，日常运维一目了然。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1148,11 +1306,11 @@ private fun QuickCommandCard(
                 .fillMaxSize()
                 .padding(horizontal = 4.dp, vertical = if (isLandscape) 2.dp else 4.dp)
         ) {
-            // 中心标题与副标题 (纯净居中排布，零多余图标遮挡，文字空间释放 100%)
+            // 中心标题与副标题 (双行居中排布，舒展大气)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = if (isEditMode) 8.dp else 2.dp),
+                    .padding(horizontal = if (isEditMode) 12.dp else 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -1164,39 +1322,42 @@ private fun QuickCommandCard(
                 Text(
                     text = command.title,
                     color = titleColor,
-                    fontSize = if (isLandscape) 11.sp else 12.sp,
+                    fontSize = if (isLandscape) 10.5.sp else 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (command.subtitle.isNotBlank() && !isLandscape) {
+                if (command.subtitle.isNotBlank()) {
                     Text(
                         text = command.subtitle,
                         color = theme.textSecondary,
-                        fontSize = 10.sp,
+                        fontSize = if (isLandscape) 8.5.sp else 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            // 编辑状态下仅在右上角保留一个精致小巧的深红半透明圆底删除角标 (完全不遮挡文字)
+            // 编辑状态下在右上角展示精致正圆红色减号角标 (参考网易 UU 远程，一触即删)
             if (isEditMode) {
                 Box(
                     modifier = Modifier
-                        .size(if (isLandscape) 16.dp else 18.dp)
+                        .size(if (isLandscape) 17.dp else 19.dp)
                         .align(Alignment.TopEnd)
                         .clip(CircleShape)
-                        .background(Color(0xFFEF4444).copy(alpha = 0.18f))
-                        .clickable(onClick = onDelete),
+                        .background(Color(0xFFE53935))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onDelete()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Delete",
-                        tint = Color(0xFFEF4444),
-                        modifier = Modifier.size(if (isLandscape) 9.dp else 11.dp)
+                    Box(
+                        modifier = Modifier
+                            .width(if (isLandscape) 7.dp else 9.dp)
+                            .height(2.dp)
+                            .background(Color.White, RoundedCornerShape(1.dp))
                     )
                 }
             }
