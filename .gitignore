@@ -14,3 +14,7 @@
 .cxx
 local.properties
 /build-output
+
+# 架构演进与内部开发经验总结文档 (仅本地保留，不上传远程仓库)
+AI_AGENT_PI_ENGINE_REFACTORING.md
+DEVELOPMENT_LESSONS.md
