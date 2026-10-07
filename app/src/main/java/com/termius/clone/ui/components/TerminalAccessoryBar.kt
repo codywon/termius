@@ -56,6 +56,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -338,62 +340,51 @@ fun TerminalAccessoryBar(
             color = theme.surfaceContainerLow,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (isLandscape) 30.dp else 42.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Tab 1: 输入法
-                UUTabItem(
-                    title = "输入法",
-                    icon = Icons.Default.Keyboard,
-                    isSelected = currentMode == TerminalInputMode.IME,
-                    isLandscape = isLandscape,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        onModeChange(TerminalInputMode.IME)
-                        onRequestShowKeyboard()
-                    }
-                )
-
-                // Tab 2: 快捷键
-                UUTabItem(
-                    title = "快捷键",
-                    icon = Icons.Default.FlashOn,
-                    isSelected = currentMode == TerminalInputMode.SHORTCUTS,
-                    isLandscape = isLandscape,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        keyboardController?.hide()
-                        onModeChange(TerminalInputMode.SHORTCUTS)
-                    }
-                )
-
-                // Tab 3: 电脑键盘
-                UUTabItem(
-                    title = "电脑键盘",
-                    icon = Icons.Default.Laptop,
-                    isSelected = currentMode == TerminalInputMode.PC_KEYBOARD,
-                    isLandscape = isLandscape,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        keyboardController?.hide()
-                        onModeChange(TerminalInputMode.PC_KEYBOARD)
-                    }
-                )
-
-                // 当处于快捷键编辑模式时，在关闭按钮左侧展示 [还原] 与 [完成] 胶囊 (参考网易 UU 远程)
-                if (currentMode == TerminalInputMode.SHORTCUTS && isEditMode) {
+            if (currentMode == TerminalInputMode.SHORTCUTS && isEditMode) {
+                // 快捷键编辑模式专享状态栏 (100% 对齐网易 UU 远程规范，绝不挤压 Tab，空间极尽从容)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (isLandscape) 32.dp else 42.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // 左侧：优雅提示 "编辑快捷键" 与交互指引
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 6.dp),
-                        modifier = Modifier.padding(end = 4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = theme.primary,
+                            modifier = Modifier.size(if (isLandscape) 14.dp else 17.dp)
+                        )
+                        Text(
+                            text = "编辑快捷键",
+                            fontSize = if (isLandscape) 12.sp else 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = theme.textPrimary
+                        )
+                        if (!isLandscape) {
+                            Text(
+                                text = "· 轻触编辑，长按拖动",
+                                fontSize = 11.sp,
+                                color = theme.textMuted
+                            )
+                        }
+                    }
+
+                    // 右侧：[ ↺ 还原 ] 与 [ ✓ 完成 ] 操作胶囊 (参考网易 UU 远程)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // 还原
                         Surface(
                             modifier = Modifier
-                                .height(if (isLandscape) 22.dp else 28.dp)
+                                .height(if (isLandscape) 24.dp else 28.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable { showResetConfirmDialog = true },
                             shape = RoundedCornerShape(6.dp),
@@ -401,51 +392,119 @@ fun TerminalAccessoryBar(
                             border = androidx.compose.foundation.BorderStroke(1.dp, theme.outline.copy(alpha = 0.4f))
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp),
+                                modifier = Modifier.padding(horizontal = if (isLandscape) 8.dp else 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = "还原", tint = theme.textSecondary, modifier = Modifier.size(13.dp))
-                                Text("还原", color = theme.textSecondary, fontSize = if (isLandscape) 10.sp else 11.sp)
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = "还原",
+                                    tint = theme.textSecondary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    "还原",
+                                    color = theme.textSecondary,
+                                    fontSize = if (isLandscape) 10.5.sp else 11.5.sp
+                                )
                             }
                         }
 
+                        // 完成
                         Surface(
                             modifier = Modifier
-                                .height(if (isLandscape) 22.dp else 28.dp)
+                                .height(if (isLandscape) 24.dp else 28.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable { isEditMode = false },
                             shape = RoundedCornerShape(6.dp),
-                            color = theme.primary.copy(alpha = 0.2f),
+                            color = theme.primary,
                             border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp),
+                                modifier = Modifier.padding(horizontal = if (isLandscape) 10.dp else 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Icon(Icons.Default.Check, contentDescription = "完成", tint = theme.primary, modifier = Modifier.size(13.dp))
-                                Text("完成", color = theme.primary, fontSize = if (isLandscape) 10.sp else 11.sp, fontWeight = FontWeight.Bold)
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "完成",
+                                    tint = if (theme.isDark) Color.Black else Color.White,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    "完成",
+                                    color = if (theme.isDark) Color.Black else Color.White,
+                                    fontSize = if (isLandscape) 10.5.sp else 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
                 }
-
-                // 关闭按钮 (X)
-                IconButton(
-                    onClick = {
-                        isEditMode = false
-                        keyboardController?.hide()
-                        onModeChange(TerminalInputMode.HIDDEN)
-                    },
-                    modifier = Modifier.size(if (isLandscape) 26.dp else 32.dp)
+            } else {
+                // 常规状态栏：输入法 | 快捷键 | 电脑键盘 | 关闭
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (isLandscape) 30.dp else 42.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Cancel,
-                        contentDescription = "Close Bar",
-                        tint = ObsidianTextMuted,
-                        modifier = Modifier.size(if (isLandscape) 16.dp else 20.dp)
+                    // Tab 1: 输入法
+                    UUTabItem(
+                        title = "输入法",
+                        icon = Icons.Default.Keyboard,
+                        isSelected = currentMode == TerminalInputMode.IME,
+                        isLandscape = isLandscape,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            onModeChange(TerminalInputMode.IME)
+                            onRequestShowKeyboard()
+                        }
                     )
+
+                    // Tab 2: 快捷键
+                    UUTabItem(
+                        title = "快捷键",
+                        icon = Icons.Default.FlashOn,
+                        isSelected = currentMode == TerminalInputMode.SHORTCUTS,
+                        isLandscape = isLandscape,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            keyboardController?.hide()
+                            onModeChange(TerminalInputMode.SHORTCUTS)
+                        }
+                    )
+
+                    // Tab 3: 电脑键盘
+                    UUTabItem(
+                        title = "电脑键盘",
+                        icon = Icons.Default.Laptop,
+                        isSelected = currentMode == TerminalInputMode.PC_KEYBOARD,
+                        isLandscape = isLandscape,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            keyboardController?.hide()
+                            onModeChange(TerminalInputMode.PC_KEYBOARD)
+                        }
+                    )
+
+                    // 关闭按钮 (X)
+                    IconButton(
+                        onClick = {
+                            isEditMode = false
+                            keyboardController?.hide()
+                            onModeChange(TerminalInputMode.HIDDEN)
+                        },
+                        modifier = Modifier.size(if (isLandscape) 26.dp else 32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Cancel,
+                            contentDescription = "Close Bar",
+                            tint = ObsidianTextMuted,
+                            modifier = Modifier.size(if (isLandscape) 16.dp else 20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -529,9 +588,9 @@ fun TerminalAccessoryBar(
             TerminalInputMode.SHORTCUTS -> {
                 // 快捷键模式：完全对齐网易 UU 远程规范，彻底移除左侧狭窄工具条，100% 宽度用于卡片网格
                 // 竖屏 3 列 (首项为编辑/添加卡片)，横屏 5 列
-                val shortcutsPanelHeight = if (isLandscape) 148.dp else 268.dp
+                val shortcutsPanelHeight = if (isLandscape) 162.dp else 268.dp
                 val gridColumns = if (isLandscape) 5 else 3
-                val actionCardHeight = if (isLandscape) 38.dp else 52.dp
+                val actionCardHeight = if (isLandscape) 46.dp else 52.dp
 
                 val gridState = rememberLazyGridState()
                 val reorderState = rememberReorderableLazyGridState(
@@ -580,12 +639,17 @@ fun TerminalAccessoryBar(
                                             tint = theme.primary,
                                             modifier = Modifier.size(if (isLandscape) 15.dp else 18.dp)
                                         )
-                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Spacer(modifier = Modifier.height(if (isLandscape) 1.dp else 2.dp))
                                         Text(
                                             text = "编辑",
                                             color = theme.textPrimary,
                                             fontSize = if (isLandscape) 10.sp else 11.5.sp,
-                                            fontWeight = FontWeight.Medium
+                                            fontWeight = FontWeight.Medium,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(
+                                                    includeFontPadding = false
+                                                )
+                                            )
                                         )
                                     }
                                 }
@@ -623,12 +687,17 @@ fun TerminalAccessoryBar(
                                             tint = theme.primary,
                                             modifier = Modifier.size(if (isLandscape) 17.dp else 20.dp)
                                         )
-                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Spacer(modifier = Modifier.height(if (isLandscape) 1.dp else 2.dp))
                                         Text(
                                             text = "添加",
                                             color = theme.primary,
                                             fontSize = if (isLandscape) 10.sp else 11.5.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(
+                                                    includeFontPadding = false
+                                                )
+                                            )
                                         )
                                     }
                                 }
@@ -717,7 +786,12 @@ fun TerminalAccessoryBar(
                                 text = "组合键模式",
                                 fontSize = if (isLandscape) 9.5.sp else 11.sp,
                                 color = if (isComboMode) theme.primary else theme.textPrimary,
-                                fontWeight = if (isComboMode) FontWeight.SemiBold else FontWeight.Normal
+                                fontWeight = if (isComboMode) FontWeight.SemiBold else FontWeight.Normal,
+                                style = TextStyle(
+                                    platformStyle = PlatformTextStyle(
+                                        includeFontPadding = false
+                                    )
+                                )
                             )
                         }
 
@@ -1241,7 +1315,7 @@ private fun QuickCommandCard(
     val haptic = LocalHapticFeedback.current
 
     val isDraggingThis = reorderState.draggingKey == command.id
-    val cardHeight = if (isLandscape) 38.dp else 52.dp
+    val cardHeight = if (isLandscape) 46.dp else 52.dp
 
     Surface(
         modifier = Modifier
@@ -1304,13 +1378,13 @@ private fun QuickCommandCard(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 4.dp, vertical = if (isLandscape) 2.dp else 4.dp)
+                .padding(horizontal = 4.dp, vertical = if (isLandscape) 2.dp else 3.dp)
         ) {
-            // 中心标题与副标题 (双行居中排布，舒展大气)
+            // 中心标题与副标题 (双行居中排布，舒展大气，精准锁定行高与消减多余边距)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = if (isEditMode) 12.dp else 4.dp),
+                    .padding(horizontal = if (isEditMode) 10.dp else 2.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -1323,18 +1397,31 @@ private fun QuickCommandCard(
                     text = command.title,
                     color = titleColor,
                     fontSize = if (isLandscape) 10.5.sp else 12.sp,
+                    lineHeight = if (isLandscape) 13.sp else 15.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(
+                            includeFontPadding = false
+                        )
+                    )
                 )
                 if (command.subtitle.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(if (isLandscape) 1.dp else 2.dp))
                     Text(
                         text = command.subtitle,
                         color = theme.textSecondary,
                         fontSize = if (isLandscape) 8.5.sp else 10.sp,
+                        lineHeight = if (isLandscape) 11.sp else 13.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            platformStyle = PlatformTextStyle(
+                                includeFontPadding = false
+                            )
+                        )
                     )
                 }
             }
@@ -1563,7 +1650,12 @@ private fun AccessoryButton(
                 color = displayTextColor,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
-                softWrap = false
+                softWrap = false,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(
+                        includeFontPadding = false
+                    )
+                )
             )
         }
     }
