@@ -164,18 +164,22 @@ fun TerminalScreen(
                                             softWrap = false
                                         )
 
-                                        if (sessions.size > 1) {
-                                            IconButton(
-                                                onClick = { SessionManager.closeSession(context, session.id) },
-                                                modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Close,
-                                                    contentDescription = "Close",
-                                                    tint = if (isSelected) theme.primary.copy(alpha = 0.7f) else theme.textMuted,
-                                                    modifier = Modifier.size(if (isLandscape) 10.dp else 12.dp)
-                                                )
-                                            }
+                                        IconButton(
+                                            onClick = {
+                                                val isLast = sessions.size <= 1
+                                                SessionManager.closeSession(context, session.id)
+                                                if (isLast) {
+                                                    onNavigateBack()
+                                                }
+                                            },
+                                            modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Close",
+                                                tint = if (isSelected) theme.primary.copy(alpha = 0.7f) else theme.textMuted,
+                                                modifier = Modifier.size(if (isLandscape) 10.dp else 12.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -188,30 +192,26 @@ fun TerminalScreen(
                                     activeState == SessionState.CONNECTING ||
                                     activeState == SessionState.AUTHENTICATING
 
-                            if (isConnected) {
-                                IconButton(
-                                    onClick = { showDisconnectDialog = true },
-                                    modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
-                                ) {
-                                    Icon(
-                                        Icons.Default.PowerSettingsNew,
-                                        contentDescription = if (Strings.isZh) "断开连接" else "Disconnect",
-                                        tint = Color(0xFFEF4444).copy(alpha = 0.88f),
-                                        modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp)
-                                    )
-                                }
-                            } else {
-                                IconButton(
-                                    onClick = { activeSession.reconnect() },
-                                    modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
-                                ) {
-                                    Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = if (Strings.isZh) "重新连接" else "Reconnect",
-                                        tint = Color(0xFF22C55E),
-                                        modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp)
-                                    )
-                                }
+                            IconButton(
+                                onClick = {
+                                    if (isConnected) {
+                                        showDisconnectDialog = true
+                                    } else {
+                                        val isLast = sessions.size <= 1
+                                        SessionManager.closeSession(context, activeSession.id)
+                                        if (isLast) {
+                                            onNavigateBack()
+                                        }
+                                    }
+                                },
+                                modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                            ) {
+                                Icon(
+                                    Icons.Default.PowerSettingsNew,
+                                    contentDescription = if (isConnected) (if (Strings.isZh) "断开连接" else "Disconnect") else (if (Strings.isZh) "关闭标签" else "Close Tab"),
+                                    tint = if (isConnected) Color(0xFFEF4444).copy(alpha = 0.88f) else theme.textMuted,
+                                    modifier = if (isLandscape) Modifier.size(18.dp) else Modifier.size(24.dp)
+                                )
                             }
                         }
 
