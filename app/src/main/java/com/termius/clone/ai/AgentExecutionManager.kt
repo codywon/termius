@@ -146,11 +146,7 @@ object AgentExecutionManager {
                         _state.value = _state.value.copy(currentActionText = action)
                     },
                     onError = { err ->
-                        val errMsg = AiChatMessage(
-                            role = "assistant",
-                            content = "❌ $err",
-                            isError = true
-                        )
+                        val errMsg = AiChatMessage.assistant(content = "❌ $err", isError = true)
                         val afterError = updatedMessages + errMsg
                         configManager.saveMessages(sessionId, afterError)
                         _state.value = _state.value.copy(
@@ -162,11 +158,7 @@ object AgentExecutionManager {
                         }
                     },
                     onComplete = { full, reasoning ->
-                        val assistantMsg = AiChatMessage(
-                            role = "assistant",
-                            content = full,
-                            reasoningContent = reasoning
-                        )
+                        val assistantMsg = AiChatMessage.assistant(content = full, reasoning = reasoning)
                         val afterDone = updatedMessages + assistantMsg
                         configManager.saveMessages(sessionId, afterDone)
                         _state.value = _state.value.copy(
@@ -182,11 +174,7 @@ object AgentExecutionManager {
                 Log.i(TAG, "Agent task was cancelled by user")
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error in Agent execution", e)
-                val errMsg = AiChatMessage(
-                    role = "assistant",
-                    content = "❌ 执行异常中断: ${e.message}",
-                    isError = true
-                )
+                val errMsg = AiChatMessage.assistant(content = "❌ 执行异常中断: ${e.message}", isError = true)
                 val afterError = updatedMessages + errMsg
                 configManager.saveMessages(sessionId, afterError)
                 _state.value = _state.value.copy(

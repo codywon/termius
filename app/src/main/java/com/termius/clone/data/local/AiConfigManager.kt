@@ -138,6 +138,7 @@ class AiConfigManager(context: Context) {
                     attachedFileName = msg.safeAttachedFileName,
                     attachedFileSize = msg.attachedFileSize,
                     fileContextText = msg.safeFileContextText,
+                    inlineImages = msg.safeInlineImages,
                     timestamp = msg.timestamp,
                     isThinking = msg.isThinking,
                     isError = msg.isError

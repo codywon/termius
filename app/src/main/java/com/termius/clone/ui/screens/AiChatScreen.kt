@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.termius.clone.util.ChatContentSanitizer
 import com.termius.clone.util.ImageUtils
+import com.termius.clone.util.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,6 +49,7 @@ import androidx.compose.ui.Modifier
 import android.content.res.Configuration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +70,9 @@ import com.termius.clone.data.model.DangerousActionRequest
 import com.termius.clone.terminal.session.SessionManager
 import com.termius.clone.ui.components.AiActionOrbitStatusCard
 import com.termius.clone.ui.components.AiThinkingCard
+import com.termius.clone.ui.components.ChatImageCard
+import com.termius.clone.ui.components.ChatImageState
+import com.termius.clone.ui.components.rememberChatImageState
 import com.termius.clone.ui.components.DangerousActionApprovalCard
 import com.termius.clone.ui.components.MarkdownRenderer
 import com.termius.clone.ui.theme.LocalAppTheme
@@ -130,7 +136,7 @@ fun AiChatScreen(
     // 附件状态 (支持图片视觉解析与日志/配置文本提取)
     var attachedFile by remember { mutableStateOf<AttachedFileInfo?>(null) }
     var showAttachMenu by remember { mutableStateOf(false) }
-    var previewingImageBase64 by remember { mutableStateOf<String?>(null) } // 全屏大图预览状态
+    var previewingImage by remember { mutableStateOf<ImageBitmap?>(null) } // 全屏大图预览状态
 
     val handleSelectedUri: (Uri) -> Unit = { uri ->
         scope.launch(Dispatchers.IO) {
@@ -643,7 +649,7 @@ fun AiChatScreen(
                         AiChatMessageItem(
                             message = msg,
                             onRetry = { sendMessage(it) },
-                            onImageClick = { previewingImageBase64 = it }
+                            onImageOpen = { previewingImage = it }
                         )
                     }
 
@@ -685,8 +691,26 @@ fun AiChatScreen(
                                             modifier = Modifier.weight(1f, fill = false)
                                         ) {
                                             Box(modifier = Modifier.padding(14.dp)) {
+                                                val sanitizedChunk = remember(currentChunkText) {
+                                                    ChatContentSanitizer.sanitize(currentChunkText, isStreaming = true)
+                                                }
                                                 SelectionContainer {
-                                                    MarkdownRenderer(content = currentChunkText, isUser = false)
+                                                    Column {
+                                                        MarkdownRenderer(
+                                                            content = sanitizedChunk.text,
+                                                            isUser = false,
+                                                            inlineImages = sanitizedChunk.images,
+                                                            onImageOpen = { previewingImage = it }
+                                                        )
+                                                        if (sanitizedChunk.pendingTail) {
+                                                            Text(
+                                                                text = if (Strings.isZh) "图片载入中…" else "Loading image…",
+                                                                color = theme.textMuted,
+                                                                fontSize = 11.sp,
+                                                                modifier = Modifier.padding(top = 4.dp)
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -790,7 +814,7 @@ fun AiChatScreen(
                                     modifier = Modifier
                                         .size(34.dp)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .clickable { previewingImageBase64 = file.base64Data },
+                                        .clickable { ImageUtils.decodeBase64ToImageBitmap(file.base64Data).let { bmp -> if (bmp != null) previewingImage = bmp } },
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
@@ -1089,17 +1113,15 @@ fun AiChatScreen(
     // ==========================================
     // 4. 全屏大图沉浸式预览弹窗 (多模态视觉图片查看)
     // ==========================================
-    previewingImageBase64?.let { base64Str ->
-        val previewBitmap = remember(base64Str) { ImageUtils.decodeBase64ToImageBitmap(base64Str) }
-        Dialog(
-            onDismissRequest = { previewingImageBase64 = null },
+    previewingImage?.let { previewBitmap ->        Dialog(
+            onDismissRequest = { previewingImage = null },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.94f))
-                    .clickable { previewingImageBase64 = null },
+                    .clickable { previewingImage = null },
                 contentAlignment = Alignment.Center
             ) {
                 if (previewBitmap != null) {
@@ -1115,7 +1137,7 @@ fun AiChatScreen(
                 }
 
                 IconButton(
-                    onClick = { previewingImageBase64 = null },
+                    onClick = { previewingImage = null },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(top = 42.dp, end = 20.dp)
@@ -1251,7 +1273,7 @@ private fun AiEmptyWelcomeView(
 private fun AiChatMessageItem(
     message: AiChatMessage,
     onRetry: (String) -> Unit,
-    onImageClick: (String) -> Unit = {}
+    onImageOpen: (ImageBitmap) -> Unit = {}
 ) {
     val theme = LocalAppTheme.current
     val context = LocalContext.current
@@ -1259,6 +1281,17 @@ private fun AiChatMessageItem(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val screenWidth = configuration.screenWidthDp.dp
     val isUser = message.role == "user"
+
+    // 历史消息兜底：早期版本可能把 base64 直接写进了正文。
+    // 已有 inlineImages 的消息正文已是令牌化文本，不重复净化（避免 token 序号错位）。
+    val sanitizedContent = remember(message.safeContent, message.safeInlineImages) {
+        if (message.safeInlineImages.isEmpty()) {
+            ChatContentSanitizer.sanitize(message.safeContent, isStreaming = false)
+        } else {
+            ChatContentSanitizer.Result(message.safeContent)
+        }
+    }
+    val displayImages = if (message.safeInlineImages.isEmpty()) sanitizedContent.images else message.safeInlineImages
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1336,98 +1369,60 @@ private fun AiChatMessageItem(
                                     val attachedIsImage = message.safeImages.isNotEmpty() ||
                                         ImageUtils.hasImageExtension(message.safeAttachedFileName)
                                     if (hasAttached) {
-                                        Surface(
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = Color.Black.copy(alpha = 0.18f),
-                                            border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.25f)),
-                                            modifier = Modifier
-                                                .padding(bottom = if (message.safeContent.isNotBlank()) 8.dp else 0.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .then(
-                                                    if (message.safeImages.isNotEmpty()) {
-                                                        Modifier.clickable { onImageClick(message.safeImages.first()) }
-                                                    } else Modifier
-                                                )
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                        val attachedCaption = buildString {
+                                            if (message.safeAttachedFileName.isNotBlank()) append(message.safeAttachedFileName)
+                                            if (message.attachedFileSize > 0L) {
+                                                if (isNotEmpty()) append(" · ")
+                                                append(formatFileSize(message.attachedFileSize))
+                                            }
+                                        }
+                                        if (message.safeImages.isNotEmpty()) {
+                                            // 统一图片卡：用户附件与模型内联图同款
+                                            val attachState = rememberChatImageState(message.safeImages.first(), maxDimension = 1024)
+                                            ChatImageCard(
+                                                state = attachState,
+                                                caption = attachedCaption.ifBlank { null },
+                                                isUserBubble = true,
+                                                maxImageHeight = 200.dp,
+                                                onOpen = {
+                                                    val bmp = (attachState as? ChatImageState.Ready)?.bitmap
+                                                    if (bmp != null) onImageOpen(bmp)
+                                                },
+                                                modifier = Modifier.padding(bottom = if (message.safeContent.isNotBlank()) 8.dp else 0.dp)
+                                            )
+                                        } else {
+                                            // 纯文本/日志类附件：保留文件卡片
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = Color.Black.copy(alpha = 0.18f),
+                                                border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.25f)),
+                                                modifier = Modifier.padding(bottom = if (message.safeContent.isNotBlank()) 8.dp else 0.dp)
                                             ) {
-                                                if (message.safeImages.isNotEmpty()) {
-                                                    val imgBase64 = message.safeImages.first()
-                                                    val bitmap = remember(imgBase64) { ImageUtils.decodeBase64ToImageBitmap(imgBase64, maxDimension = 160) }
-                                                    if (bitmap != null) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .size(46.dp)
-                                                                .clip(RoundedCornerShape(6.dp))
-                                                        ) {
-                                                            Image(
-                                                                bitmap = bitmap,
-                                                                contentDescription = "图片缩略图",
-                                                                modifier = Modifier.fillMaxSize(),
-                                                                contentScale = ContentScale.Crop
-                                                            )
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .align(Alignment.BottomEnd)
-                                                                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(topStart = 4.dp))
-                                                                    .padding(1.5.dp)
-                                                            ) {
-                                                                Icon(
-                                                                    Icons.Default.Fullscreen,
-                                                                    contentDescription = "查看大图",
-                                                                    tint = Color.White,
-                                                                    modifier = Modifier.size(10.dp)
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        Icon(
-                                                            Icons.Default.Image,
-                                                            contentDescription = null,
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(24.dp)
-                                                        )
-                                                    }
-                                                } else {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
                                                     Icon(
                                                         if (attachedIsImage) Icons.Default.Image else Icons.Default.Description,
                                                         contentDescription = null,
                                                         tint = Color.White,
                                                         modifier = Modifier.size(24.dp)
                                                     )
-                                                }
-
-                                                Spacer(modifier = Modifier.width(8.dp))
-
-                                                Column(modifier = Modifier.widthIn(max = 210.dp)) {
-                                                    Text(
-                                                        text = if (message.safeAttachedFileName.isNotBlank()) {
-                                                            message.safeAttachedFileName
-                                                        } else if (message.safeImages.isNotEmpty()) {
-                                                            "图片附件.jpg"
-                                                        } else {
-                                                            "附件文件"
-                                                        },
-                                                        style = TextStyle(
-                                                            fontSize = 12.5.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = Color.White
-                                                        ),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    if (message.attachedFileSize > 0L) {
-                                                        Spacer(modifier = Modifier.height(2.dp))
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Column(modifier = Modifier.widthIn(max = 210.dp)) {
                                                         Text(
-                                                            text = formatFileSize(message.attachedFileSize),
-                                                            style = TextStyle(
-                                                                fontSize = 10.sp,
-                                                                color = Color.White.copy(alpha = 0.80f),
-                                                                fontFamily = FontFamily.Monospace
-                                                            )
+                                                            text = if (message.safeAttachedFileName.isNotBlank()) message.safeAttachedFileName else "附件文件",
+                                                            style = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color.White),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
+                                                        if (message.attachedFileSize > 0L) {
+                                                            Spacer(modifier = Modifier.height(2.dp))
+                                                            Text(
+                                                                text = formatFileSize(message.attachedFileSize),
+                                                                style = TextStyle(fontSize = 10.sp, color = Color.White.copy(alpha = 0.80f), fontFamily = FontFamily.Monospace)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1444,7 +1439,12 @@ private fun AiChatMessageItem(
                                     }
                                 }
                             } else {
-                                MarkdownRenderer(content = message.safeContent, isUser = false)
+                                MarkdownRenderer(
+                                    content = sanitizedContent.text,
+                                    isUser = false,
+                                    inlineImages = displayImages,
+                                    onImageOpen = onImageOpen
+                                )
                             }
                         }
                     }
@@ -1461,7 +1461,7 @@ private fun AiChatMessageItem(
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AI回答", message.safeContent))
+                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AI回答", sanitizedContent.text))
                                     }
                                     .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically

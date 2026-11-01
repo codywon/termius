@@ -40,6 +40,7 @@ data class AiChatMessage(
     val attachedFileName: String = "",     // 附加文件名 (如 screenshot_1.png 或 app.log)
     val attachedFileSize: Long = 0L,       // 附加文件字节数
     val fileContextText: String = "",      // 注入大模型上下文的附加文本 (不污染用户对话展示)
+    val inlineImages: List<String> = emptyList(), // 模型内联图片载荷 (data URI / http URL)，仅用于展示，不回传模型
     val timestamp: Long = System.currentTimeMillis(),
     val isThinking: Boolean = false,
     val isError: Boolean = false
@@ -52,6 +53,29 @@ data class AiChatMessage(
     val safeImages: List<String> get() = (images as List<String>?) ?: emptyList()
     val safeAttachedFileName: String get() = (attachedFileName as String?) ?: ""
     val safeFileContextText: String get() = (fileContextText as String?) ?: ""
+    val safeInlineImages: List<String> get() = (inlineImages as List<String>?) ?: emptyList()
+
+    companion object {
+        /**
+         * 构造一条助手消息：先把正文里的图片载荷挖到 [inlineImages]，
+         * 正文只留 `![alt](txcimg:N)` 令牌。这样既不会把 base64 打进排版层，
+         * 也不会让消息表被几百 KB 的字符串撑肿。
+         */
+        fun assistant(
+            content: String,
+            reasoning: String = "",
+            isError: Boolean = false
+        ): AiChatMessage {
+            val sanitized = com.termius.clone.util.ChatContentSanitizer.sanitize(content, isStreaming = false)
+            return AiChatMessage(
+                role = "assistant",
+                content = sanitized.text,
+                reasoningContent = reasoning,
+                inlineImages = sanitized.images,
+                isError = isError
+            )
+        }
+    }
 }
 
 /**

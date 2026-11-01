@@ -1046,16 +1046,61 @@ class TermXAgentClient(
                 for (i in 0 until raw.length()) {
                     val item = raw.optJSONObject(i)
                     if (item != null) {
-                        val text = item.optString("text", "")
-                        if (text.isNotEmpty()) sb.append(text)
+                        // 结构化内容块：图片类不得 toString() 成文本，否则会把 base64 打进聊天正文
+                        if (isImageContentPart(item)) {
+                            val url = extractImagePartUrl(item)
+                            if (url.isNotBlank()) sb.append("\n\n![图片](").append(url).append(")\n\n")
+                        } else {
+                            val text = item.optString("text", "")
+                            if (text.isNotEmpty()) sb.append(text)
+                        }
                     } else {
                         sb.append(raw.optString(i, ""))
                     }
                 }
                 sb.toString()
             }
+            is JSONObject -> {
+                // 单个对象同样不得无条件 toString()（其中可能包含整段 base64）
+                if (isImageContentPart(raw)) {
+                    val url = extractImagePartUrl(raw)
+                    if (url.isNotBlank()) "\n\n![图片]($url)\n\n" else ""
+                } else {
+                    raw.optString("text", "")
+                }
+            }
             else -> raw.toString()
         }
+    }
+
+    /** 判断一个内容块是不是图片块（兼容 OpenAI / Claude / Gemini / 各家网关的字段命名） */
+    private fun isImageContentPart(part: JSONObject): Boolean {
+        val type = part.optString("type", "").lowercase()
+        if (type.contains("image")) return true
+        if (type == "input_image" || type == "output_image") return true
+        if (part.has("inlineData") || part.has("inline_data") || part.has("image_url")) return true
+        return false
+    }
+
+    /** 从图片块里取出可渲染的地址：data URI 或 http(s) URL；取不到就返回空串 */
+    private fun extractImagePartUrl(part: JSONObject): String {
+        part.optJSONObject("image_url")?.optString("url", "")?.takeIf { it.isNotBlank() }?.let { return it }
+        part.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
+        for (key in arrayOf("inlineData", "inline_data", "source", "image")) {
+            val obj = part.optJSONObject(key) ?: continue
+            obj.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
+            val data = obj.optString("data", "")
+            if (data.isNotBlank()) {
+                val mime = obj.optString("mimeType", obj.optString("mime_type", "image/png"))
+                return if (data.startsWith("data:")) data else "data:$mime;base64,$data"
+            }
+        }
+        val direct = part.optString("data", "")
+        if (direct.isNotBlank()) {
+            val mime = part.optString("mimeType", part.optString("mime_type", "image/png"))
+            return if (direct.startsWith("data:")) direct else "data:$mime;base64,$direct"
+        }
+        return ""
     }
 
     /**

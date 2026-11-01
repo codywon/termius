@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -47,6 +48,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.ui.theme.LocalAppTheme
+import com.termius.clone.util.ChatContentSanitizer
+import com.termius.clone.util.Strings
 import org.commonmark.ext.autolink.AutolinkExtension
 import org.commonmark.ext.gfm.strikethrough.Strikethrough
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
@@ -63,6 +66,7 @@ import org.commonmark.node.Emphasis
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.HardLineBreak
 import org.commonmark.node.Heading
+import org.commonmark.node.Image
 import org.commonmark.node.IndentedCodeBlock
 import org.commonmark.node.Link
 import org.commonmark.node.ListItem
@@ -155,7 +159,9 @@ object CjkMarkdownNormalizer {
 fun MarkdownRenderer(
     content: String,
     modifier: Modifier = Modifier,
-    isUser: Boolean = false
+    isUser: Boolean = false,
+    inlineImages: List<String> = emptyList(),
+    onImageOpen: ((ImageBitmap) -> Unit)? = null
 ) {
     if (content.isBlank()) return
 
@@ -167,7 +173,7 @@ fun MarkdownRenderer(
             AutolinkExtension.create()
         )
         val parser = Parser.builder().extensions(extensions).build()
-        parser.parse(normalized)
+        parser.parse(normalized).also { splitImageParagraphs(it) }
     }
 
     Column(
@@ -176,17 +182,177 @@ fun MarkdownRenderer(
     ) {
         var childNode = document.firstChild
         while (childNode != null) {
-            RenderAstBlockNode(node = childNode, isUser = isUser)
+            RenderAstBlockNode(
+                node = childNode,
+                isUser = isUser,
+                inlineImages = inlineImages,
+                onImageOpen = onImageOpen
+            )
             childNode = childNode.next
         }
     }
 }
 
+// ==========================================
+// 图片节点支持（把段落里的 ![alt](src) 变成真图卡片）
+// ==========================================
+
+/** markdown 图片在块级渲染中的占位节点（由段落切分产生） */
+private class ChatImageBlockNode(
+    val destination: String,
+    val altText: String
+) : Node()
+
+private fun containsImageNode(node: Node): Boolean {
+    var child = node.firstChild
+    while (child != null) {
+        if (child is Image) return true
+        if (containsImageNode(child)) return true
+        child = child.next
+    }
+    return false
+}
+
+private fun imageAltText(image: Image): String {
+    val sb = StringBuilder()
+    var child = image.firstChild
+    while (child != null) {
+        if (child is MdText) sb.append(child.literal)
+        child = child.next
+    }
+    return sb.toString().trim()
+}
+
+/**
+ * 递归把包含图片的段落拆成「文字段落 + 图片块 + 文字段落」。
+ * 这样图片能占用真实的 UI 空间，而不是被文本 inline 渲染掉。
+ */
+private fun splitImageParagraphs(parent: Node) {
+    var child = parent.firstChild
+    while (child != null) {
+        val next = child.next
+        when {
+            child is Paragraph && containsImageNode(child) -> splitParagraph(parent, child)
+            child.firstChild != null -> splitImageParagraphs(child)
+        }
+        child = next
+    }
+}
+
+private fun splitParagraph(parent: Node, paragraph: Paragraph) {
+    var pending = Paragraph()
+
+    fun flushPending() {
+        if (pending.firstChild != null) {
+            parent.insertBefore(paragraph, pending)
+            pending = Paragraph()
+        }
+    }
+
+    var child = paragraph.firstChild
+    while (child != null) {
+        val next = child.next
+        if (child is Image) {
+            flushPending()
+            val block = ChatImageBlockNode(
+                destination = child.destination ?: "",
+                altText = imageAltText(child)
+            )
+            parent.insertBefore(paragraph, block)
+        } else {
+            pending.appendChild(child)
+        }
+        child = next
+    }
+    flushPending()
+    parent.removeChild(paragraph)
+}
+
+/** 把 markdown 图片目标解析成可加载的图片载荷；返回 null 表示不支持（降级成文本） */
+private fun resolveImageSource(destination: String, inlineImages: List<String>): String? {
+    if (destination.isBlank()) return null
+    if (destination.startsWith(ChatContentSanitizer.TOKEN_PREFIX)) {
+        val index = destination.removePrefix(ChatContentSanitizer.TOKEN_PREFIX).toIntOrNull() ?: return null
+        return inlineImages.getOrNull(index)
+    }
+    val lower = destination.lowercase()
+    return when {
+        lower.startsWith("data:image/png") || lower.startsWith("data:image/jpeg") ||
+                lower.startsWith("data:image/jpg") || lower.startsWith("data:image/webp") ||
+                lower.startsWith("data:image/gif") -> destination
+
+        lower.startsWith("http://") || lower.startsWith("https://") -> destination
+        // svg / 相对路径 / 本地文件路径一律不加载（安全 + 防误导）
+        else -> null
+    }
+}
+
+/** 图片底部说明：内嵌图给尺寸提示，远程图给来源域名 */
+private fun imageCaption(source: String): String? = when {
+    source.startsWith("http://", ignoreCase = true) || source.startsWith("https://", ignoreCase = true) -> {
+        runCatching { java.net.URI(source).host }.getOrNull()
+    }
+    source.startsWith("data:", ignoreCase = true) -> null
+    else -> null
+}
+
 @Composable
-private fun RenderAstBlockNode(node: Node, isUser: Boolean) {
+private fun ChatMarkdownImage(
+    destination: String,
+    altText: String,
+    inlineImages: List<String>,
+    isUser: Boolean,
+    onImageOpen: ((ImageBitmap) -> Unit)?
+) {
+    val theme = LocalAppTheme.current
+    val source = remember(destination, inlineImages) { resolveImageSource(destination, inlineImages) }
+
+    if (source == null) {
+        // 不支持的来源：降级成一句人话，绝不尝试加载、也绝不把原串当图片渲染
+        Text(
+            text = altText.ifBlank { if (Strings.isZh) "[图片：不支持的来源]" else "[Image: unsupported source]" },
+            fontSize = 12.sp,
+            color = if (isUser) Color.White.copy(alpha = 0.8f) else theme.textMuted
+        )
+        return
+    }
+
+    val state = rememberChatImageState(source, maxDimension = 1024)
+    ChatImageCard(
+        state = state,
+        caption = imageCaption(source),
+        isUserBubble = isUser,
+        onOpen = if (onImageOpen == null) {
+            null
+        } else {
+            {
+                val bitmap = (state as? ChatImageState.Ready)?.bitmap
+                if (bitmap != null) onImageOpen.invoke(bitmap)
+            }
+        }
+    )
+}
+
+@Composable
+private fun RenderAstBlockNode(
+    node: Node,
+    isUser: Boolean,
+    inlineImages: List<String> = emptyList(),
+    onImageOpen: ((ImageBitmap) -> Unit)? = null
+) {
     val theme = LocalAppTheme.current
 
     when (node) {
+        is ChatImageBlockNode -> {
+            ChatMarkdownImage(
+                destination = node.destination,
+                altText = node.altText,
+                inlineImages = inlineImages,
+                isUser = isUser,
+                onImageOpen = onImageOpen
+            )
+        }
+
         is Heading -> {
             val fontSize = when (node.level) {
                 1 -> 16.sp
@@ -273,7 +439,7 @@ private fun RenderAstBlockNode(node: Node, isUser: Boolean) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         var quoteChild = node.firstChild
                         while (quoteChild != null) {
-                            RenderAstBlockNode(node = quoteChild, isUser = isUser)
+                            RenderAstBlockNode(node = quoteChild, isUser = isUser, inlineImages = inlineImages, onImageOpen = onImageOpen)
                             quoteChild = quoteChild.next
                         }
                     }
@@ -308,7 +474,7 @@ private fun RenderAstBlockNode(node: Node, isUser: Boolean) {
                             ) {
                                 var itemChild = item.firstChild
                                 while (itemChild != null) {
-                                    RenderAstBlockNode(node = itemChild, isUser = isUser)
+                                    RenderAstBlockNode(node = itemChild, isUser = isUser, inlineImages = inlineImages, onImageOpen = onImageOpen)
                                     itemChild = itemChild.next
                                 }
                             }
@@ -352,7 +518,7 @@ private fun RenderAstBlockNode(node: Node, isUser: Boolean) {
                             ) {
                                 var itemChild = item.firstChild
                                 while (itemChild != null) {
-                                    RenderAstBlockNode(node = itemChild, isUser = isUser)
+                                    RenderAstBlockNode(node = itemChild, isUser = isUser, inlineImages = inlineImages, onImageOpen = onImageOpen)
                                     itemChild = itemChild.next
                                 }
                             }
@@ -447,6 +613,11 @@ private fun appendInlineChildren(parent: Node, builder: AnnotatedString.Builder,
                 )
                 appendInlineChildren(child, builder, isUser)
                 builder.pop()
+            }
+            is Image -> {
+                // 兜底：内联场景（标题/表格单元格内）不渲染图片，但绝不让目标串/base64 落到正文
+                val alt = imageAltText(child).ifBlank { "[图片]" }
+                builder.append(alt)
             }
             is SoftLineBreak -> builder.append(" ")
             is HardLineBreak -> builder.append("\n")
