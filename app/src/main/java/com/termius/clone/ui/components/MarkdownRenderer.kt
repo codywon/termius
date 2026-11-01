@@ -62,6 +62,7 @@ import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.node.BlockQuote
 import org.commonmark.node.BulletList
 import org.commonmark.node.Code
+import org.commonmark.node.CustomNode
 import org.commonmark.node.Emphasis
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.HardLineBreak
@@ -197,11 +198,15 @@ fun MarkdownRenderer(
 // 图片节点支持（把段落里的 ![alt](src) 变成真图卡片）
 // ==========================================
 
-/** markdown 图片在块级渲染中的占位节点（由段落切分产生） */
+/**
+ * markdown 图片在块级渲染中的占位节点（由段落切分产生）。
+ * 必须继承 CustomNode：它已实现 accept(visitor) -> visitor.visit(this)，
+ * 直接继承 Node 会因为 Visitor 没有对应重载而无法编译。
+ */
 private class ChatImageBlockNode(
     val destination: String,
     val altText: String
-) : Node()
+) : CustomNode()
 
 private fun containsImageNode(node: Node): Boolean {
     var child = node.firstChild
@@ -232,19 +237,19 @@ private fun splitImageParagraphs(parent: Node) {
     while (child != null) {
         val next = child.next
         when {
-            child is Paragraph && containsImageNode(child) -> splitParagraph(parent, child)
+            child is Paragraph && containsImageNode(child) -> splitParagraph(child)
             child.firstChild != null -> splitImageParagraphs(child)
         }
         child = next
     }
 }
 
-private fun splitParagraph(parent: Node, paragraph: Paragraph) {
+private fun splitParagraph(paragraph: Paragraph) {
     var pending = Paragraph()
 
     fun flushPending() {
         if (pending.firstChild != null) {
-            parent.insertBefore(paragraph, pending)
+            pending.insertBefore(paragraph)
             pending = Paragraph()
         }
     }
@@ -258,14 +263,14 @@ private fun splitParagraph(parent: Node, paragraph: Paragraph) {
                 destination = child.destination ?: "",
                 altText = imageAltText(child)
             )
-            parent.insertBefore(paragraph, block)
+            block.insertBefore(paragraph)
         } else {
             pending.appendChild(child)
         }
         child = next
     }
     flushPending()
-    parent.removeChild(paragraph)
+    paragraph.unlink()
 }
 
 /** 把 markdown 图片目标解析成可加载的图片载荷；返回 null 表示不支持（降级成文本） */
