@@ -142,8 +142,16 @@ gh run watch <run-id>          # 实时跟踪
 gh release view v2.0.22        # 确认 Release 与 APK 附件
 ```
 
-### 备注
+### 备注（踩过的坑，别再踩）
 
+- **tag 必须是 annotated tag**：`git tag -a`（不是 `git tag v1.2.3`）。Release 正文取自 tag 注释，
+  轻量 tag 没有注释，正文会退化成 commit 标题。
+- **checkout 默认拿不到 tag 对象**：tag 事件下 `actions/checkout` 按 SHA 拉取，本地只剩指向 commit 的
+  轻量 tag，`%(contents)` 会退化成 commit message。工作流已显式 `git fetch` tag ref 并用
+  `git cat-file tag` 取注释；同时 `fetch-depth: 0` 保证 `上一个 tag..当前 tag` 的改动区间可用。
+- **同一个 tag 重复触发不会刷新正文**：`softprops/action-gh-release` 遇到"该 tag 已有 release"时，
+  会新建一个 draft 再丢弃它并沿用旧 release，正文保持旧值。要修正文用
+  `gh release edit vX.Y.Z --notes-file <文件>`；正常的一次性发版不受影响。
 - Release 签名使用仓库内 `app/termx_release.jks`（密码在 `app/build.gradle.kts` 的 `signingConfigs`）。
   仓库若转为公开需先评估该密钥的处置方式。
 - 工作流当前会提示 `actions/checkout@v4` 等动作的 Node 20 弃用告警，属上游迁移提醒，不影响构建。
