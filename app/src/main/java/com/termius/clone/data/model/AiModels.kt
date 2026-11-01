@@ -37,6 +37,9 @@ data class AiChatMessage(
     val toolCallsJson: String = "",
     val toolCallId: String = "",
     val images: List<String> = emptyList(), // 多模态视觉图片 (Base64 Data URI)
+    val attachedFileName: String = "",     // 附加文件名 (如 screenshot_1.png 或 app.log)
+    val attachedFileSize: Long = 0L,       // 附加文件字节数
+    val fileContextText: String = "",      // 注入大模型上下文的附加文本 (不污染用户对话展示)
     val timestamp: Long = System.currentTimeMillis(),
     val isThinking: Boolean = false,
     val isError: Boolean = false
@@ -47,6 +50,8 @@ data class AiChatMessage(
     val safeToolCalls: String get() = (toolCallsJson as String?) ?: ""
     val safeToolCallId: String get() = (toolCallId as String?) ?: ""
     val safeImages: List<String> get() = (images as List<String>?) ?: emptyList()
+    val safeAttachedFileName: String get() = (attachedFileName as String?) ?: ""
+    val safeFileContextText: String get() = (fileContextText as String?) ?: ""
 }
 
 /**

@@ -214,24 +214,46 @@ fun AiChatScreen(
         val canProceed = (prompt.isNotBlank() || curAttached != null) && !isGenerating && pendingApprovalRequest == null
 
         if (canProceed) {
-            val (fullUserContent, imageList) = if (curAttached != null) {
-                if (curAttached.isImage && !curAttached.base64Data.isNullOrBlank()) {
-                    val text = prompt.ifBlank { "请帮我仔细观察分析这张图片中的架构拓扑、监控指标或异常报错，并给出详细的排障与处理方案。" }
-                    Pair(text, listOf(curAttached.base64Data))
+            val userMsg = if (curAttached != null) {
+                if (curAttached.isImage) {
+                    // 图片附件：一律走多模态视觉通道。若选图时转码失败，发送瞬间再兜底重试一次
+                    val dataUri = curAttached.base64Data
+                        ?: ImageUtils.compressAndEncodeImageUri(context, curAttached.uri)
+                    if (!dataUri.isNullOrBlank()) {
+                        AiChatMessage(
+                            role = "user",
+                            content = prompt,
+                            images = listOf(dataUri),
+                            attachedFileName = curAttached.name,
+                            attachedFileSize = curAttached.sizeBytes
+                        )
+                    } else {
+                        // 极端编码格式（个别机型 HEIC/AVIF）转码失败：明确告知，绝不回落到文本读取产生乱码
+                        AiChatMessage(
+                            role = "user",
+                            content = prompt,
+                            attachedFileName = curAttached.name,
+                            attachedFileSize = curAttached.sizeBytes,
+                            fileContextText = IMAGE_UNDECODABLE_NOTICE
+                        )
+                    }
                 } else {
                     val fileContentText = readFileContentText(context, curAttached.uri, maxChars = 8000)
-                    val text = "【附加文件: ${curAttached.name}】\n```${curAttached.extension}\n$fileContentText\n```\n${prompt.ifBlank { "请帮我深入分析这份日志/配置文件的内容，排查异常或给出建议。" }}"
-                    Pair(text, emptyList<String>())
+                    AiChatMessage(
+                        role = "user",
+                        content = prompt,
+                        attachedFileName = curAttached.name,
+                        attachedFileSize = curAttached.sizeBytes,
+                        fileContextText = fileContentText
+                    )
                 }
             } else {
-                Pair(prompt, emptyList<String>())
+                AiChatMessage(
+                    role = "user",
+                    content = prompt
+                )
             }
 
-            val userMsg = AiChatMessage(
-                role = "user",
-                content = fullUserContent,
-                images = imageList
-            )
             val updatedList = messages + userMsg
             messages = updatedList
             inputText = ""
@@ -760,7 +782,7 @@ fun AiChatScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (file.isImage && file.base64Data != null) {
-                            val bitmap = remember(file.base64Data) { ImageUtils.decodeBase64ToImageBitmap(file.base64Data) }
+                            val bitmap = remember(file.base64Data) { ImageUtils.decodeBase64ToImageBitmap(file.base64Data, maxDimension = 128) }
                             if (bitmap != null) {
                                 Image(
                                     bitmap = bitmap,
@@ -781,10 +803,10 @@ fun AiChatScreen(
                             }
                         } else {
                             Icon(
-                                imageVector = Icons.Default.Description,
+                                imageVector = if (file.isImage) Icons.Default.Image else Icons.Default.Description,
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp),
-                                tint = theme.primary
+                                tint = if (file.isImage) Color(0xFFF59E0B) else theme.primary
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -798,16 +820,17 @@ fun AiChatScreen(
                                 )
                                 if (file.isImage) {
                                     Spacer(modifier = Modifier.width(6.dp))
+                                    val badgeColor = if (file.base64Data != null) Color(0xFF10B981) else Color(0xFFF59E0B)
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
-                                        color = Color(0xFF10B981).copy(alpha = 0.15f),
-                                        border = BorderStroke(0.5.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+                                        color = badgeColor.copy(alpha = 0.15f),
+                                        border = BorderStroke(0.5.dp, badgeColor.copy(alpha = 0.35f))
                                     ) {
                                         Text(
-                                            text = "视觉解析",
+                                            text = if (file.base64Data != null) "视觉解析" else "无法解码",
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF10B981),
+                                            color = badgeColor,
                                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                         )
                                     }
@@ -1307,24 +1330,110 @@ private fun AiChatMessageItem(
                         SelectionContainer {
                             if (isUser) {
                                 Column {
-                                    if (message.safeImages.isNotEmpty()) {
-                                        message.safeImages.forEach { imgBase64 ->
-                                            val bitmap = remember(imgBase64) { ImageUtils.decodeBase64ToImageBitmap(imgBase64) }
-                                            if (bitmap != null) {
-                                                Image(
-                                                    bitmap = bitmap,
-                                                    contentDescription = "用户上传图片",
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .heightIn(max = 240.dp)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .clickable { onImageClick(imgBase64) }
-                                                        .padding(bottom = if (message.safeContent.isNotBlank()) 6.dp else 0.dp),
-                                                    contentScale = ContentScale.Crop
+                                    val hasAttached = message.safeImages.isNotEmpty() || message.safeAttachedFileName.isNotBlank()
+                                    // 附件类型判定：优先看是否携带视觉载荷，其次看文件名后缀，
+                                    // 避免“图片因解码失败而渲染成文本文件卡片”的误显示
+                                    val attachedIsImage = message.safeImages.isNotEmpty() ||
+                                        ImageUtils.hasImageExtension(message.safeAttachedFileName)
+                                    if (hasAttached) {
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color.Black.copy(alpha = 0.18f),
+                                            border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.25f)),
+                                            modifier = Modifier
+                                                .padding(bottom = if (message.safeContent.isNotBlank()) 8.dp else 0.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .then(
+                                                    if (message.safeImages.isNotEmpty()) {
+                                                        Modifier.clickable { onImageClick(message.safeImages.first()) }
+                                                    } else Modifier
                                                 )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                if (message.safeImages.isNotEmpty()) {
+                                                    val imgBase64 = message.safeImages.first()
+                                                    val bitmap = remember(imgBase64) { ImageUtils.decodeBase64ToImageBitmap(imgBase64, maxDimension = 160) }
+                                                    if (bitmap != null) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(46.dp)
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                        ) {
+                                                            Image(
+                                                                bitmap = bitmap,
+                                                                contentDescription = "图片缩略图",
+                                                                modifier = Modifier.fillMaxSize(),
+                                                                contentScale = ContentScale.Crop
+                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .align(Alignment.BottomEnd)
+                                                                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(topStart = 4.dp))
+                                                                    .padding(1.5.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.Fullscreen,
+                                                                    contentDescription = "查看大图",
+                                                                    tint = Color.White,
+                                                                    modifier = Modifier.size(10.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    } else {
+                                                        Icon(
+                                                            Icons.Default.Image,
+                                                            contentDescription = null,
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(24.dp)
+                                                        )
+                                                    }
+                                                } else {
+                                                    Icon(
+                                                        if (attachedIsImage) Icons.Default.Image else Icons.Default.Description,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                Column(modifier = Modifier.widthIn(max = 210.dp)) {
+                                                    Text(
+                                                        text = if (message.safeAttachedFileName.isNotBlank()) {
+                                                            message.safeAttachedFileName
+                                                        } else if (message.safeImages.isNotEmpty()) {
+                                                            "图片附件.jpg"
+                                                        } else {
+                                                            "附件文件"
+                                                        },
+                                                        style = TextStyle(
+                                                            fontSize = 12.5.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color.White
+                                                        ),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (message.attachedFileSize > 0L) {
+                                                        Spacer(modifier = Modifier.height(2.dp))
+                                                        Text(
+                                                            text = formatFileSize(message.attachedFileSize),
+                                                            style = TextStyle(
+                                                                fontSize = 10.sp,
+                                                                color = Color.White.copy(alpha = 0.80f),
+                                                                fontFamily = FontFamily.Monospace
+                                                            )
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+
                                     if (message.safeContent.isNotBlank()) {
                                         Text(
                                             text = message.safeContent,
@@ -1422,20 +1531,59 @@ private fun getFileInfoFromUri(context: Context, uri: Uri): AttachedFileInfo? {
             }
         }
     } catch (_: Exception) {}
+
+    if (name == "unknown_file" || name.isBlank()) {
+        uri.lastPathSegment?.let { segment ->
+            val clean = segment.substringAfterLast('/')
+            if (clean.isNotBlank()) name = clean
+        }
+    }
+
+    val isImg = ImageUtils.isImageUri(context, uri, name)
     val ext = name.substringAfterLast('.', "").lowercase()
-    val isImg = ImageUtils.isImageFile(name, ext)
+    val finalName = if (isImg && !name.contains('.')) {
+        "$name.jpg"
+    } else {
+        name
+    }
+
     val base64 = if (isImg) {
         ImageUtils.compressAndEncodeImageUri(context, uri)
     } else {
         null
     }
-    return AttachedFileInfo(uri, name, size, ext, isImage = isImg, base64Data = base64)
+    return AttachedFileInfo(uri, finalName, size, ext, isImage = isImg, base64Data = base64)
 }
+
+private const val IMAGE_UNDECODABLE_NOTICE =
+    "【该图片附件因编码格式不被本机支持，未能完成预览转码；已阻止以纯文本方式展开其二进制内容，避免出现乱码。请换用 PNG/JPEG 截图或另存后重新发送。】"
 
 private fun readFileContentText(context: Context, uri: Uri, maxChars: Int = 8000): String {
     return try {
+        // 1. 全方位图片守卫：若是图片，绝不以文本流形式打开，彻底消灭乱码
+        if (ImageUtils.isImageUri(context, uri)) {
+            return IMAGE_UNDECODABLE_NOTICE
+        }
+
+        // 2. MIME 类型安全探测拦截
+        val mimeType = try { context.contentResolver.getType(uri) } catch (_: Exception) { null }
+        if (mimeType != null && (mimeType.startsWith("image/") || mimeType.startsWith("audio/") || mimeType.startsWith("video/") || mimeType.contains("octet-stream") || mimeType.contains("zip"))) {
+            return "【检测到该文件为二进制文件，已阻止以纯文本形式读取以防乱码】"
+        }
+
+        // 3. 读取流并探测二进制空字节特征 (Null Byte Guard)
         context.contentResolver.openInputStream(uri)?.use { stream ->
-            val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val bytes = stream.readBytes()
+            val checkLen = minOf(bytes.size, 512)
+            var nullByteCount = 0
+            for (i in 0 until checkLen) {
+                if (bytes[i] == 0.toByte()) nullByteCount++
+            }
+            if (nullByteCount > 2) {
+                return "【检测到该文件包含底层二进制数据，已阻止以文本形式展开以防乱码】"
+            }
+
+            val text = String(bytes, Charsets.UTF_8)
             if (text.length > maxChars) {
                 text.take(maxChars) + "\n\n...[文件内容过长，TermX 已截取前 $maxChars 字符]..."
             } else {

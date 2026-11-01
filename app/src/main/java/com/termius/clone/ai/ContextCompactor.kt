@@ -81,7 +81,7 @@ object ContextCompactor {
         }
 
         val estimatedHistoryTokens = historyList.sumOf {
-            estimateTokens(it.content) + estimateTokens(it.reasoningContent) + 10
+            estimateTokens(it.content) + estimateTokens(it.reasoningContent) + estimateTokens(it.fileContextText) + 10
         }
 
         val window = config.contextWindow.coerceAtLeast(4096)
@@ -144,7 +144,19 @@ object ContextCompactor {
 
         for (msg in nonSystemList) {
             val role = msg.role
-            val textContent = if (msg.safeContent.isNotBlank()) msg.safeContent.trim() else msg.safeReasoning.trim()
+            val rawText = if (msg.safeContent.isNotBlank()) msg.safeContent.trim() else msg.safeReasoning.trim()
+            val textContent = if (msg.safeFileContextText.isNotBlank()) {
+                val fileHeader = "【附加文件: ${if (msg.safeAttachedFileName.isNotBlank()) msg.safeAttachedFileName else "file"}】\n```\n${msg.safeFileContextText}\n```"
+                if (rawText.isNotBlank()) {
+                    "$fileHeader\n$rawText"
+                } else {
+                    "$fileHeader\n请帮我深入分析这份日志/配置文件的内容，排查异常或给出建议。"
+                }
+            } else if (rawText.isBlank() && msg.safeImages.isNotEmpty()) {
+                "请帮我仔细观察分析这张图片中的架构拓扑、监控指标或异常报错，并给出详细的排障与处理方案。"
+            } else {
+                rawText
+            }
 
             if (role == "user" && msg.safeImages.isNotEmpty()) {
                 // 工业级标准 OpenAI Vision API 结构 (全面兼容 GPT-4o, Claude 3.5, Gemini, Qwen-VL 等)

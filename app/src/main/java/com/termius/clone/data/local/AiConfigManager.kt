@@ -135,6 +135,9 @@ class AiConfigManager(context: Context) {
                     toolCallsJson = msg.safeToolCalls,
                     toolCallId = msg.safeToolCallId,
                     images = msg.safeImages,
+                    attachedFileName = msg.safeAttachedFileName,
+                    attachedFileSize = msg.attachedFileSize,
+                    fileContextText = msg.safeFileContextText,
                     timestamp = msg.timestamp,
                     isThinking = msg.isThinking,
                     isError = msg.isError
