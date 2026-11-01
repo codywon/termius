@@ -71,9 +71,22 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         id: changelog
         run: |
-          TAG_NAME="${{ github.ref_name }}"
-          # 提取 tag 注释信息 (去掉多余空行)
-          TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" 2>/dev/null | sed '/^$/d' | head -n 12)
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          # actions/checkout 在 tag 事件下是按 SHA 拉取的，本地往往只留下一个指向 commit 的
+          # 「轻量 tag」，此时 git 的 %(contents) 会退化成 commit message（曾导致 Release 正文
+          # 变成一条提交信息）。这里显式按 ref 重新 fetch 一次，把 annotated tag 对象拿回来。
+          git fetch --force --no-tags origin "+refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}" 2>/dev/null || true
+
+          TAG_OBJ=$(git rev-parse "refs/tags/${TAG_NAME}" 2>/dev/null || echo "")
+          if [ -n "$TAG_OBJ" ] && [ "$(git cat-file -t "$TAG_OBJ" 2>/dev/null)" = "tag" ]; then
+            # annotated tag：取注释正文（跳过 object/type/tag/tagger 头部）
+            TAG_MSG=$(git cat-file tag "$TAG_OBJ" | sed '1,/^$/d' | sed '/^$/d' | head -n 20)
+          else
+            # 轻量 tag 兜底：只能用 commit 标题
+            TAG_MSG=$(git log -1 --pretty=format:"%s" "${TAG_NAME}" 2>/dev/null)
+          fi
+          echo "tag annotation resolved: $(echo "$TAG_MSG" | head -n 1)"
           
           # 获取从上一个 tag 到当前 tag 的精简 commit 变动 (优先筛选 feat/fix/perf/refactor)
           PREV_TAG=$(git describe --tags --abbrev=0 "${TAG_NAME}^" 2>/dev/null || echo "")
