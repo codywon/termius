@@ -1,14 +1,29 @@
 package com.termius.clone.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -16,6 +31,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -26,15 +42,22 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.termius.clone.terminal.session.ConnectionEvent
+import com.termius.clone.terminal.session.ConnectionEventType
 import com.termius.clone.terminal.session.SessionManager
 import com.termius.clone.terminal.session.SessionState
+import com.termius.clone.terminal.session.SshSession
 import com.termius.clone.ui.components.TerminalAccessoryBar
 import com.termius.clone.ui.components.TerminalInputMode
 import com.termius.clone.ui.components.TerminalView
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.Strings
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TerminalScreen(
     onNavigateBack: () -> Unit,
@@ -58,6 +81,7 @@ fun TerminalScreen(
     var isAltActive by remember { mutableStateOf(false) }
     var currentInputMode by remember { mutableStateOf(TerminalInputMode.IME) }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    var eventLogSession by remember { mutableStateOf<SshSession?>(null) }
 
     val activeSession = sessions.find { it.id == currentSessionId }
 
@@ -111,6 +135,9 @@ fun TerminalScreen(
                             for (session in sessions) {
                                 val isSelected = session.id == currentSessionId
                                 val sessionState by session.sessionState.collectAsState()
+                                val connectionEvent by session.connectionEvent.collectAsState()
+                                val isRecovering = connectionEvent?.type == ConnectionEventType.RETRY_SCHEDULED ||
+                                        connectionEvent?.type == ConnectionEventType.RECONNECTING
 
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
@@ -122,13 +149,18 @@ fun TerminalScreen(
                                     border = if (isSelected) {
                                         androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
                                     } else null,
-                                    onClick = {
-                                        if (isSelected && (sessionState == SessionState.DISCONNECTED || sessionState == SessionState.ERROR)) {
-                                            session.reconnect()
-                                        } else {
-                                            SessionManager.selectSession(session.id)
-                                        }
-                                    }
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (isSelected && (sessionState == SessionState.DISCONNECTED || sessionState == SessionState.ERROR)) {
+                                                    session.reconnect()
+                                                } else {
+                                                    SessionManager.selectSession(session.id)
+                                                }
+                                            },
+                                            onLongClick = { eventLogSession = session }
+                                        )
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(
@@ -138,15 +170,30 @@ fun TerminalScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
-                                        // Status dot
-                                        val dotColor = when (sessionState) {
-                                            SessionState.CONNECTED -> Color(0xFF22C55E)
-                                            SessionState.CONNECTING, SessionState.AUTHENTICATING -> Color(0xFFF59E0B)
-                                            SessionState.ERROR, SessionState.DISCONNECTED -> Color(0xFFEF4444)
+                                        // Status dot（四态：已连接 / 重连中脉冲 / 失败 / 用户主动断开）
+                                        val isManualDisconnect = connectionEvent?.type == ConnectionEventType.MANUAL_DISCONNECT
+                                        val dotColor = when {
+                                            sessionState == SessionState.CONNECTED -> StatusGreen
+                                            sessionState == SessionState.CONNECTING ||
+                                                    sessionState == SessionState.AUTHENTICATING ||
+                                                    isRecovering -> StatusAmber
+                                            isManualDisconnect -> StatusMuted
+                                            else -> StatusRed
                                         }
+                                        val pulseTransition = rememberInfiniteTransition(label = "tabStatePulse")
+                                        val pulseAlpha by pulseTransition.animateFloat(
+                                            initialValue = 0.35f,
+                                            targetValue = 1f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(720),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "tabStatePulseAlpha"
+                                        )
                                         Box(
                                             modifier = Modifier
                                                 .size(if (isLandscape) 6.dp else 7.dp)
+                                                .alpha(if (isRecovering) pulseAlpha else 1f)
                                                 .background(dotColor, CircleShape)
                                         )
 
@@ -163,6 +210,22 @@ fun TerminalScreen(
                                             maxLines = 1,
                                             softWrap = false
                                         )
+
+                                        // 重连进度：就地带一个微型计数，不占额外行高、不写正文
+                                        if (isRecovering) {
+                                            val attempt = connectionEvent?.attempt ?: 0
+                                            val maxAttempts = connectionEvent?.maxAttempts ?: 0
+                                            if (attempt > 0 && maxAttempts > 0) {
+                                                Text(
+                                                    text = "$attempt/$maxAttempts",
+                                                    color = StatusAmber,
+                                                    fontSize = if (isLandscape) 9.sp else 9.5.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
 
                                         IconButton(
                                             onClick = {
@@ -261,8 +324,6 @@ fun TerminalScreen(
                 .background(termTheme.background)
         ) {
             if (activeSession != null) {
-                val activeState by activeSession.sessionState.collectAsState()
-
                 TerminalView(
                     session = activeSession,
                     isCtrlActive = isCtrlActive,
@@ -277,34 +338,13 @@ fun TerminalScreen(
                     }
                 )
 
-                // 当会话断开或发生错误时，在顶部提供平滑的一键快速重连微胶囊
-                if (activeState == SessionState.DISCONNECTED || activeState == SessionState.ERROR) {
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 10.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { activeSession.reconnect() },
-                        shape = RoundedCornerShape(16.dp),
-                        color = theme.surfaceContainerHigh.copy(alpha = 0.95f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22C55E).copy(alpha = 0.45f)),
-                        shadowElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFF22C55E), modifier = Modifier.size(15.dp))
-                            Text(
-                                text = if (Strings.isZh) "连接已断开 · 点击快速重连" else "Disconnected · Tap to reconnect",
-                                color = theme.textPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
+                // 连接状态一律在 UI 层就地呈现（重连进度 / 已恢复 / 失败重试），PTY 正文零写入
+                ConnectionStatusChip(
+                    session = activeSession,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                )
 
                 // 当模式为 HIDDEN 时，在右下角悬浮一个极简键盘唤醒胶囊
                 if (currentInputMode == TerminalInputMode.HIDDEN) {
@@ -396,4 +436,304 @@ fun TerminalScreen(
             containerColor = theme.surfaceContainerLow
         )
     }
+
+    eventLogSession?.let { session ->
+        ConnectionEventLogDialog(session = session, onDismiss = { eventLogSession = null })
+    }
+}
+
+// ==========================================
+// 连接状态 UI（PTY 正文零写入的呈现层）
+// ==========================================
+
+private val StatusGreen = Color(0xFF22C55E)
+private val StatusAmber = Color(0xFFF59E0B)
+private val StatusRed = Color(0xFFEF4444)
+private val StatusMuted = Color(0xFF94A3B8)
+
+/** 状态胶囊的渲染规格 */
+private data class StatusChipSpec(
+    val text: String,
+    val accent: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val clickable: Boolean
+)
+
+/**
+ * 将连接事件翻译成一张极简状态胶囊。
+ *
+ * 原则：进度类提示常驻（它表达"正在发生"，必须与真实状态同生命周期），
+ * 成功类短暂停留后淡出，失败/断开类常驻且可点击重试。
+ */
+private fun buildStatusChipSpec(
+    event: ConnectionEvent?,
+    sessionState: SessionState,
+    countdown: Int,
+    showRecovered: Boolean
+): StatusChipSpec? {
+    val zh = Strings.isZh
+
+    if (showRecovered) {
+        return StatusChipSpec(
+            text = if (zh) "已恢复" else "Recovered",
+            accent = StatusGreen,
+            icon = Icons.Default.CheckCircle,
+            clickable = false
+        )
+    }
+
+    if (event != null && (event.type == ConnectionEventType.RETRY_SCHEDULED || event.type == ConnectionEventType.RECONNECTING)) {
+        val progress = if (event.attempt > 0 && event.maxAttempts > 0) " ${event.attempt}/${event.maxAttempts}" else ""
+        val countdownText = if (event.type == ConnectionEventType.RETRY_SCHEDULED && countdown > 0) " · ${countdown}s" else ""
+        val text = if (event.isAuthFailure) {
+            if (zh) "认证失败$progress$countdownText" else "Auth failed$progress$countdownText"
+        } else {
+            if (zh) "重连中$progress$countdownText" else "Reconnecting$progress$countdownText"
+        }
+        return StatusChipSpec(
+            text = text,
+            accent = if (event.isAuthFailure) StatusRed else StatusAmber,
+            icon = Icons.Default.Refresh,
+            clickable = false
+        )
+    }
+
+    if (event != null && event.type == ConnectionEventType.RECONNECT_EXHAUSTED) {
+        val text = if (event.isAuthFailure) {
+            if (zh) "认证失败 · 点击重试" else "Auth failed · Tap to retry"
+        } else {
+            if (zh) "重连失败 ${event.attempt}/${event.maxAttempts} · 点击重试" else "Reconnect failed · Tap to retry"
+        }
+        return StatusChipSpec(text, StatusRed, Icons.Default.Refresh, clickable = true)
+    }
+
+    if (sessionState == SessionState.DISCONNECTED || sessionState == SessionState.ERROR) {
+        val manual = event?.type == ConnectionEventType.MANUAL_DISCONNECT
+        val text = when (event?.type) {
+            ConnectionEventType.MANUAL_DISCONNECT -> if (zh) "已断开 · 点击重连" else "Disconnected · Tap to reconnect"
+            ConnectionEventType.DISCONNECTED -> if (zh) "连接中断 · 点击重连" else "Connection lost · Tap to reconnect"
+            ConnectionEventType.ERROR -> if (zh) "连接失败 · 点击重试" else "Connection failed · Tap to retry"
+            else -> if (zh) "已断开 · 点击重连" else "Disconnected · Tap to reconnect"
+        }
+        return StatusChipSpec(
+            text = text,
+            accent = if (manual) StatusMuted else StatusRed,
+            icon = Icons.Default.Refresh,
+            clickable = true
+        )
+    }
+
+    return null
+}
+
+/**
+ * 终端视口顶部的连接状态胶囊：一次性小标签，不向 PTY 写任何一个字节。
+ */
+@Composable
+private fun ConnectionStatusChip(session: SshSession, modifier: Modifier = Modifier) {
+    val theme = LocalAppTheme.current
+    val event by session.connectionEvent.collectAsState()
+    val sessionState by session.sessionState.collectAsState()
+
+    var countdown by remember(session.id) { mutableIntStateOf(0) }
+    var showRecovered by remember(session.id) { mutableStateOf(false) }
+
+    LaunchedEffect(event?.timestamp, event?.type) {
+        val current = event ?: return@LaunchedEffect
+        if (current.type == ConnectionEventType.RETRY_SCHEDULED && current.retryDelaySec > 0) {
+            countdown = current.retryDelaySec
+            while (countdown > 0) {
+                delay(1_000L)
+                countdown -= 1
+            }
+        }
+    }
+
+    LaunchedEffect(event?.timestamp, event?.type) {
+        val current = event ?: return@LaunchedEffect
+        if (current.type == ConnectionEventType.RECONNECT_SUCCESS) {
+            showRecovered = true
+            delay(1_500L)
+            showRecovered = false
+        }
+    }
+
+    val spec = buildStatusChipSpec(event, sessionState, countdown, showRecovered)
+    // 保留最后一张非空规格，让退场动画有内容可淡出
+    val retained = remember { mutableStateOf(spec) }
+    LaunchedEffect(spec) { if (spec != null) retained.value = spec }
+
+    AnimatedVisibility(
+        visible = spec != null,
+        enter = fadeIn(animationSpec = tween(160)),
+        exit = fadeOut(animationSpec = tween(220)),
+        modifier = modifier
+    ) {
+        val shown = spec ?: retained.value
+        if (shown != null) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = theme.surfaceContainerHigh.copy(alpha = 0.95f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, shown.accent.copy(alpha = 0.45f)),
+                shadowElevation = 4.dp,
+                modifier = if (shown.clickable) {
+                    Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { session.reconnect() }
+                } else {
+                    Modifier
+                }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(shown.icon, contentDescription = null, tint = shown.accent, modifier = Modifier.size(15.dp))
+                    Text(
+                        text = shown.text,
+                        color = theme.textPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun connectionEventTypeLabel(type: ConnectionEventType): String {
+    val zh = Strings.isZh
+    return when (type) {
+        ConnectionEventType.CONNECTING -> if (zh) "连接中" else "Connecting"
+        ConnectionEventType.RECONNECTING -> if (zh) "重连中" else "Reconnecting"
+        ConnectionEventType.CONNECTED -> if (zh) "已连接" else "Connected"
+        ConnectionEventType.RECONNECT_SUCCESS -> if (zh) "重连成功" else "Reconnected"
+        ConnectionEventType.RETRY_SCHEDULED -> if (zh) "等待重试" else "Retry scheduled"
+        ConnectionEventType.RECONNECT_EXHAUSTED -> if (zh) "重连中止" else "Reconnect stopped"
+        ConnectionEventType.ERROR -> if (zh) "失败" else "Failed"
+        ConnectionEventType.DISCONNECTED -> if (zh) "断开" else "Disconnected"
+        ConnectionEventType.MANUAL_DISCONNECT -> if (zh) "手动断开" else "Manual disconnect"
+    }
+}
+
+/**
+ * 连接事件记录：状态提示的"历史可查"出口（正文里不再留任何痕迹）。
+ */
+@Composable
+private fun ConnectionEventLogDialog(session: SshSession, onDismiss: () -> Unit) {
+    val theme = LocalAppTheme.current
+    val context = LocalContext.current
+    val version by session.eventLog.version.collectAsState()
+    val events = remember(version) { session.eventLog.snapshot().asReversed() }
+    val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
+    fun formatLine(event: ConnectionEvent): String {
+        val time = timeFormat.format(Date(event.timestamp))
+        val detail = if (event.message.isNotBlank()) "  ${event.message}" else ""
+        return "$time  ${connectionEventTypeLabel(event.type)}$detail"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (Strings.isZh) "连接事件记录" else "Connection Events",
+                fontWeight = FontWeight.Bold,
+                color = theme.textPrimary
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "${session.host.username}@${session.host.hostname}:${session.host.port}",
+                    color = theme.textMuted,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                if (events.isEmpty()) {
+                    Text(
+                        text = if (Strings.isZh) "暂无连接事件" else "No connection events yet",
+                        color = theme.textMuted,
+                        fontSize = 13.sp
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 340.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        items(events, key = { "${it.timestamp}-${it.type.name}-${it.message.hashCode()}" }) { item ->
+                            val accent = when (item.type) {
+                                ConnectionEventType.RECONNECT_SUCCESS, ConnectionEventType.CONNECTED -> StatusGreen
+                                ConnectionEventType.RETRY_SCHEDULED, ConnectionEventType.RECONNECTING,
+                                ConnectionEventType.CONNECTING -> if (item.isAuthFailure) StatusRed else StatusAmber
+                                ConnectionEventType.MANUAL_DISCONNECT -> StatusMuted
+                                else -> StatusRed
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 5.dp)
+                                        .size(6.dp)
+                                        .background(accent, CircleShape)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(
+                                            text = timeFormat.format(Date(item.timestamp)),
+                                            color = theme.textMuted,
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = connectionEventTypeLabel(item.type),
+                                            color = accent,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    if (item.message.isNotBlank()) {
+                                        Text(
+                                            text = item.message,
+                                            color = theme.textSecondary,
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(Strings.close, color = theme.primary)
+            }
+        },
+        dismissButton = {
+            if (events.isNotEmpty()) {
+                TextButton(onClick = {
+                    val dump = session.eventLog.snapshot().joinToString("\n") { formatLine(it) }
+                    try {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                            ?.setPrimaryClip(ClipData.newPlainText("TermX connection events", dump))
+                    } catch (_: Throwable) {
+                        // 剪贴板不可用时静默失败，不打断诊断流程
+                    }
+                }) {
+                    Text(Strings.copy, color = theme.textSecondary)
+                }
+            }
+        },
+        containerColor = theme.surfaceContainerLow
+    )
 }

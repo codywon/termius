@@ -372,11 +372,23 @@ class TermXAgentToolRegistry(
         }
 
         val result = sb.toString().trim()
-        return if (result.isNotBlank()) {
+        val terminalBlock = if (result.isNotBlank()) {
             "【当前终端屏幕内容 (最后 $readLines 行可见输出)】:\n```\n$result\n```"
         } else {
             "当前终端屏幕内容为空或尚未产生输出。"
         }
+
+        // 客户端连接事件单独成节，让模型知道刚断过连，但不会把 TermX 提示误当成服务器输出
+        val recentEvents = session.eventLog.snapshot().takeLast(6)
+        if (recentEvents.isEmpty()) return terminalBlock
+
+        val eventFormatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+        val eventLines = recentEvents.joinToString("\n") { event ->
+            val time = eventFormatter.format(java.util.Date(event.timestamp))
+            val detail = if (event.message.isNotBlank()) "  ${event.message}" else ""
+            "- $time  ${event.type.name}$detail"
+        }
+        return "$terminalBlock\n\n【客户端连接状态（TermX 自身事件，非远端服务器输出）】:\n$eventLines"
     }
 
     private suspend fun handleWebSearch(query: String): String {

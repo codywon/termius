@@ -46,8 +46,20 @@ class SshSession(
     val sessionState: StateFlow<SessionState> = _sessionState
     val isConnected: Boolean get() = _sessionState.value == SessionState.CONNECTED
 
-    private val _statusMessage = MutableStateFlow("")
-    val statusMessage: StateFlow<String> = _statusMessage
+    /**
+     * 连接生命周期事件队列（内存环形缓冲，UI 层"连接事件记录"的数据源）。
+     */
+    val eventLog = SessionEventLog()
+
+    /**
+     * UI 层唯一状态来源：标签状态点、视口状态胶囊、事件记录全部订阅它。
+     * 连接提示一律走这里，不再有任何一行被写进 PTY 字符缓冲。
+     */
+    private val _connectionEvent = MutableStateFlow<ConnectionEvent?>(null)
+    val connectionEvent: StateFlow<ConnectionEvent?> = _connectionEvent
+
+    /** 上一次失败是否属于凭据/密钥类，用于把重试文案从"重连中"改成"认证失败" */
+    private var lastFailureWasAuth = false
 
     // 用于通知 Compose 界面重绘终端
     private val _renderTick = MutableStateFlow(0L)
@@ -67,18 +79,32 @@ class SshSession(
     private val maxAutoReconnectAttempts = 3
     private var connectionJob: Job? = null
 
+    /**
+     * 连接世代号：每次 connect() 递增。旧连接的读循环退出时若世代号已过期，
+     * 则不得再改会话状态、发事件或触发重连（否则重连会被旧循环二次唤醒而抖动）。
+     */
+    @Volatile
+    private var connectionEpoch = 0
+
     fun connect(isReconnecting: Boolean = false) {
         connectionJob?.cancel()
+        // 同步递增世代号：确保旧读循环即使此刻退出，也拿不到当前世代
+        val epoch = ++connectionEpoch
         connectionJob = scope.launch {
+            // 连接阶段标记：auth，用于把"凭据失败"与"网络失败"区分开
+            var phase = "connect"
             try {
                 cleanupConnection()
                 _sessionState.value = SessionState.CONNECTING
-                _statusMessage.value = if (isReconnecting) "正在重新连接 ${host.hostname}:${host.port}..." else "正在连接到 ${host.hostname}:${host.port}..."
-
-                if (isReconnecting) {
-                    emulator.printSystemLog("\u001B[36m[TermX] 正在重新连接到 ${host.hostname}:${host.port}...\u001B[0m")
-                    _renderTick.value = System.currentTimeMillis()
-                }
+                publishEvent(
+                    type = if (isReconnecting) ConnectionEventType.RECONNECTING else ConnectionEventType.CONNECTING,
+                    message = if (isReconnecting) {
+                        "正在重新连接 ${host.hostname}:${host.port}"
+                    } else {
+                        "正在连接到 ${host.hostname}:${host.port}"
+                    },
+                    isAuthFailure = isReconnecting && lastFailureWasAuth
+                )
 
                 com.termius.clone.TermiusApplication.setupBouncyCastle()
                 val client = SSHClient()
@@ -88,7 +114,7 @@ class SshSession(
                 sshClient = client
 
                 _sessionState.value = SessionState.AUTHENTICATING
-                _statusMessage.value = "正在验证身份凭据..."
+                phase = "auth"
 
                 val username = if (host.authType == AuthType.IDENTITY_REF && identity != null) {
                     identity.username
@@ -134,13 +160,13 @@ class SshSession(
                 }
 
                 _sessionState.value = SessionState.CONNECTED
-                _statusMessage.value = "已建立连接"
                 reconnectAttempts = 0
-
-                if (isReconnecting) {
-                    emulator.printSystemLog("\u001B[32m[TermX] 重连成功！\u001B[0m")
-                    _renderTick.value = System.currentTimeMillis()
-                }
+                lastFailureWasAuth = false
+                phase = "shell"
+                publishEvent(
+                    type = if (isReconnecting) ConnectionEventType.RECONNECT_SUCCESS else ConnectionEventType.CONNECTED,
+                    message = if (isReconnecting) "重连成功" else "已建立连接"
+                )
 
                 // 启动 PTY Shell 会话
                 val session = client.startSession()
@@ -160,17 +186,23 @@ class SshSession(
                 inputStream = sh.inputStream
 
                 // 启动读取协程
-                startReadingLoop()
+                startReadingLoop(epoch)
 
             } catch (e: Throwable) {
+                // 被新的 connect() 取消时不算失败：不报错、不触发重连
+                if (e is CancellationException || !isActive) throw e
                 e.printStackTrace()
                 _sessionState.value = SessionState.ERROR
                 val errMsg = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
-                _statusMessage.value = "连接失败: $errMsg"
-                emulator.printSystemLog("\u001B[31m[TermX Mobile] 连接失败: $errMsg\u001B[0m")
-                _renderTick.value = System.currentTimeMillis()
+                lastFailureWasAuth = phase == "auth"
+                publishEvent(
+                    type = ConnectionEventType.ERROR,
+                    message = "连接失败: $errMsg",
+                    isAuthFailure = lastFailureWasAuth
+                )
 
-                if (!isUserInitiatedDisconnect && reconnectAttempts < maxAutoReconnectAttempts) {
+                if (!isUserInitiatedDisconnect) {
+                    // 内部会按已尝试次数决定是"排定重试"还是"达上限"，两者都会发事件
                     triggerAutoReconnect()
                 }
             }
@@ -198,7 +230,7 @@ class SshSession(
         }
     }
 
-    private fun startReadingLoop() {
+    private fun startReadingLoop(epoch: Int) {
         scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(8192)
             try {
@@ -214,12 +246,15 @@ class SshSession(
             } catch (e: Exception) {
                 // 流断开
             } finally {
-                val userDisconnect = isUserInitiatedDisconnect
-                _sessionState.value = SessionState.DISCONNECTED
-                _statusMessage.value = "连接已关闭"
-                cleanupConnection()
-                if (!userDisconnect) {
-                    triggerAutoReconnect()
+                // 世代号过期：属于上一次连接，状态与事件由新连接接管
+                if (epoch == connectionEpoch) {
+                    val userDisconnect = isUserInitiatedDisconnect
+                    _sessionState.value = SessionState.DISCONNECTED
+                    cleanupConnection()
+                    if (!userDisconnect) {
+                        publishEvent(ConnectionEventType.DISCONNECTED, "网络连接中断，连接已关闭")
+                        triggerAutoReconnect()
+                    }
                 }
             }
         }
@@ -229,8 +264,13 @@ class SshSession(
         if (reconnectAttempts < maxAutoReconnectAttempts) {
             reconnectAttempts++
             val delaySec = 3
-            emulator.printSystemLog("\u001B[33m[TermX] 网络连接中断，将在 ${delaySec} 秒后尝试自动重连 (${reconnectAttempts}/${maxAutoReconnectAttempts})...\u001B[0m")
-            _renderTick.value = System.currentTimeMillis()
+            publishEvent(
+                type = ConnectionEventType.RETRY_SCHEDULED,
+                message = "网络连接中断，将在 ${delaySec} 秒后尝试自动重连 ($reconnectAttempts/$maxAutoReconnectAttempts)",
+                attempt = reconnectAttempts,
+                retryDelaySec = delaySec,
+                isAuthFailure = lastFailureWasAuth
+            )
 
             reconnectJob?.cancel()
             reconnectJob = scope.launch {
@@ -240,9 +280,37 @@ class SshSession(
                 }
             }
         } else {
-            emulator.printSystemLog("\u001B[31m[TermX] 自动重连已达上限 (${maxAutoReconnectAttempts}次)，已暂停。点击右上角重连按钮可手动重试。\u001B[0m")
-            _renderTick.value = System.currentTimeMillis()
+            publishEvent(
+                type = ConnectionEventType.RECONNECT_EXHAUSTED,
+                message = "自动重连已达上限 ($maxAutoReconnectAttempts 次)，已暂停，需手动重试",
+                attempt = maxAutoReconnectAttempts,
+                isAuthFailure = lastFailureWasAuth
+            )
         }
+    }
+
+    /**
+     * 发布连接事件：同时进入 UI 状态流与事件记录，绝不触碰 PTY 缓冲。
+     */
+    private fun publishEvent(
+        type: ConnectionEventType,
+        message: String = "",
+        attempt: Int = reconnectAttempts,
+        maxAttempts: Int = maxAutoReconnectAttempts,
+        retryDelaySec: Int = 0,
+        isAuthFailure: Boolean = false
+    ) {
+        val event = ConnectionEvent(
+            timestamp = System.currentTimeMillis(),
+            type = type,
+            message = message,
+            attempt = attempt,
+            maxAttempts = maxAttempts,
+            retryDelaySec = retryDelaySec,
+            isAuthFailure = isAuthFailure
+        )
+        eventLog.append(event)
+        _connectionEvent.value = event
     }
 
     fun reconnect() {
@@ -320,9 +388,7 @@ class SshSession(
         scope.launch(Dispatchers.IO) {
             cleanupConnection()
             _sessionState.value = SessionState.DISCONNECTED
-            _statusMessage.value = "已断开连接"
-            emulator.printSystemLog("\u001B[33m[TermX] 会话已手动断开。\u001B[0m")
-            _renderTick.value = System.currentTimeMillis()
+            publishEvent(ConnectionEventType.MANUAL_DISCONNECT, "会话已手动断开")
         }
     }
 
