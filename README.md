@@ -92,6 +92,64 @@ cd termius
 
 ---
 
+## 发布流程（固定流程：本地提交 + GitHub Actions 构建发版）
+
+发版一律走 GitHub Actions，**不在本地构建发布产物、不手动上传 APK**。
+
+### 1. 版本号
+
+修改 `app/build.gradle.kts`：
+
+```kotlin
+versionCode = 25          // 每次 +1
+versionName = "2.0.22"    // 与即将打的 tag 严格一致
+```
+
+> 教训：v2.0.21 曾出现 tag 已打、`versionName` 仍是 `2.0.20` 的错位。tag 与 versionName 必须同步。
+
+### 2. 提交并推送
+
+```bash
+# 一个功能/修复一个提交（conventional commits，中文描述）
+git add -A && git commit -m "fix(terminal): ... (v2.0.22)"
+git push origin master
+```
+
+推送到 `master`/`main` 会触发 `.github/workflows/android-build.yml`：跑 `assembleDebug assembleRelease`，
+把 Debug/Release APK 作为 artifact 上传（保留 14/30 天），**不创建 Release**。
+
+### 3. 打 tag 正式发版
+
+```bash
+git tag -a v2.0.22 -m "本次版本说明第一行
+第二行……"
+git push origin v2.0.22
+```
+
+推送 `v*` tag 会额外触发同一个工作流：
+
+1. 构建 Debug + Release APK → 产出 `TermX-Mobile-vX.Y.Z-release.apk` / `-debug.apk`
+2. 用 **tag 注释的前 12 行** + 上一个 tag 以来的 `feat/fix/perf/refactor` 提交自动生成 Release 正文
+3. 自动创建 GitHub Release 并附加两个 APK（`softprops/action-gh-release`）
+
+> 所以 **tag 注释就是 Release 正文**，写人话、写清本次改了什么。
+
+### 4. 校验
+
+```bash
+gh run list --limit 3          # 看本次构建状态
+gh run watch <run-id>          # 实时跟踪
+gh release view v2.0.22        # 确认 Release 与 APK 附件
+```
+
+### 备注
+
+- Release 签名使用仓库内 `app/termx_release.jks`（密码在 `app/build.gradle.kts` 的 `signingConfigs`）。
+  仓库若转为公开需先评估该密钥的处置方式。
+- 工作流当前会提示 `actions/checkout@v4` 等动作的 Node 20 弃用告警，属上游迁移提醒，不影响构建。
+
+---
+
 ## 许可证与使用条款
 
 本项目采用 **个人学习与交流许可证 (Personal Study and Communication License)** 发布。
