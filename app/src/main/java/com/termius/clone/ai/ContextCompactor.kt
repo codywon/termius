@@ -185,6 +185,12 @@ object ContextCompactor {
                 messagesJson.put(JSONObject().apply {
                     put("role", role)
                     put("content", textContent)
+                    // 思考模式模型 (DeepSeek V4 / deepseek-reasoner 等) 要求把 assistant 的历史思考链原样回传，
+                    // 缺失该字段会直接被 400 拒绝。此处完整保留，发送前再由
+                    // TermXAgentClient.applyReasoningPassthrough 按模型能力决定保留或剥离。
+                    if (role == "assistant" && msg.safeReasoning.isNotBlank()) {
+                        put("reasoning_content", msg.safeReasoning.trim())
+                    }
                 })
             }
         }

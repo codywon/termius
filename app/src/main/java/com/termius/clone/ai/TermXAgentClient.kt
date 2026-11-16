@@ -260,11 +260,17 @@ class TermXAgentClient(
                             clean.put(JSONObject().apply {
                                 put("role", "assistant")
                                 put("content", sb.toString().trim())
+                                if (msg.has("reasoning_content")) {
+                                    put("reasoning_content", msg.optString("reasoning_content", ""))
+                                }
                             })
                         } else {
                             clean.put(JSONObject().apply {
                                 put("role", "assistant")
                                 put("content", if (rawContent.isNotBlank() && rawContent != "null") rawContent else "已规划下一步操作。")
+                                if (msg.has("reasoning_content")) {
+                                    put("reasoning_content", msg.optString("reasoning_content", ""))
+                                }
                             })
                         }
                     }
@@ -278,6 +284,73 @@ class TermXAgentClient(
                 })
             }
             return clean
+        }
+
+        /**
+         * 已探测到必须回传思考链的模型集合 (reasoner / thinking 类，或曾因缺失该字段被 400 拒绝的模型)。
+         * key 为 modelName，进程内有效，无需用户手工配置。
+         */
+        private val reasoningPassthroughModels: MutableSet<String> =
+            java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+
+        /**
+         * 判断本次请求是否需要回传 assistant 的 reasoning_content。触发条件 (任一):
+         * 1. 模型名显式声明思考能力 (reasoner / thinking / *-reasoning)；
+         * 2. 本进程内已探知该模型需要回传；
+         * 3. 历史对话里存在模型吐出的思考链 —— 说明该模型确实运行在思考模式。
+         */
+        fun needsReasoningPassthrough(config: AiAgentConfig, history: List<AiChatMessage>): Boolean {
+            val name = config.modelName.lowercase()
+            if (name.contains("thinking") || name.contains("reasoner") || name.contains("reasoning")) return true
+            if (reasoningPassthroughModels.contains(config.modelName.trim())) return true
+            return history.any { it.role == "assistant" && it.safeReasoning.isNotBlank() }
+        }
+
+        /** 服务端是否在抱怨 reasoning_content (思考模式回传缺失) */
+        fun isReasoningPassthroughRequired(errorBody: String): Boolean {
+            val lower = errorBody.lowercase()
+            return lower.contains("reasoning_content") || lower.contains("reasoning content")
+        }
+
+        /**
+         * 反向容错：个别旧版思考模型 / 严格校验网关会直接拒绝该字段
+         * (reasoning_content not supported / unrecognized / invalid)。
+         * 注意排除“必须回传”这类要求回传的报错。
+         */
+        fun isReasoningPassthroughRejected(errorBody: String): Boolean {
+            if (!isReasoningPassthroughRequired(errorBody)) return false
+            val lower = errorBody.lowercase()
+            if (lower.contains("must be passed back") || lower.contains("passed back to the api")) return false
+            return lower.contains("not support") || lower.contains("unsupport") ||
+                    lower.contains("unrecognized") || lower.contains("unknown") ||
+                    lower.contains("invalid") || lower.contains("extra")
+        }
+
+        /**
+         * 发送前的思考链整形 (DeepSeek 思考模式兼容层)：
+         * - 需要回传时，为每条 assistant 消息补齐 reasoning_content；缺失会被直接 400，
+         *   空字符串可满足校验，而含工具调用的轮次必须回传真实思考链；
+         * - 不需要时移除该字段，避免非思考模型 / 严格校验网关因未知字段报 400。
+         */
+        fun applyReasoningPassthrough(source: JSONArray, passReasoning: Boolean): JSONArray {
+            val out = JSONArray()
+            for (i in 0 until source.length()) {
+                val msg = source.optJSONObject(i) ?: continue
+                val copy = JSONObject(msg.toString())
+                if (copy.optString("role", "") == "assistant") {
+                    if (passReasoning) {
+                        val existing = copy.optString("reasoning_content", "")
+                        copy.put(
+                            "reasoning_content",
+                            if (existing.isBlank() || existing == "null") "" else existing
+                        )
+                    } else {
+                        copy.remove("reasoning_content")
+                    }
+                }
+                out.put(copy)
+            }
+            return out
         }
 
         /**
@@ -357,6 +430,10 @@ class TermXAgentClient(
         var useNativeTools = true // 初始尝试原生 Function Calling，遇到空响应或不兼容时自动降级
         var useStream = true // 初始尝试 SSE 流式，遇到流式截断或 null 缺陷时自愈降级为稳定非流式
         val executedToolRecords = mutableListOf<ExecutedToolRecord>()
+        // 思考模式 (DeepSeek V4 / reasoner 等) 要求把 reasoning_content 原样回传，否则服务端直接 400：
+        // "The `reasoning_content` in the thinking mode must be passed back to the API."
+        var passReasoning = needsReasoningPassthrough(config, conversationHistory)
+        var reasoningDowngraded = false // 避免“回传/不回传”反复切换
 
         // 2. The ReAct Loop (Thought -> Action -> Observation)
         while (step < maxSteps) {
@@ -382,6 +459,7 @@ class TermXAgentClient(
                 currentStepReasoning.clear()
                 toolCallsDetected.clear()
                 lastRawSnippet = ""
+                var retrySameTier = false // 思考链回传自愈：开启回传后原档位重试一次
 
                 // 回滚全量缓存，杜绝降级重试时脏数据污染
                 fullAccumulatedContent.setLength(stepStartContentLength)
@@ -391,9 +469,9 @@ class TermXAgentClient(
                 val currentStream = useStream
 
                 val outgoingMessages = if (!currentNativeTools || isFinalStep) {
-                    sanitizeMessagesForTextMode(messagesArray, isFinalStep)
+                    applyReasoningPassthrough(sanitizeMessagesForTextMode(messagesArray, isFinalStep), passReasoning)
                 } else {
-                    messagesArray
+                    applyReasoningPassthrough(messagesArray, passReasoning)
                 }
 
                 val requestBody = JSONObject().apply {
@@ -442,6 +520,26 @@ class TermXAgentClient(
                             val errorBody = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $responseCode"
                             lastRawSnippet = errorBody
                             Log.e(TAG, "API 请求错误 ($responseCode): $errorBody")
+                            // 思考模式回传缺失 (DeepSeek V4 / reasoner 等)：开启回传后原档位重试，不降级
+                            if (!passReasoning && isReasoningPassthroughRequired(errorBody)) {
+                                Log.w(TAG, "检测到思考模式要求回传 reasoning_content，自动开启回传并重试当前档位...")
+                                onToolAction("检测到模型思考模式要求回传思考链，已自动开启回传重试...")
+                                passReasoning = true
+                                reasoningPassthroughModels.add(config.modelName.trim())
+                                retrySameTier = true
+                                conn.disconnect()
+                                break
+                            }
+                            // 反向自愈：服务端明确拒绝该字段 (旧版 reasoner / 严格校验网关)，关掉回传重试
+                            if (passReasoning && !reasoningDowngraded && isReasoningPassthroughRejected(errorBody)) {
+                                Log.w(TAG, "服务端拒绝 reasoning_content 字段，关闭回传后重试当前档位...")
+                                passReasoning = false
+                                reasoningDowngraded = true
+                                reasoningPassthroughModels.remove(config.modelName.trim())
+                                retrySameTier = true
+                                conn.disconnect()
+                                break
+                            }
 
                             // 针对模型明确拒绝 tools 参数 (400 等)，降级为纯文本模式重试
                             if (currentNativeTools && isToolParamRejected(errorBody)) {
@@ -569,6 +667,11 @@ class TermXAgentClient(
                     }
                 }
 
+                // 思考链回传自愈：不消耗降级次数，同档位携带 reasoning_content 重试
+                if (retrySameTier) {
+                    tierAttempt--
+                    continue
+                }
                 // 严格清洗纯空白不可见字符 (如单个换行符 \n 或空格)，杜绝误判
                 if (currentStepContent.isBlank()) {
                     currentStepContent.clear()
@@ -592,6 +695,11 @@ class TermXAgentClient(
 
                 if (hasValidOutput) {
                     stepSucceeded = true
+                    // 模型一旦吐出思考链，即判定为思考模式，本轮后续请求全部回传该字段
+                    if (currentStepReasoning.isNotBlank()) {
+                        passReasoning = true
+                        reasoningPassthroughModels.add(config.modelName.trim())
+                    }
                 } else {
                     // 恢复全量累积缓存，杜绝无效空白字符残留污染
                     fullAccumulatedContent.setLength(stepStartContentLength)
@@ -658,6 +766,11 @@ class TermXAgentClient(
                     put("content", cleanContent)
                 } else {
                     put("content", JSONObject.NULL)
+                }
+                // 思考模式：把本轮思考链写回 assistant 消息，下一轮请求必须原样回传
+                val stepReasoning = currentStepReasoning.toString().trim()
+                if (stepReasoning.isNotEmpty() && stepReasoning != "null") {
+                    put("reasoning_content", stepReasoning)
                 }
                 // 仅原生 tool call 写入 assistant.tool_calls 字段
                 val nativeCalls = toolCallsDetected.filter { !it.getString("id").startsWith("call_txt_") }
