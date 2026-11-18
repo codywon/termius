@@ -18,9 +18,15 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.termius.clone.MainActivity
-import com.termius.clone.R
 import com.termius.clone.terminal.session.SessionManager
+import com.termius.clone.terminal.session.SessionState
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 
 /**
  * 生产级 SSH 前台保活与连接常驻服务 (参考 mqtt-assistant-app 工业级保活机制):
@@ -28,7 +34,7 @@ import kotlinx.coroutines.*
  * 2. 组合持有 CPU WakeLock 与 Wi-Fi Lock，防止 Wi-Fi 芯片和 Socket 进入省电休眠导致 Broken Pipe；
  * 3. 动态监听息屏/亮屏事件：息屏时维持长连接心跳，亮屏时快速探活自愈；
  * 4. 监听网络切换（Wi-Fi/移动网络）：实时响应网络环境迁移；
- * 5. 安全释放与异常熔断保护。
+ * 5. 安全释放与异常熔断保护（含 Android 15 dataSync 超时处理）。
  */
 class SshForegroundService : Service() {
 
@@ -39,19 +45,49 @@ class SshForegroundService : Service() {
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var tickerJob: Job? = null
+    private var networkProbeJob: Job? = null
+
+    private val lastScreenProbeAt = AtomicLong(0L)
+    private val lastNetworkProbeAt = AtomicLong(0L)
 
     private var startTimestamp = System.currentTimeMillis()
 
     companion object {
         private const val TAG = "SshFgService"
+        private const val PROBE_THROTTLE_MS = 2_000L
         const val CHANNEL_ID = "teamx_ssh_session_channel"
         const val NOTIFICATION_ID = 2001
         const val ACTION_START = "com.termius.clone.service.ACTION_START"
         const val ACTION_STOP = "com.termius.clone.service.ACTION_STOP"
         const val EXTRA_SESSION_COUNT = "extra_session_count"
 
+        private val _runningFlow = MutableStateFlow(false)
+        val runningFlow: StateFlow<Boolean> = _runningFlow.asStateFlow()
+
+        private val activeTaskCount = AtomicInteger(0)
+
         var isRunning: Boolean = false
             private set
+
+        private fun updateRunningState(running: Boolean) {
+            isRunning = running
+            _runningFlow.value = running
+        }
+
+        fun hasActiveTasks(): Boolean = activeTaskCount.get() > 0
+
+        fun acquireTask(context: Context) {
+            activeTaskCount.incrementAndGet()
+            val count = SessionManager.sessions.value.size.coerceAtLeast(1)
+            start(context, count)
+        }
+
+        fun releaseTask(context: Context) {
+            val remaining = activeTaskCount.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+            if (remaining <= 0 && SessionManager.sessions.value.isEmpty()) {
+                stop(context)
+            }
+        }
 
         fun start(context: Context, sessionCount: Int = 1) {
             try {
@@ -71,10 +107,7 @@ class SshForegroundService : Service() {
 
         fun stop(context: Context) {
             try {
-                val intent = Intent(context, SshForegroundService::class.java).apply {
-                    action = ACTION_STOP
-                }
-                context.startService(intent)
+                context.stopService(Intent(context, SshForegroundService::class.java))
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to stop SshForegroundService: ${e.message}")
             }
@@ -89,7 +122,7 @@ class SshForegroundService : Service() {
             registerScreenReceiver()
             registerNetworkCallback()
             startNotificationTicker()
-            isRunning = true
+            updateRunningState(true)
             startTimestamp = System.currentTimeMillis()
         } catch (e: Throwable) {
             Log.e(TAG, "Error in onCreate", e)
@@ -98,34 +131,66 @@ class SshForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            try {
+                ensureForegroundNotification(SessionManager.sessions.value.size)
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Error during ACTION_STOP foreground transition: ${e.message}")
+            }
             stopSelf()
             return START_NOT_STICKY
         }
 
         try {
             val count = intent?.getIntExtra(EXTRA_SESSION_COUNT, 1) ?: 1
-            val notification = buildNotification(count)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceCompat.startForeground(
-                    this,
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+            ensureForegroundNotification(count)
         } catch (e: Throwable) {
             Log.e(TAG, "Error in onStartCommand", e)
+            stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onTimeout(startId: Int) {
+        Log.w(TAG, "Foreground service timeout reached (startId=$startId), stopping gracefully")
+        handleForegroundTimeout(startId)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timeout reached (startId=$startId, fgsType=$fgsType), stopping gracefully")
+        handleForegroundTimeout(startId)
+    }
+
+    private fun handleForegroundTimeout(startId: Int) {
+        activeTaskCount.set(0)
+        try {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        } catch (e: Throwable) {
+            Log.w(TAG, "stopForeground on timeout failed: ${e.message}")
+        }
+        stopSelf(startId)
+    }
+
+    private fun ensureForegroundNotification(sessionCount: Int) {
+        val notification = buildNotification(sessionCount)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        isRunning = false
+        updateRunningState(false)
         tickerJob?.cancel()
+        networkProbeJob?.cancel()
         serviceScope.cancel()
         unregisterScreenReceiver()
         unregisterNetworkCallback()
@@ -179,19 +244,14 @@ class SshForegroundService : Service() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_ON -> {
+                        val now = System.currentTimeMillis()
+                        val prev = lastScreenProbeAt.get()
+                        if (now - prev < PROBE_THROTTLE_MS || !lastScreenProbeAt.compareAndSet(prev, now)) {
+                            return
+                        }
                         Log.d(TAG, "Screen ON detected, verifying active SSH sessions")
                         serviceScope.launch {
-                            SessionManager.sessions.value.forEach { session ->
-                                if (session.sessionState.value == com.termius.clone.terminal.session.SessionState.CONNECTED) {
-                                    // 亮屏瞬间探测网络连接状态
-                                    try {
-                                        val connected = session.getClient()?.isConnected ?: false
-                                        if (!connected) {
-                                            Log.w(TAG, "Session ${session.host.label} disconnected while screen was off")
-                                        }
-                                    } catch (_: Exception) {}
-                                }
-                            }
+                            probeAndReconnectSessions("SCREEN_ON")
                         }
                     }
                     Intent.ACTION_SCREEN_OFF -> {
@@ -226,6 +286,18 @@ class SshForegroundService : Service() {
             networkCallback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     Log.d(TAG, "Network became available")
+                    val now = System.currentTimeMillis()
+                    val prev = lastNetworkProbeAt.get()
+                    if (now - prev < PROBE_THROTTLE_MS) {
+                        return
+                    }
+                    networkProbeJob?.cancel()
+                    networkProbeJob = serviceScope.launch {
+                        delay(400L) // 等待网络切换路由稳定
+                        val fireTime = System.currentTimeMillis()
+                        lastNetworkProbeAt.set(fireTime)
+                        probeAndReconnectSessions("NETWORK_AVAILABLE")
+                    }
                 }
 
                 override fun onLost(network: Network) {
@@ -247,13 +319,47 @@ class SshForegroundService : Service() {
         }
     }
 
+    private suspend fun probeAndReconnectSessions(trigger: String) {
+        val sessions = SessionManager.sessions.value
+        for (session in sessions) {
+            coroutineContext.ensureActive()
+            if (session.isManuallyDisconnected) continue
+            val state = session.sessionState.value
+            val needsReconnect = when (state) {
+                SessionState.ERROR, SessionState.DISCONNECTED -> true
+                SessionState.CONNECTED -> {
+                    val isAlive = try {
+                        session.getClient()?.isConnected == true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        false
+                    }
+                    !isAlive
+                }
+                SessionState.CONNECTING, SessionState.AUTHENTICATING -> false
+            }
+            if (needsReconnect) {
+                Log.i(TAG, "[$trigger] Reconnecting session ${session.host.label} (state=$state)")
+                try {
+                    session.reconnect()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "[$trigger] Reconnect trigger failed for ${session.host.label}: ${e.message}")
+                }
+            }
+        }
+    }
+
     private fun startNotificationTicker() {
         tickerJob = serviceScope.launch {
             while (isActive) {
                 delay(30_000L) // 每30秒轻量刷新通知栏时长
                 val sessions = SessionManager.sessions.value
-                if (sessions.isEmpty()) {
-                    // 若已无活动会话，自动优雅停止常驻服务
+                val tasks = activeTaskCount.get()
+                if (sessions.isEmpty() && tasks <= 0) {
+                    // 若已无活动会话且无后台任务，自动优雅停止常驻服务
                     stopSelf()
                     break
                 }
@@ -274,13 +380,20 @@ class SshForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val activeHostLabels = SessionManager.sessions.value.joinToString(", ") { it.host.label }.ifBlank { "活跃会话" }
+        val sessions = SessionManager.sessions.value
+        val activeHostLabels = sessions.joinToString(", ") { it.host.label }.ifBlank { "活跃会话" }
         val elapsedMinutes = ((System.currentTimeMillis() - startTimestamp) / 60000L).coerceAtLeast(0)
         val timeText = if (elapsedMinutes >= 60) "${elapsedMinutes / 60}小时${elapsedMinutes % 60}分" else "${elapsedMinutes}分钟"
 
+        val contentText = if (sessions.isEmpty() && activeTaskCount.get() > 0) {
+            "${activeTaskCount.get()} 个后台任务运行中 • 在线 $timeText"
+        } else {
+            "$sessionCount 个活动连接 ($activeHostLabels) • 在线 $timeText"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("TermX Mobile 连接保活中")
-            .setContentText("$sessionCount 个活动连接 ($activeHostLabels) • 在线 $timeText")
+            .setContentText(contentText)
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setContentIntent(pendingIntent)
             .setOngoing(true)

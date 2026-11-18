@@ -37,11 +37,18 @@ object TerminalKeyCodes {
      * 将 Ctrl + 字符 转换为 ASCII 控制码 (例如 Ctrl+C -> 0x03)
      */
     fun getCtrlCode(char: Char): ByteArray {
-        val uppercase = char.uppercaseChar()
-        return if (uppercase in '@'..'_') {
-            byteArrayOf((uppercase.code - 64).toByte())
-        } else {
-            char.toString().toByteArray(Charsets.UTF_8)
+        return when (char) {
+            ' ' -> byteArrayOf(0x00)
+            '/' -> byteArrayOf(0x1F)
+            '?' -> byteArrayOf(0x7F)
+            else -> {
+                val uppercase = char.uppercaseChar()
+                if (uppercase in '@'..'_') {
+                    byteArrayOf((uppercase.code - 64).toByte())
+                } else {
+                    char.toString().toByteArray(Charsets.UTF_8)
+                }
+            }
         }
     }
 

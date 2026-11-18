@@ -59,9 +59,10 @@ data class ConnectionEvent(
  * 之所以不落 Room：AppDatabase 当前 version = 1 且未配置迁移，
  * 新增实体需要升版本 + 迁移脚本，属于独立改动，本轮不把持久化风险混进体验修复。
  */
-class SessionEventLog(private val capacity: Int = 200) {
+class SessionEventLog(capacity: Int = 200) {
 
-    private val entries = java.util.ArrayDeque<ConnectionEvent>(capacity.coerceAtLeast(1))
+    private val maxCapacity = capacity.coerceAtLeast(1)
+    private val entries = java.util.ArrayDeque<ConnectionEvent>(maxCapacity)
 
     private val _version = MutableStateFlow(0)
 
@@ -70,7 +71,7 @@ class SessionEventLog(private val capacity: Int = 200) {
 
     @Synchronized
     fun append(event: ConnectionEvent) {
-        if (entries.size >= capacity) {
+        if (entries.size >= maxCapacity) {
             entries.removeFirst()
         }
         entries.addLast(event)
