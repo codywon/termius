@@ -120,11 +120,8 @@ object AgentExecutionManager {
             activeJob = null
             deferredToReject = pendingApprovalDeferred
             pendingApprovalDeferred = null
-            _state.value = _state.value.copy(
-                isGenerating = false,
-                pendingApprovalRequest = null,
-                currentActionText = ""
-            )
+            // 手动停止必须清空 sessionId，防止 Compose LaunchedEffect(isGenerating) 在异步存盘完成前用旧历史覆盖手停气泡
+            _state.value = AgentExecutionState()
         }
         deferredToReject?.complete(false)
         jobToCancel?.cancel()

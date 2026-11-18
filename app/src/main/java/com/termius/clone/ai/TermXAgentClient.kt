@@ -892,7 +892,7 @@ class TermXAgentClient(
                 val outgoingMessages = if (!currentNativeTools || isFinalStep) {
                     applyReasoningPassthrough(sanitizeMessagesForTextMode(messagesArray, isFinalStep), passReasoning)
                 } else {
-                    applyReasoningPassthrough(messagesArray, passReasoning)
+                    applyReasoningPassthrough(ContextCompactor.mergeConsecutiveSameRoleMessages(messagesArray), passReasoning)
                 }
 
                 val requestBody = JSONObject().apply {

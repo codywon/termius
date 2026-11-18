@@ -254,6 +254,33 @@ class AiSubsystemRegressionTest {
     }
 
     @Test
+    fun mergeConsecutiveSameRolePreservesParallelToolAndMergesTextualToolUsers() {
+        val nativeMixed = JSONArray().apply {
+            put(JSONObject().put("role", "system").put("content", "sys"))
+            put(JSONObject().put("role", "user").put("content", "run"))
+            put(JSONObject().put("role", "assistant").put("content", "ok"))
+            // 原生模式下模型若吐出多条文本工具调用会追加多条 role=user 观测
+            put(JSONObject().put("role", "user").put("content", "obs1"))
+            put(JSONObject().put("role", "user").put("content", "obs2"))
+            put(JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", JSONArray().apply {
+                put(JSONObject().put("id", "call_1"))
+                put(JSONObject().put("id", "call_2"))
+            }))
+            put(JSONObject().put("role", "tool").put("tool_call_id", "call_1").put("content", "r1"))
+            put(JSONObject().put("role", "tool").put("tool_call_id", "call_2").put("content", "r2"))
+        }
+
+        val merged = ContextCompactor.mergeConsecutiveSameRoleMessages(nativeMixed)
+        // obs1 与 obs2 必须合并为 1 条 user；两条并行 tool 必须各自保留
+        assertEquals(7, merged.length())
+        assertEquals("user", merged.getJSONObject(3).getString("role"))
+        assertTrue(merged.getJSONObject(3).getString("content").contains("obs1"))
+        assertTrue(merged.getJSONObject(3).getString("content").contains("obs2"))
+        assertEquals("tool", merged.getJSONObject(5).getString("role"))
+        assertEquals("tool", merged.getJSONObject(6).getString("role"))
+    }
+
+    @Test
     fun webSearchNormalizesDuckDuckGoUrls() {
         val redirectUrl = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fnginx.org%2Fen%2Fdocs%2F&amp;rut=abc"
         assertEquals("https://nginx.org/en/docs/", WebSearchHelper.normalizeDuckDuckGoUrl(redirectUrl))
