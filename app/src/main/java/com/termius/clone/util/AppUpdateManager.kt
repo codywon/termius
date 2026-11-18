@@ -8,9 +8,14 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,6 +23,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.math.BigInteger
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -76,6 +82,8 @@ object AppUpdateManager {
         "https://ghproxy.net/"
     )
 
+    private val downloadMutex = Mutex()
+
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -103,15 +111,24 @@ object AppUpdateManager {
     }
 
     /**
-     * 语义化版本号比对：判断 remote 是否大于 current
-     * 例如："1.0.1" > "1.0.0" => true; "1.1.0" > "1.0.9" => true
+     * 语义化版本号比对（遵循 SemVer 2.0.0）：判断 remote 是否大于 current
+     * - 忽略 '+' 构建元数据（如 1.2.0+build.1 == 1.2.0+build.2）
+     * - 拆分 '-' 预发布标签比较（如 1.2.0 > 1.2.0-beta.1，1.2.4-rc1 > 1.2.3）
      */
     fun isNewerVersion(current: String, remote: String): Boolean {
         val curClean = current.trim().removePrefix("v").removePrefix("V")
         val remClean = remote.trim().removePrefix("v").removePrefix("V")
+        if (remClean.isBlank()) return false
+        if (curClean.isBlank()) return true
 
-        val curParts = curClean.split(".").mapNotNull { it.toIntOrNull() }
-        val remParts = remClean.split(".").mapNotNull { it.toIntOrNull() }
+        val curNoBuild = curClean.substringBefore('+')
+        val remNoBuild = remClean.substringBefore('+')
+
+        val curCoreStr = curNoBuild.substringBefore('-')
+        val remCoreStr = remNoBuild.substringBefore('-')
+
+        val curParts = curCoreStr.split(".").map { it.toIntOrNull() ?: 0 }
+        val remParts = remCoreStr.split(".").map { it.toIntOrNull() ?: 0 }
 
         val maxLen = maxOf(curParts.size, remParts.size)
         for (i in 0 until maxLen) {
@@ -119,6 +136,37 @@ object AppUpdateManager {
             val remVal = remParts.getOrElse(i) { 0 }
             if (remVal > curVal) return true
             if (remVal < curVal) return false
+        }
+
+        val curPre = if ('-' in curNoBuild) curNoBuild.substringAfter('-') else null
+        val remPre = if ('-' in remNoBuild) remNoBuild.substringAfter('-') else null
+
+        if (curPre == null && remPre == null) return false
+        if (curPre != null && remPre == null) return true
+        if (curPre == null && remPre != null) return false
+
+        val curIds = curPre!!.split('.')
+        val remIds = remPre!!.split('.')
+        val maxPreLen = maxOf(curIds.size, remIds.size)
+        for (i in 0 until maxPreLen) {
+            val curId = curIds.getOrNull(i)
+            val remId = remIds.getOrNull(i)
+            if (curId == null) return true
+            if (remId == null) return false
+            if (curId == remId) continue
+
+            val curIsNum = curId.isNotEmpty() && curId.all { it in '0'..'9' }
+            val remIsNum = remId.isNotEmpty() && remId.all { it in '0'..'9' }
+            if (curIsNum && remIsNum) {
+                val cmp = BigInteger(remId).compareTo(BigInteger(curId))
+                if (cmp != 0) return cmp > 0
+            } else if (curIsNum != remIsNum) {
+                // 数字标识符优先级低于非数字标识符
+                return !remIsNum
+            } else {
+                val cmp = remId.compareTo(curId)
+                if (cmp != 0) return cmp > 0
+            }
         }
         return false
     }
@@ -134,14 +182,12 @@ object AppUpdateManager {
                 .header("User-Agent", "TermX-Mobile-App")
                 .build()
 
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                val code = response.code
-                response.close()
-                return@withContext UpdateCheckResult.Error("获取更新失败 (HTTP $code)")
+            val bodyStr = httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext UpdateCheckResult.Error("获取更新失败 (HTTP ${response.code})")
+                }
+                response.body?.string() ?: return@withContext UpdateCheckResult.Error("服务器响应为空")
             }
-
-            val bodyStr = response.body?.string() ?: return@withContext UpdateCheckResult.Error("服务器响应为空")
             val json = JSONObject(bodyStr)
             val tagName = json.optString("tag_name", "").trim()
             val releaseTitle = json.optString("name", tagName).trim()
@@ -199,6 +245,8 @@ object AppUpdateManager {
 
             setLastCheckTimestamp(context, System.currentTimeMillis())
             UpdateCheckResult.HasUpdate(updateInfo)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "checkUpdate error", e)
             UpdateCheckResult.Error(e.localizedMessage ?: "检查更新异常，请检查网络连接")
@@ -210,6 +258,25 @@ object AppUpdateManager {
         val url: String
     )
 
+    private fun isValidApkArchive(context: Context, apkFile: File): Boolean {
+        return try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageArchiveInfo(
+                    apkFile.absolutePath,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+            }
+            packageInfo != null &&
+                !packageInfo.packageName.isNullOrBlank() &&
+                packageInfo.packageName == context.packageName
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /**
      * 高速流式下载 APK，支持通道并发竞速测速、低速熔断自动换线与实时速率计算
      */
@@ -218,110 +285,134 @@ object AppUpdateManager {
         info: UpdateInfo,
         onProgress: (progress: Float, downloadedBytes: Long, totalBytes: Long, speedText: String, channelName: String) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
-        val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val targetFile = File(updateDir, "TermX-Mobile-update.apk")
-        if (targetFile.exists()) {
-            targetFile.delete()
-        }
+        downloadMutex.withLock {
+            val updateDir = File(context.cacheDir, "updates").apply { mkdirs() }
+            val targetFile = File(updateDir, "TermX-Mobile-update.apk")
+            val tempFile = File(updateDir, "TermX-Mobile-update.apk.tmp")
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
 
-        val allCandidates = mutableListOf<DownloadChannel>().apply {
-            add(DownloadChannel("官方直连 (GitHub Direct)", info.downloadUrl))
-            add(DownloadChannel("国内极速镜像 (ghfast)", "https://ghfast.top/${info.downloadUrl}"))
-            add(DownloadChannel("国内极速镜像 (ghp.ci)", "https://ghp.ci/${info.downloadUrl}"))
-            add(DownloadChannel("国内加速镜像 (gh-proxy)", "https://gh-proxy.com/${info.downloadUrl}"))
-            add(DownloadChannel("国内备用镜像 (ghproxy)", "https://ghproxy.net/${info.downloadUrl}"))
-        }
+            val allCandidates = mutableListOf<DownloadChannel>().apply {
+                add(DownloadChannel("官方直连 (GitHub Direct)", info.downloadUrl))
+                add(DownloadChannel("国内极速镜像 (ghfast)", "https://ghfast.top/${info.downloadUrl}"))
+                add(DownloadChannel("国内极速镜像 (ghp.ci)", "https://ghp.ci/${info.downloadUrl}"))
+                add(DownloadChannel("国内加速镜像 (gh-proxy)", "https://gh-proxy.com/${info.downloadUrl}"))
+                add(DownloadChannel("国内备用镜像 (ghproxy)", "https://ghproxy.net/${info.downloadUrl}"))
+            }
 
-        // 步骤 1：轻量并发测速竞速（1200ms），选出响应最快的通道排在首位
-        val rankedChannels = rankChannelsBySpeed(allCandidates)
-        var lastException: Exception? = null
+            // 步骤 1：轻量并发测速竞速（1200ms），选出响应最快的通道排在首位
+            val rankedChannels = rankChannelsBySpeed(allCandidates)
+            var lastException: Exception? = null
 
-        for (channel in rankedChannels) {
-            try {
-                Log.d(TAG, "Attempting download from optimal channel [${channel.name}]: ${channel.url}")
-                val request = Request.Builder()
-                    .url(channel.url)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android) TermX-Mobile")
-                    .build()
+            for (channel in rankedChannels) {
+                try {
+                    currentCoroutineContext().ensureActive()
+                    if (tempFile.exists()) tempFile.delete()
 
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    response.close()
-                    continue
-                }
+                    Log.d(TAG, "Attempting download from optimal channel [${channel.name}]: ${channel.url}")
+                    val request = Request.Builder()
+                        .url(channel.url)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android) TermX-Mobile")
+                        .build()
 
-                val body = response.body ?: continue
-                val contentLength = if (body.contentLength() > 0) body.contentLength() else info.fileSize
+                    var bodyContentLength = -1L
+                    httpClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IOException("HTTP ${response.code} from ${channel.name}")
+                        }
+                        val body = response.body ?: throw IOException("Empty body from ${channel.name}")
+                        bodyContentLength = body.contentLength()
+                        val displayTotalBytes = if (bodyContentLength > 0L) bodyContentLength else info.fileSize
 
-                body.byteStream().use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        var bytesRead: Int
-                        var totalRead = 0L
-                        var lastProgressUiTime = 0L
-                        var speedSampleStartTime = System.currentTimeMillis()
-                        var speedSampleBytes = 0L
-                        var currentSpeedText = "-- KB/s"
-                        val connectionStartTime = System.currentTimeMillis()
+                        body.byteStream().use { input ->
+                            FileOutputStream(tempFile).use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                var bytesRead: Int
+                                var totalRead = 0L
+                                var lastProgressUiTime = 0L
+                                var speedSampleStartTime = System.currentTimeMillis()
+                                var speedSampleBytes = 0L
+                                var currentSpeedText = "-- KB/s"
+                                val connectionStartTime = System.currentTimeMillis()
 
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                            totalRead += bytesRead
-                            speedSampleBytes += bytesRead
+                                while (input.read(buffer).also { bytesRead = it } != -1) {
+                                    currentCoroutineContext().ensureActive()
+                                    output.write(buffer, 0, bytesRead)
+                                    totalRead += bytesRead
+                                    speedSampleBytes += bytesRead
 
-                            val now = System.currentTimeMillis()
+                                    val now = System.currentTimeMillis()
 
-                            // 低速熔断看门狗：前 4 秒如果平均速度低于 120 KB/s，主动断开当前通道换更快的通道
-                            val elapsedSec = (now - connectionStartTime) / 1000.0
-                            if (elapsedSec >= 4.0 && totalRead < contentLength * 0.9) {
-                                val avgSpeedKb = (totalRead / 1024.0) / elapsedSec
-                                if (avgSpeedKb < 120.0) {
-                                    Log.w(TAG, "Watchdog triggered: speed ${avgSpeedKb.toInt()} KB/s < 120 KB/s on ${channel.name}")
-                                    throw IOException("当前通道连接速率过低 (${avgSpeedKb.toInt()} KB/s)，自动切换更优镜像通道")
+                                    // 低速熔断看门狗：前 4 秒如果平均速度低于 120 KB/s，主动断开当前通道换更快的通道
+                                    val elapsedSec = (now - connectionStartTime) / 1000.0
+                                    if (elapsedSec >= 4.0 && displayTotalBytes > 0L && totalRead < displayTotalBytes * 0.9) {
+                                        val avgSpeedKb = (totalRead / 1024.0) / elapsedSec
+                                        if (avgSpeedKb < 120.0) {
+                                            Log.w(TAG, "Watchdog triggered: speed ${avgSpeedKb.toInt()} KB/s < 120 KB/s on ${channel.name}")
+                                            throw IOException("当前通道连接速率过低 (${avgSpeedKb.toInt()} KB/s)，自动切换更优镜像通道")
+                                        }
+                                    }
+
+                                    // 采样计算瞬时下载速度（每 400ms 刷新一次速度值）
+                                    val sampleElapsedSec = (now - speedSampleStartTime) / 1000.0
+                                    if (sampleElapsedSec >= 0.4) {
+                                        val bytesPerSec = (speedSampleBytes / sampleElapsedSec).toLong()
+                                        currentSpeedText = formatSpeed(bytesPerSec)
+                                        speedSampleBytes = 0L
+                                        speedSampleStartTime = now
+                                    }
+
+                                    // 刷新 UI 进度（约 120ms 一次）
+                                    if (now - lastProgressUiTime >= 120 || (displayTotalBytes > 0L && totalRead == displayTotalBytes)) {
+                                        lastProgressUiTime = now
+                                        val progress = if (displayTotalBytes > 0) {
+                                            (totalRead.toFloat() / displayTotalBytes.toFloat()).coerceIn(0f, 1f)
+                                        } else {
+                                            0f
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            onProgress(progress, totalRead, displayTotalBytes, currentSpeedText, channel.name)
+                                        }
+                                    }
                                 }
-                            }
-
-                            // 采样计算瞬时下载速度（每 400ms 刷新一次速度值）
-                            val sampleElapsedSec = (now - speedSampleStartTime) / 1000.0
-                            if (sampleElapsedSec >= 0.4) {
-                                val bytesPerSec = (speedSampleBytes / sampleElapsedSec).toLong()
-                                currentSpeedText = formatSpeed(bytesPerSec)
-                                speedSampleBytes = 0L
-                                speedSampleStartTime = now
-                            }
-
-                            // 刷新 UI 进度（约 120ms 一次）
-                            if (now - lastProgressUiTime >= 120 || totalRead == contentLength) {
-                                lastProgressUiTime = now
-                                val progress = if (contentLength > 0) {
-                                    (totalRead.toFloat() / contentLength.toFloat()).coerceIn(0f, 1f)
-                                } else {
-                                    0f
-                                }
-                                withContext(Dispatchers.Main) {
-                                    onProgress(progress, totalRead, contentLength, currentSpeedText, channel.name)
-                                }
+                                output.flush()
                             }
                         }
-                        output.flush()
                     }
-                }
 
-                // 完整性校验：下载后的文件必须大于 3MB（防止把 HTML 404 错误页当成 APK 保存）
-                if (targetFile.exists() && targetFile.length() > 3 * 1024 * 1024) {
-                    Log.d(TAG, "Download successfully completed from ${channel.name}, size=${targetFile.length()}")
-                    return@withContext Result.success(targetFile)
-                } else {
-                    targetFile.delete()
+                    // 严格完整性与 APK 包合法性校验（在临时文件校验通过后再原子替换目标文件）
+                    val actualSize = if (tempFile.exists()) tempFile.length() else 0L
+                    val minSizeValid = actualSize > 3L * 1024L * 1024L
+                    val contentLengthValid = bodyContentLength <= 0L || actualSize == bodyContentLength
+                    val infoSizeValid = info.fileSize <= 0L || actualSize == info.fileSize
+
+                    if (minSizeValid && contentLengthValid && infoSizeValid && isValidApkArchive(context, tempFile)) {
+                        if (targetFile.exists()) {
+                            targetFile.delete()
+                        }
+                        if (!tempFile.renameTo(targetFile)) {
+                            tempFile.copyTo(targetFile, overwrite = true)
+                            tempFile.delete()
+                        }
+                        Log.d(TAG, "Download successfully completed from ${channel.name}, size=${targetFile.length()}")
+                        return@withLock Result.success(targetFile)
+                    } else {
+                        tempFile.delete()
+                        throw IOException("APK 校验失败 (actual=$actualSize, contentLength=$bodyContentLength, expected=${info.fileSize})")
+                    }
+                } catch (e: CancellationException) {
+                    runCatching { tempFile.delete() }
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Download channel [${channel.name}] failed: ${e.message}")
+                    lastException = e
+                    runCatching { tempFile.delete() }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Download channel [${channel.name}] failed: ${e.message}")
-                lastException = e
-                if (targetFile.exists()) targetFile.delete()
             }
-        }
 
-        Result.failure(lastException ?: Exception("所有加速下载镜像通道均无法访问，建议点击【用浏览器下载】"))
+            Result.failure(lastException ?: Exception("所有加速下载镜像通道均无法访问，建议点击【用浏览器下载】"))
+        }
     }
 
     private suspend fun rankChannelsBySpeed(candidates: List<DownloadChannel>): List<DownloadChannel> = withContext(Dispatchers.IO) {
@@ -340,6 +431,8 @@ object AppUpdateManager {
                             .readTimeout(1200, TimeUnit.MILLISECONDS)
                             .build()
                         client.newCall(req).execute().use { it.isSuccessful }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {
                         false
                     }
@@ -350,6 +443,8 @@ object AppUpdateManager {
 
             // 测速成功的优先按延迟从低到高排列，超时的放在最后
             scoredList.sortedBy { it.second }.map { it.first }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             candidates
         }

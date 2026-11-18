@@ -19,7 +19,7 @@ data class HostEntity(
     val groupName: String = "Default", // 分组目录
     val colorTag: String = "#7952FF",  // 标签颜色
     val jumpHostId: Long? = null,      // 跳板机 ID
-    val terminalTheme: String = "Dracula",
+    val terminalTheme: String = "",
     val lastConnected: Long = 0L
 )
 

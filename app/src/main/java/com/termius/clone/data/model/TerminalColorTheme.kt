@@ -120,7 +120,14 @@ object TerminalThemes {
     )
 
     fun getThemeById(id: String): TerminalThemeColors {
-        return allThemes.find { it.id.equals(id, ignoreCase = true) || it.nameZh.equals(id, ignoreCase = true) || it.nameEn.equals(id, ignoreCase = true) } ?: ClassicDark
+        val trimmed = id.trim()
+        if (trimmed.equals("dracula", ignoreCase = true)) return NeonPurple
+        if (trimmed.equals("monokai", ignoreCase = true)) return HackerGreen
+        return allThemes.find {
+            it.id.equals(trimmed, ignoreCase = true) ||
+                it.nameZh.equals(trimmed, ignoreCase = true) ||
+                it.nameEn.equals(trimmed, ignoreCase = true)
+        } ?: ClassicDark
     }
 
     fun getThemeByName(name: String): TerminalThemeColors = getThemeById(name)

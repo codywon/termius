@@ -27,9 +27,11 @@ abstract class AppDatabase : RoomDatabase() {
         private var INSTANCE: AppDatabase? = null
 
         fun getDatabase(context: Context): AppDatabase {
+            val appContext = context.applicationContext
             return INSTANCE ?: synchronized(this) {
+                INSTANCE?.let { return it }
                 val instance = Room.databaseBuilder(
-                    context.applicationContext,
+                    appContext,
                     AppDatabase::class.java,
                     "termius_clone.db"
                 )
@@ -38,7 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
                         super.onCreate(db)
                         // 预置默认常用命令片段
                         CoroutineScope(Dispatchers.IO).launch {
-                            val dao = getDatabase(context).snippetDao()
+                            val dao = getDatabase(appContext).snippetDao()
                             dao.insertSnippet(SnippetEntity(
                                 title = "系统资源监控 (htop)",
                                 command = "htop\n",
@@ -62,7 +64,6 @@ abstract class AppDatabase : RoomDatabase() {
                         }
                     }
                 })
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance

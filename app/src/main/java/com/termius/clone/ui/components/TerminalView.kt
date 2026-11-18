@@ -62,6 +62,7 @@ import com.termius.clone.terminal.engine.TerminalKeyCodes
 import com.termius.clone.terminal.session.SshSession
 import com.termius.clone.ui.theme.LocalAppTheme
 import com.termius.clone.ui.theme.ThemeManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -91,19 +92,21 @@ fun TerminalView(
     }
 
     // 纯 GPU 硬件图层缩放比例（手势捏合过程中仅变动此比例，0 界面重组、0 网络请求，达到 120 帧满帧丝滑）
-    var gestureZoom by remember { mutableFloatStateOf(1f) }
-    var zoomPivot by remember { mutableStateOf(Offset.Zero) }
+    var gestureZoom by remember(session.id) { mutableFloatStateOf(1f) }
+    var zoomPivot by remember(session.id) { mutableStateOf(Offset.Zero) }
 
-    var scrollOffsetLines by remember { mutableIntStateOf(0) }
-    var scrollOffsetX by remember { mutableFloatStateOf(0f) }
-    var scrollAccumulatorY by remember { mutableFloatStateOf(0f) }
+    var scrollOffsetLines by remember(session.id) { mutableIntStateOf(0) }
+    var scrollOffsetX by remember(session.id) { mutableFloatStateOf(0f) }
+    var scrollAccumulatorY by remember(session.id) { mutableFloatStateOf(0f) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    var localResizeTick by remember(session.id) { mutableIntStateOf(0) }
 
     // 关键哨兵字符：确保系统输入法在按退格键时永远有字符可删，彻底解决软键盘回删不起作用的业界难题
     val sentinel = "\u200B"
-    var textFieldValue by remember {
+    var textFieldValue by remember(session.id) {
         mutableStateOf(TextFieldValue(sentinel, androidx.compose.ui.text.TextRange(sentinel.length)))
     }
+    var wasComposing by remember(session.id) { mutableStateOf(false) }
 
     val density = LocalDensity.current
     val textPaint = remember(localFontSizeSp) {
@@ -126,23 +129,27 @@ fun TerminalView(
     // 虚拟终端列数根据视口物理宽度自适应计算，同时设定 36 列硬安全下限 (coerceIn(36, 240))。
     // 当字号放大时，绝不因屏幕过窄强行压缩至 15~24 列并切碎文本，超出的部分无缝激活平移画布；
     // 正常字号下依然 100% 铺满自适应，告别向右滑动！
-    LaunchedEffect(viewSize, charWidth, charHeight) {
+    LaunchedEffect(session.id, viewSize, charWidth, charHeight) {
         delay(120) // 120ms 防抖，键盘弹起或旋转屏幕时秒级自适应
         try {
             if (viewSize.width > 0 && viewSize.height > 0 && charWidth > 0 && charHeight > 0) {
                 val fittedCols = (viewSize.width / charWidth).toInt().coerceIn(36, 240)
                 val rows = (viewSize.height / charHeight).toInt().coerceAtLeast(5)
                 session.resize(fittedCols, rows, viewSize.width, viewSize.height)
+                localResizeTick++
                 scrollOffsetLines = 0 // 视口变化时锁定回底部，避免提示符错位漂移
                 scrollOffsetX = 0f    // 自适应全屏后自动归位，杜绝非必要偏移
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
 
-    // 计算当前内容超出视口的最大水平平移距离
-    val totalContentWidth = remember(session.terminalBuffer.cols, charWidth) {
+    // 计算当前内容超出视口的最大水平平移距离（结合 resizeVersion 响应终端列宽变化）
+    val resizeVersion = session.terminalBuffer.resizeVersion
+    val totalContentWidth = remember(session.id, resizeVersion, localResizeTick, session.terminalBuffer.cols, charWidth) {
         session.terminalBuffer.cols * charWidth
     }
     val maxScrollX = if (viewSize.width > 0 && totalContentWidth > viewSize.width) {
@@ -150,26 +157,43 @@ fun TerminalView(
     } else 0f
 
     // 当缩放或视口变化导致 maxScrollX 减小时，修正水平偏移
-    LaunchedEffect(maxScrollX) {
+    LaunchedEffect(session.id, maxScrollX) {
         if (scrollOffsetX > maxScrollX) {
             scrollOffsetX = maxScrollX
         }
     }
 
-    LaunchedEffect(Unit) {
+    // 当历史缓冲区清空或缩短时同步夹紧垂直回滚偏移
+    LaunchedEffect(session.id, renderTick) {
+        val maxHistory = session.terminalBuffer.historySize
+        if (scrollOffsetLines > maxHistory) {
+            scrollOffsetLines = maxHistory
+        }
+    }
+
+    LaunchedEffect(session.id) {
         try {
             focusRequester.requestFocus()
         } catch (_: Exception) {}
     }
 
-    val terminalTheme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
+    val terminalTheme = ThemeManager.currentTerminalTheme
+    LaunchedEffect(session.id, terminalTheme) {
+        session.terminalBuffer.theme = terminalTheme
+    }
+
+    val currentSession by rememberUpdatedState(session)
+    val currentOnTapTerminal by rememberUpdatedState(onTapTerminal)
+    val currentLocalFontSizeSp by rememberUpdatedState(localFontSizeSp)
+    val currentCharHeight by rememberUpdatedState(charHeight)
+    val currentMaxScrollX by rememberUpdatedState(maxScrollX)
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(terminalTheme.background)
             .onSizeChanged { viewSize = it }
-            .pointerInput(charHeight, maxScrollX) {
+            .pointerInput(session.id, charHeight, maxScrollX) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var hasOperated = false
@@ -203,22 +227,26 @@ fun TerminalView(
                             }
 
                             if (hasOperated) {
+                                val effectiveCharHeight = currentCharHeight
                                 // 垂直方向：向上推或向下拉滚动行
-                                if (charHeight > 0f && abs(pan.y) > 0.5f) {
+                                if (effectiveCharHeight > 0f && abs(pan.y) > 0.5f) {
                                     scrollAccumulatorY += pan.y
-                                    val deltaLines = (scrollAccumulatorY / charHeight).toInt()
+                                    val deltaLines = (scrollAccumulatorY / effectiveCharHeight).toInt()
                                     if (deltaLines != 0) {
-                                        val maxScroll = session.terminalBuffer.history.size
-                                        if (maxScroll > 0) {
-                                            scrollOffsetLines = (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                        val maxScroll = currentSession.terminalBuffer.historySize
+                                        scrollOffsetLines = if (maxScroll > 0) {
+                                            (scrollOffsetLines + deltaLines).coerceIn(0, maxScroll)
+                                        } else {
+                                            0
                                         }
-                                        scrollAccumulatorY -= deltaLines * charHeight
+                                        scrollAccumulatorY -= deltaLines * effectiveCharHeight
                                     }
                                 }
 
                                 // 水平方向：仅在内容确实超出视口时平移
-                                if (maxScrollX > 0f && abs(pan.x) > 0.5f) {
-                                    scrollOffsetX = (scrollOffsetX - pan.x).coerceIn(0f, maxScrollX)
+                                val effectiveMaxScrollX = currentMaxScrollX
+                                if (effectiveMaxScrollX > 0f && abs(pan.x) > 0.5f) {
+                                    scrollOffsetX = (scrollOffsetX - pan.x).coerceIn(0f, effectiveMaxScrollX)
                                 }
 
                                 event.changes.forEach { it.consume() }
@@ -226,16 +254,17 @@ fun TerminalView(
                         }
                     } while (event.changes.any { it.pressed })
 
-                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵 (科学终端字号 7~20 SP)
+                    scrollAccumulatorY = 0f
+                    // 手势完全释放：若发生了捏合缩放，在抬手瞬间单次更新字体并复位 GPU 变换矩阵 (科学终端字号 6~26 SP)
                     if (isPinching) {
-                        val finalSize = (Math.round(localFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(7f, 20f)
+                        val finalSize = (Math.round(currentLocalFontSizeSp * gestureZoom * 2f) / 2f).coerceIn(6f, 26f)
                         gestureZoom = 1f
                         localFontSizeSp = finalSize
                         ThemeManager.setTerminalFontSize(finalSize)
                     } else if (!hasOperated) {
                         // 若用户无明显滑动或捏合，判定为单指点击屏幕：唤起输入法并聚焦
                         try {
-                            onTapTerminal?.invoke()
+                            currentOnTapTerminal?.invoke()
                             focusRequester.requestFocus()
                             keyboardController?.show()
                         } catch (e: Exception) {
@@ -251,12 +280,18 @@ fun TerminalView(
             onValueChange = { newValue ->
                 if (newValue.composition != null) {
                     // 输入法正在组合候选字符（如拼音输入）
+                    wasComposing = true
                     textFieldValue = newValue
                 } else {
+                    val prevWasComposing = wasComposing
+                    wasComposing = false
                     val newText = newValue.text
                     // 软键盘按下了退格键：输入框内的哨兵字符被删除 (长度小于哨兵长度或为空)
                     if (newText.isEmpty() || newText.length < sentinel.length) {
-                        session.write(TerminalKeyCodes.BACKSPACE)
+                        // 若刚刚在删空最后一个组字拼音字符导致误删哨兵，绝不向远端误发退格
+                        if (!prevWasComposing) {
+                            session.write(TerminalKeyCodes.BACKSPACE)
+                        }
                         textFieldValue = TextFieldValue(sentinel, androidx.compose.ui.text.TextRange(sentinel.length))
                     } else {
                         val insertedText = newText.replace(sentinel, "")
@@ -282,11 +317,18 @@ fun TerminalView(
                 .alpha(0f)
                 .focusRequester(focusRequester)
                 .onKeyEvent { keyEvent ->
+                    // 组字期间绝不抢占回车/退格事件
+                    if (textFieldValue.composition != null) {
+                        return@onKeyEvent false
+                    }
                     if (keyEvent.type == KeyEventType.KeyDown) {
                         val nativeEvent = keyEvent.nativeKeyEvent
                         when (nativeEvent.keyCode) {
                             android.view.KeyEvent.KEYCODE_DEL -> {
-                                session.write(TerminalKeyCodes.BACKSPACE)
+                                if (!wasComposing) {
+                                    session.write(TerminalKeyCodes.BACKSPACE)
+                                }
+                                wasComposing = false
                                 return@onKeyEvent true
                             }
                             android.view.KeyEvent.KEYCODE_ENTER -> {
@@ -323,12 +365,14 @@ fun TerminalView(
                 },
             keyboardOptions = KeyboardOptions(
                 autoCorrect = false,
-                keyboardType = KeyboardType.Ascii,
+                keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.None
             ),
             keyboardActions = KeyboardActions(
                 onAny = {
-                    session.write(TerminalKeyCodes.ENTER)
+                    if (textFieldValue.composition == null) {
+                        session.write(TerminalKeyCodes.ENTER)
+                    }
                 }
             )
         )
@@ -351,7 +395,8 @@ fun TerminalView(
         ) {
             val unusedTick = renderTick // 订阅触发 Compose 刷新
             val buffer = session.terminalBuffer
-            val theme = com.termius.clone.ui.theme.ThemeManager.currentTerminalTheme
+            val theme = terminalTheme
+            buffer.theme = theme
 
             val defaultBg = theme.background
             val defaultFg = theme.foreground
@@ -364,145 +409,157 @@ fun TerminalView(
                 drawIntoCanvas { canvas ->
                     try {
                         buffer.withLock {
-                        val rows = buffer.rows
-                        val cols = buffer.cols
-                        val history = buffer.history
-                        val totalHistory = history.size
-                        val screen = if (buffer.isUsingAltScreen) buffer.altScreen else buffer.mainScreen
-
-                        val nativeCanvas = canvas.nativeCanvas
-
-                        for (r in 0 until rows) {
-                            val line = if (scrollOffsetLines > 0 && !buffer.isUsingAltScreen) {
-                                val historyIndex = totalHistory - scrollOffsetLines + r
-                                if (historyIndex in 0 until totalHistory) {
-                                    history.getOrNull(historyIndex)
-                                } else {
-                                    val screenRow = historyIndex - totalHistory
-                                    if (screenRow in 0 until rows) screen.getOrNull(screenRow) else null
-                                }
+                            val rows = buffer.rows
+                            val cols = buffer.cols
+                            val history = buffer.history
+                            val totalHistory = history.size
+                            val effectiveScrollLines = if (buffer.isUsingAltScreen) {
+                                0
                             } else {
-                                screen.getOrNull(r)
-                            } ?: continue
-
-                            val yPos = r * charHeight
-                            val cells = line.cells
-                            val limitCols = minOf(cols, cells.size)
-
-                            // 1. 批量合并绘制连续自定义背景色 (减少 80% drawRect 调用)
-                            var bgStartCol = -1
-                            var currentBg = Color.Unspecified
-                            for (c in 0 until limitCols) {
-                                val cell = cells.getOrNull(c) ?: continue
-                                val cellBg = if (cell.bgColor != Color.Unspecified && cell.bgColor != defaultBg) cell.bgColor else Color.Unspecified
-                                if (cellBg != currentBg) {
-                                    if (currentBg != Color.Unspecified && bgStartCol >= 0) {
-                                        drawRect(
-                                            color = currentBg,
-                                            topLeft = Offset(bgStartCol * charWidth, yPos),
-                                            size = Size((c - bgStartCol) * charWidth + 0.5f, charHeight)
-                                        )
-                                    }
-                                    currentBg = cellBg
-                                    bgStartCol = if (cellBg != Color.Unspecified) c else -1
-                                }
+                                scrollOffsetLines.coerceIn(0, totalHistory)
                             }
-                            if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                            val screen = if (buffer.isUsingAltScreen) buffer.altScreen else buffer.mainScreen
+
+                            val nativeCanvas = canvas.nativeCanvas
+
+                            for (r in 0 until rows) {
+                                val line = if (effectiveScrollLines > 0 && !buffer.isUsingAltScreen) {
+                                    val historyIndex = totalHistory - effectiveScrollLines + r
+                                    if (historyIndex in 0 until totalHistory) {
+                                        history.getOrNull(historyIndex)
+                                    } else {
+                                        val screenRow = historyIndex - totalHistory
+                                        if (screenRow in 0 until rows) screen.getOrNull(screenRow) else null
+                                    }
+                                } else {
+                                    screen.getOrNull(r)
+                                } ?: continue
+
+                                val yPos = r * charHeight
+                                val cells = line.cells
+                                val limitCols = minOf(cols, cells.size)
+
+                                // 1. 批量合并绘制连续自定义背景色（支持 cell.isInverse 反显互换前/背景色）
+                                var bgStartCol = -1
+                                var currentBg = Color.Unspecified
+                                for (c in 0 until limitCols) {
+                                    val cell = cells.getOrNull(c) ?: continue
+                                    val rawFg = if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg
+                                    val rawBg = if (cell.bgColor != Color.Unspecified) cell.bgColor else defaultBg
+                                    val effectiveBg = if (cell.isInverse) rawFg else rawBg
+                                    val cellBg = if (effectiveBg != defaultBg) effectiveBg else Color.Unspecified
+                                    if (cellBg != currentBg) {
+                                        if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                                            drawRect(
+                                                color = currentBg,
+                                                topLeft = Offset(bgStartCol * charWidth, yPos),
+                                                size = Size((c - bgStartCol) * charWidth + 0.5f, charHeight)
+                                            )
+                                        }
+                                        currentBg = cellBg
+                                        bgStartCol = if (cellBg != Color.Unspecified) c else -1
+                                    }
+                                }
+                                if (currentBg != Color.Unspecified && bgStartCol >= 0) {
+                                    drawRect(
+                                        color = currentBg,
+                                        topLeft = Offset(bgStartCol * charWidth, yPos),
+                                        size = Size((limitCols - bgStartCol) * charWidth + 0.5f, charHeight)
+                                    )
+                                }
+
+                                // 2. 文本按连续相同样式批量绘制 (Run-Length Text Batching)，支持反显与 Emoji extraChars
+                                var textStartCol = -1
+                                val textBuffer = StringBuilder()
+                                var currentRunFg = Color.Unspecified
+                                var currentRunBold = false
+                                var currentRunUnderline = false
+
+                                fun flushTextRun() {
+                                    if (textBuffer.isNotEmpty() && textStartCol >= 0) {
+                                        textPaint.color = (if (currentRunFg != Color.Unspecified) currentRunFg else defaultFg).toArgb()
+                                        textPaint.isFakeBoldText = currentRunBold
+                                        textPaint.isUnderlineText = currentRunUnderline
+                                        nativeCanvas.drawText(
+                                            textBuffer.toString(),
+                                            textStartCol * charWidth,
+                                            yPos + baselineOffset,
+                                            textPaint
+                                        )
+                                        textBuffer.clear()
+                                        textStartCol = -1
+                                    }
+                                }
+
+                                for (c in 0 until limitCols) {
+                                    val cell = cells.getOrNull(c) ?: continue
+                                    val ch = cell.char
+                                    val extra = cell.extraChars
+                                    if (extra == null && (ch == ' ' || ch.code == 0)) {
+                                        flushTextRun()
+                                        continue
+                                    }
+
+                                    val rawFg = if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg
+                                    val rawBg = if (cell.bgColor != Color.Unspecified) cell.bgColor else defaultBg
+                                    val effectiveFg = if (cell.isInverse) rawBg else rawFg
+
+                                    if (cell.isWideChar || extra != null) {
+                                        flushTextRun()
+                                        textPaint.color = effectiveFg.toArgb()
+                                        textPaint.isFakeBoldText = cell.isBold
+                                        textPaint.isUnderlineText = cell.isUnderline
+                                        nativeCanvas.drawText(
+                                            extra ?: ch.toString(),
+                                            c * charWidth,
+                                            yPos + baselineOffset,
+                                            textPaint
+                                        )
+                                        continue
+                                    }
+
+                                    val cellBold = cell.isBold
+                                    val cellUnderline = cell.isUnderline
+
+                                    if (textStartCol < 0) {
+                                        textStartCol = c
+                                        currentRunFg = effectiveFg
+                                        currentRunBold = cellBold
+                                        currentRunUnderline = cellUnderline
+                                        textBuffer.append(ch)
+                                    } else if (effectiveFg == currentRunFg && cellBold == currentRunBold && cellUnderline == currentRunUnderline) {
+                                        textBuffer.append(ch)
+                                    } else {
+                                        flushTextRun()
+                                        textStartCol = c
+                                        currentRunFg = effectiveFg
+                                        currentRunBold = cellBold
+                                        currentRunUnderline = cellUnderline
+                                        textBuffer.append(ch)
+                                    }
+                                }
+                                flushTextRun()
+                            }
+
+                            // 绘制终端光标 (如果未滚动且光标可见)
+                            if (effectiveScrollLines == 0 && buffer.isCursorVisible) {
+                                val safeCol = buffer.cursorCol.coerceIn(0, maxOf(0, cols - 1))
+                                val safeRow = buffer.cursorRow.coerceIn(0, maxOf(0, rows - 1))
+                                val cursorX = safeCol * charWidth
+                                val cursorY = safeRow * charHeight
                                 drawRect(
-                                    color = currentBg,
-                                    topLeft = Offset(bgStartCol * charWidth, yPos),
-                                    size = Size((limitCols - bgStartCol) * charWidth + 0.5f, charHeight)
+                                    color = defaultCursor.copy(alpha = 0.7f),
+                                    topLeft = Offset(cursorX, cursorY),
+                                    size = Size(charWidth, charHeight)
                                 )
                             }
-
-                            // 2. 文本按连续相同样式批量绘制 (Run-Length Text Batching)，消除每字符 String 对象分配与 90% JNI 调用
-                            var textStartCol = -1
-                            val textBuffer = StringBuilder()
-                            var currentRunFg = Color.Unspecified
-                            var currentRunBold = false
-                            var currentRunUnderline = false
-
-                            fun flushTextRun() {
-                                if (textBuffer.isNotEmpty() && textStartCol >= 0) {
-                                    textPaint.color = (if (currentRunFg != Color.Unspecified) currentRunFg else defaultFg).toArgb()
-                                    textPaint.isFakeBoldText = currentRunBold
-                                    textPaint.isUnderlineText = currentRunUnderline
-                                    nativeCanvas.drawText(
-                                        textBuffer.toString(),
-                                        textStartCol * charWidth,
-                                        yPos + baselineOffset,
-                                        textPaint
-                                    )
-                                    textBuffer.clear()
-                                    textStartCol = -1
-                                }
-                            }
-
-                            for (c in 0 until limitCols) {
-                                val cell = cells.getOrNull(c) ?: continue
-                                val ch = cell.char
-                                if (ch == ' ' || ch.code == 0) {
-                                    flushTextRun()
-                                    continue
-                                }
-
-                                if (cell.isWideChar) {
-                                    flushTextRun()
-                                    textPaint.color = (if (cell.fgColor != Color.Unspecified) cell.fgColor else defaultFg).toArgb()
-                                    textPaint.isFakeBoldText = cell.isBold
-                                    textPaint.isUnderlineText = cell.isUnderline
-                                    nativeCanvas.drawText(
-                                        ch.toString(),
-                                        c * charWidth,
-                                        yPos + baselineOffset,
-                                        textPaint
-                                    )
-                                    continue
-                                }
-
-                                val cellFg = cell.fgColor
-                                val cellBold = cell.isBold
-                                val cellUnderline = cell.isUnderline
-
-                                if (textStartCol < 0) {
-                                    textStartCol = c
-                                    currentRunFg = cellFg
-                                    currentRunBold = cellBold
-                                    currentRunUnderline = cellUnderline
-                                    textBuffer.append(ch)
-                                } else if (cellFg == currentRunFg && cellBold == currentRunBold && cellUnderline == currentRunUnderline) {
-                                    textBuffer.append(ch)
-                                } else {
-                                    flushTextRun()
-                                    textStartCol = c
-                                    currentRunFg = cellFg
-                                    currentRunBold = cellBold
-                                    currentRunUnderline = cellUnderline
-                                    textBuffer.append(ch)
-                                }
-                            }
-                            flushTextRun()
                         }
-
-                        // 绘制终端光标 (如果未滚动且光标可见)
-                        if (scrollOffsetLines == 0 && buffer.isCursorVisible) {
-                            val safeCol = buffer.cursorCol.coerceIn(0, maxOf(0, cols - 1))
-                            val safeRow = buffer.cursorRow.coerceIn(0, maxOf(0, rows - 1))
-                            val cursorX = safeCol * charWidth
-                            val cursorY = safeRow * charHeight
-                            drawRect(
-                                color = defaultCursor.copy(alpha = 0.7f),
-                                topLeft = Offset(cursorX, cursorY),
-                                size = Size(charWidth, charHeight)
-                            )
-                        }
+                    } catch (e: Throwable) {
+                        e.printStackTrace()
                     }
-                } catch (e: Throwable) {
-                    e.printStackTrace()
                 }
             }
         }
-    }
 
         // 超宽文本/表格的水平漫游滚动指示条 (参考 Termius / ConnectBot 最佳实践)
         if (maxScrollX > 0f && viewSize.width > 0) {
@@ -537,7 +594,7 @@ fun TerminalView(
 
         // 一键回到底部悬浮圆形按钮 (右下方，带圆圈向下箭头，完全不遮挡终端顶部输出)
         AnimatedVisibility(
-            visible = scrollOffsetLines > 0,
+            visible = scrollOffsetLines > 0 && !session.terminalBuffer.isUsingAltScreen,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),
             modifier = Modifier
