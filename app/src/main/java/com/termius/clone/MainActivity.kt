@@ -62,11 +62,18 @@ class MainActivity : ComponentActivity() {
                     color = theme.background
                 ) {
                     var currentRoute by rememberSaveable { mutableStateOf("main") }
+                    var previousRoute by rememberSaveable { mutableStateOf("main") }
 
                     when (currentRoute) {
                         "main" -> MainScreen(
-                            onNavigateToTerminal = { currentRoute = "terminal" },
-                            onNavigateToAi = { currentRoute = "ai" }
+                            onNavigateToTerminal = {
+                                previousRoute = "main"
+                                currentRoute = "terminal"
+                            },
+                            onNavigateToAi = {
+                                previousRoute = "main"
+                                currentRoute = "ai"
+                            }
                         )
                         "terminal" -> {
                             androidx.activity.compose.BackHandler {
@@ -74,15 +81,18 @@ class MainActivity : ComponentActivity() {
                             }
                             TerminalScreen(
                                 onNavigateBack = { currentRoute = "main" },
-                                onNavigateToAi = { currentRoute = "ai" }
+                                onNavigateToAi = {
+                                    previousRoute = "terminal"
+                                    currentRoute = "ai"
+                                }
                             )
                         }
                         "ai" -> {
                             androidx.activity.compose.BackHandler {
-                                currentRoute = "main"
+                                currentRoute = previousRoute
                             }
                             com.termius.clone.ui.screens.AiChatScreen(
-                                onNavigateBack = { currentRoute = "main" }
+                                onNavigateBack = { currentRoute = previousRoute }
                             )
                         }
                     }

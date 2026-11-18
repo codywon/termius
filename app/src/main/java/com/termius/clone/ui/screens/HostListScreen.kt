@@ -66,6 +66,12 @@ fun HostListScreen(
         if (tags.isEmpty()) emptyList() else listOf("全部") + tags
     }
 
+    LaunchedEffect(existingTags) {
+        if (selectedTag != "全部" && selectedTag !in existingTags) {
+            selectedTag = "全部"
+        }
+    }
+
     val filteredHosts = remember(hosts, searchQuery, selectedTag) {
         hosts.filter { host ->
             val matchQuery = searchQuery.isBlank() ||
@@ -73,8 +79,8 @@ fun HostListScreen(
                 host.hostname.contains(searchQuery, ignoreCase = true) ||
                 host.groupName.contains(searchQuery, ignoreCase = true)
 
-            val matchTag = if (selectedTag == "全部" || selectedTag == "All") true
-            else host.groupName.equals(selectedTag, ignoreCase = true)
+            val matchTag = if (selectedTag == "全部") true
+            else host.groupName.trim().equals(selectedTag, ignoreCase = true)
 
             matchQuery && matchTag
         }
@@ -301,6 +307,7 @@ fun HostListScreen(
                                 }
                             },
                             onDelete = {
+                                SessionManager.closeSessionsForHost(context, host.id)
                                 scope.launch { db.hostDao().deleteHost(host) }
                             },
                             onOpenSftp = {
@@ -320,11 +327,17 @@ fun HostListScreen(
             onDismiss = { showEditDialog = false },
             onSave = { savedHost ->
                 scope.launch {
-                    if (savedHost.id == 0L) {
-                        db.hostDao().insertHost(savedHost)
+                    val persistedHost = if (savedHost.id == 0L) {
+                        val newId = db.hostDao().insertHost(savedHost)
+                        savedHost.copy(id = newId)
                     } else {
                         db.hostDao().updateHost(savedHost)
+                        savedHost
                     }
+                    SessionManager.updateHostSessions(
+                        persistedHost,
+                        identities.find { it.id == persistedHost.identityId }
+                    )
                     showEditDialog = false
                 }
             }

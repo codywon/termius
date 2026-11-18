@@ -68,6 +68,7 @@ import com.termius.clone.data.model.AiChatMessage
 import com.termius.clone.data.model.AiChatSession
 import com.termius.clone.data.model.DangerousActionRequest
 import com.termius.clone.terminal.session.SessionManager
+import com.termius.clone.terminal.session.SessionState
 import com.termius.clone.ui.components.AiActionOrbitStatusCard
 import com.termius.clone.ui.components.AiThinkingCard
 import com.termius.clone.ui.components.ChatImageCard
@@ -76,9 +77,15 @@ import com.termius.clone.ui.components.rememberChatImageState
 import com.termius.clone.ui.components.DangerousActionApprovalCard
 import com.termius.clone.ui.components.MarkdownRenderer
 import com.termius.clone.ui.theme.LocalAppTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import java.io.BufferedInputStream
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.UUID
 
 /**
  * 沉浸式 SRE 运维智能体工作台 (TermX Mobile AI SRE Studio)
@@ -135,6 +142,7 @@ fun AiChatScreen(
 
     // 附件状态 (支持图片视觉解析与日志/配置文本提取)
     var attachedFile by remember { mutableStateOf<AttachedFileInfo?>(null) }
+    var isPreparingAttachment by remember { mutableStateOf(false) }
     var showAttachMenu by remember { mutableStateOf(false) }
     var previewingImage by remember { mutableStateOf<ImageBitmap?>(null) } // 全屏大图预览状态
 
@@ -163,10 +171,16 @@ fun AiChatScreen(
         if (uri != null) handleSelectedUri(uri)
     }
 
-    // 活跃会话与当前主机
-    val activeSession = SessionManager.currentSession
-    val targetHostTitle = activeSession?.host?.let { "${it.username}@${it.label}" } ?: "自动感知主机"
-    val isConnected = activeSession?.isConnected == true
+    // 活跃会话与当前主机 (实时订阅 StateFlow)
+    val sshSessions by SessionManager.sessions.collectAsState()
+    val activeSshSessionId by SessionManager.currentSessionId.collectAsState()
+    val activeSession = sshSessions.find { it.id == activeSshSessionId } ?: sshSessions.lastOrNull()
+    val disconnectedFlow = remember { MutableStateFlow(SessionState.DISCONNECTED) }
+    val activeSessionState by (activeSession?.sessionState ?: disconnectedFlow).collectAsState()
+    val targetHostTitle = activeSession?.host?.let {
+        "${it.username}@${it.label.ifBlank { it.hostname }}"
+    } ?: "自动感知主机"
+    val isConnected = activeSessionState == SessionState.CONNECTED
 
     // 切换会话
     val switchSession: (String) -> Unit = { targetId ->
@@ -217,68 +231,126 @@ fun AiChatScreen(
     val sendMessage: (String) -> Unit = { rawPrompt ->
         val prompt = rawPrompt.trim()
         val curAttached = attachedFile
-        val canProceed = (prompt.isNotBlank() || curAttached != null) && !isGenerating && pendingApprovalRequest == null
+        val canProceed = (prompt.isNotBlank() || curAttached != null) &&
+            !isGenerating &&
+            !isPreparingAttachment &&
+            pendingApprovalRequest == null
 
         if (canProceed) {
-            val userMsg = if (curAttached != null) {
-                if (curAttached.isImage) {
-                    // 图片附件：一律走多模态视觉通道。若选图时转码失败，发送瞬间再兜底重试一次
-                    val dataUri = curAttached.base64Data
-                        ?: ImageUtils.compressAndEncodeImageUri(context, curAttached.uri)
-                    if (!dataUri.isNullOrBlank()) {
-                        AiChatMessage(
-                            role = "user",
-                            content = prompt,
-                            images = listOf(dataUri),
-                            attachedFileName = curAttached.name,
-                            attachedFileSize = curAttached.sizeBytes
-                        )
-                    } else {
-                        // 极端编码格式（个别机型 HEIC/AVIF）转码失败：明确告知，绝不回落到文本读取产生乱码
-                        AiChatMessage(
-                            role = "user",
-                            content = prompt,
-                            attachedFileName = curAttached.name,
-                            attachedFileSize = curAttached.sizeBytes,
-                            fileContextText = IMAGE_UNDECODABLE_NOTICE
-                        )
-                    }
-                } else {
-                    val fileContentText = readFileContentText(context, curAttached.uri, maxChars = 8000)
-                    AiChatMessage(
-                        role = "user",
-                        content = prompt,
-                        attachedFileName = curAttached.name,
-                        attachedFileSize = curAttached.sizeBytes,
-                        fileContextText = fileContentText
-                    )
-                }
-            } else {
-                AiChatMessage(
-                    role = "user",
-                    content = prompt
-                )
-            }
-
-            val updatedList = messages + userMsg
-            messages = updatedList
+            val targetSessionId = currentSessionId
             inputText = ""
             attachedFile = null
-            configManager.saveMessages(currentSessionId, updatedList)
-            sessions = configManager.loadSessions() // 刷新标题
+            isPreparingAttachment = true
 
-            // 委托给 AgentExecutionManager 全局后台守护执行 (脱离 UI 生命周期，长任务切后台绝不中断)
-            AgentExecutionManager.executePrompt(
-                context = context,
-                sessionId = currentSessionId,
-                updatedMessages = updatedList,
-                onSessionUpdated = {
-                    if (currentSessionId == executionState.sessionId) {
-                        messages = configManager.loadMessages(currentSessionId)
-                        sessions = configManager.loadSessions()
+            scope.launch {
+                try {
+                    val userMsg = withContext(Dispatchers.IO) {
+                        if (curAttached != null) {
+                            if (curAttached.isImage) {
+                                // 图片附件：一律走多模态视觉通道。若选图时转码失败，发送瞬间再兜底重试一次
+                                val dataUri = curAttached.base64Data
+                                    ?: ImageUtils.compressAndEncodeImageUri(context, curAttached.uri)
+                                if (!dataUri.isNullOrBlank()) {
+                                    AiChatMessage(
+                                        role = "user",
+                                        content = prompt,
+                                        images = listOf(dataUri),
+                                        attachedFileName = curAttached.name,
+                                        attachedFileSize = curAttached.sizeBytes
+                                    )
+                                } else {
+                                    // 极端编码格式（个别机型 HEIC/AVIF）转码失败：明确告知，绝不回落到文本读取产生乱码
+                                    AiChatMessage(
+                                        role = "user",
+                                        content = prompt,
+                                        attachedFileName = curAttached.name,
+                                        attachedFileSize = curAttached.sizeBytes,
+                                        fileContextText = IMAGE_UNDECODABLE_NOTICE
+                                    )
+                                }
+                            } else {
+                                val fileContentText = readFileContentText(context, curAttached.uri, maxChars = 8000)
+                                AiChatMessage(
+                                    role = "user",
+                                    content = prompt,
+                                    attachedFileName = curAttached.name,
+                                    attachedFileSize = curAttached.sizeBytes,
+                                    fileContextText = fileContentText
+                                )
+                            }
+                        } else {
+                            AiChatMessage(
+                                role = "user",
+                                content = prompt
+                            )
+                        }
                     }
+
+                    val updatedList = messages + userMsg
+                    messages = updatedList
+                    withContext(Dispatchers.IO) {
+                        configManager.saveMessages(targetSessionId, updatedList)
+                    }
+                    sessions = withContext(Dispatchers.IO) { configManager.loadSessions() } // 刷新标题
+
+                    // 委托给 AgentExecutionManager 全局后台守护执行 (脱离 UI 生命周期，长任务切后台绝不中断)
+                    AgentExecutionManager.executePrompt(
+                        context = context,
+                        sessionId = targetSessionId,
+                        updatedMessages = updatedList,
+                        onSessionUpdated = {
+                            if (currentSessionId == targetSessionId) {
+                                messages = configManager.loadMessages(targetSessionId)
+                                sessions = configManager.loadSessions()
+                            }
+                        }
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } finally {
+                    isPreparingAttachment = false
                 }
-            )
+            }
+        }
+    }
+
+    val retryFailedMessage: (AiChatMessage) -> Unit = { errorMsg ->
+        if (!isGenerating && !isPreparingAttachment && pendingApprovalRequest == null) {
+            val errIdx = messages.indexOfFirst { it.id == errorMsg.id }
+            val searchEnd = if (errIdx >= 0) errIdx else messages.size
+            val lastUserIdx = (0 until searchEnd).lastOrNull { messages[it].role == "user" }
+            if (lastUserIdx != null) {
+                val hasTrailingNonError = errIdx >= 0 &&
+                    (errIdx + 1 until messages.size).any { !messages[it].isError }
+                val retriedList = if (!hasTrailingNonError) {
+                    messages.take(lastUserIdx + 1)
+                } else {
+                    val originUser = messages[lastUserIdx]
+                    messages.filterNot { it.id == errorMsg.id } + originUser.copy(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = System.currentTimeMillis()
+                    )
+                }
+                val targetSessionId = currentSessionId
+                messages = retriedList
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        configManager.saveMessages(targetSessionId, retriedList)
+                    }
+                    sessions = withContext(Dispatchers.IO) { configManager.loadSessions() }
+                    AgentExecutionManager.executePrompt(
+                        context = context,
+                        sessionId = targetSessionId,
+                        updatedMessages = retriedList,
+                        onSessionUpdated = {
+                            if (currentSessionId == targetSessionId) {
+                                messages = configManager.loadMessages(targetSessionId)
+                                sessions = configManager.loadSessions()
+                            }
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -348,6 +420,7 @@ fun AiChatScreen(
                 TextButton(
                     onClick = {
                         showClearConfirmDialog = false
+                        AgentExecutionManager.cancelIfSession(currentSessionId)
                         messages = emptyList()
                         configManager.clearMessages(currentSessionId)
                     }
@@ -387,6 +460,7 @@ fun AiChatScreen(
                         val toDelId = sessionToDelete?.id
                         sessionToDelete = null
                         if (toDelId != null) {
+                            AgentExecutionManager.cancelIfSession(toDelId)
                             val nextId = configManager.deleteSession(toDelId)
                             sessions = configManager.loadSessions()
                             switchSession(nextId)
@@ -648,7 +722,7 @@ fun AiChatScreen(
                     items(messages, key = { it.id }) { msg ->
                         AiChatMessageItem(
                             message = msg,
-                            onRetry = { sendMessage(it) },
+                            onRetry = { retryFailedMessage(msg) },
                             onImageOpen = { previewingImage = it }
                         )
                     }
@@ -806,15 +880,26 @@ fun AiChatScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (file.isImage && file.base64Data != null) {
-                            val bitmap = remember(file.base64Data) { ImageUtils.decodeBase64ToImageBitmap(file.base64Data, maxDimension = 128) }
+                            val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = file.base64Data) {
+                                value = withContext(Dispatchers.IO) {
+                                    ImageUtils.decodeBase64ToImageBitmap(file.base64Data, maxDimension = 128)
+                                }
+                            }
                             if (bitmap != null) {
                                 Image(
-                                    bitmap = bitmap,
+                                    bitmap = bitmap!!,
                                     contentDescription = null,
                                     modifier = Modifier
                                         .size(34.dp)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .clickable { ImageUtils.decodeBase64ToImageBitmap(file.base64Data).let { bmp -> if (bmp != null) previewingImage = bmp } },
+                                        .clickable {
+                                            scope.launch {
+                                                val bmp = withContext(Dispatchers.IO) {
+                                                    ImageUtils.decodeBase64ToImageBitmap(file.base64Data)
+                                                }
+                                                if (bmp != null) previewingImage = bmp
+                                            }
+                                        },
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
@@ -1024,7 +1109,10 @@ fun AiChatScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    val canSend = (inputText.isNotBlank() || attachedFile != null) && pendingApprovalRequest == null
+                    val canSend = (inputText.isNotBlank() || attachedFile != null) &&
+                        !isGenerating &&
+                        !isPreparingAttachment &&
+                        pendingApprovalRequest == null
                     if (canSend) {
                         // 发送按钮
                         Box(
@@ -1050,22 +1138,27 @@ fun AiChatScreen(
                                 .clip(CircleShape)
                                 .background(Color(0xFFDC2626))
                                 .clickable {
-                                    AgentExecutionManager.stopExecution()
                                     val interruptedText = currentChunkText.trim()
+                                    val interruptedReasoning = currentReasoningText
+                                    val targetSessionId = currentSessionId
+                                    AgentExecutionManager.stopExecution()
                                     val savedContent = if (interruptedText.isNotBlank()) {
                                         "$interruptedText\n\n*(本次生成已由用户手动停止)*"
                                     } else {
                                         "*(本次操作已由用户手动停止)*"
                                     }
-                                    val assistantMsg = AiChatMessage(
-                                        role = "assistant",
+                                    val assistantMsg = AiChatMessage.assistant(
                                         content = savedContent,
-                                        reasoningContent = currentReasoningText
+                                        reasoning = interruptedReasoning
                                     )
                                     val updated = messages + assistantMsg
                                     messages = updated
-                                    configManager.saveMessages(currentSessionId, updated)
-                                    sessions = configManager.loadSessions()
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            configManager.saveMessages(targetSessionId, updated)
+                                        }
+                                        sessions = withContext(Dispatchers.IO) { configManager.loadSessions() }
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1272,7 +1365,7 @@ private fun AiEmptyWelcomeView(
 @Composable
 private fun AiChatMessageItem(
     message: AiChatMessage,
-    onRetry: (String) -> Unit,
+    onRetry: () -> Unit,
     onImageOpen: (ImageBitmap) -> Unit = {}
 ) {
     val theme = LocalAppTheme.current
@@ -1342,7 +1435,13 @@ private fun AiChatMessageItem(
                     bottomStart = if (isUser) 16.dp else 4.dp,
                     bottomEnd = if (isUser) 4.dp else 16.dp
                 ),
-                color = if (isUser) theme.primary else if (message.isError) Color(0xFFFEF2F2) else theme.surfaceContainerLow,
+                color = if (isUser) {
+                    theme.primary
+                } else if (message.isError) {
+                    if (theme.isDark) Color(0xFF3B1219) else Color(0xFFFEF2F2)
+                } else {
+                    theme.surfaceContainerLow
+                },
                 border = if (isUser) null else BorderStroke(0.6.dp, if (message.isError) Color(0xFFFCA5A5) else theme.outline.copy(alpha = 0.2f)),
                 shadowElevation = 0.5.dp
             ) {
@@ -1482,7 +1581,7 @@ private fun AiChatMessageItem(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFFDC2626))
-                        .clickable { onRetry("重试刚才的提问") }
+                        .clickable { onRetry() }
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1571,25 +1670,44 @@ private fun readFileContentText(context: Context, uri: Uri, maxChars: Int = 8000
             return "【检测到该文件为二进制文件，已阻止以纯文本形式读取以防乱码】"
         }
 
-        // 3. 读取流并探测二进制空字节特征 (Null Byte Guard)
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val bytes = stream.readBytes()
-            val checkLen = minOf(bytes.size, 512)
+        // 3. 基于 BufferedReader 的流式定长读取与前 512 字节 NUL 守卫 (杜绝百兆大文件 readBytes OOM)
+        context.contentResolver.openInputStream(uri)?.use { rawStream ->
+            val buffered = BufferedInputStream(rawStream, 8192)
+            buffered.mark(512)
+            val head = ByteArray(512)
+            var headLen = 0
+            while (headLen < head.size) {
+                val n = buffered.read(head, headLen, head.size - headLen)
+                if (n <= 0) break
+                headLen += n
+            }
             var nullByteCount = 0
-            for (i in 0 until checkLen) {
-                if (bytes[i] == 0.toByte()) nullByteCount++
+            for (i in 0 until headLen) {
+                if (head[i] == 0.toByte()) nullByteCount++
             }
             if (nullByteCount > 2) {
                 return "【检测到该文件包含底层二进制数据，已阻止以文本形式展开以防乱码】"
             }
+            buffered.reset()
 
-            val text = String(bytes, Charsets.UTF_8)
-            if (text.length > maxChars) {
-                text.take(maxChars) + "\n\n...[文件内容过长，TermX 已截取前 $maxChars 字符]..."
+            val reader = BufferedReader(InputStreamReader(buffered, Charsets.UTF_8))
+            val sb = StringBuilder(minOf(maxChars, 4096))
+            val charBuf = CharArray(2048)
+            while (sb.length < maxChars) {
+                val toRead = minOf(charBuf.size, maxChars - sb.length)
+                val readChars = reader.read(charBuf, 0, toRead)
+                if (readChars == -1) break
+                sb.append(charBuf, 0, readChars)
+            }
+            val truncated = sb.length >= maxChars && reader.read() != -1
+            if (truncated) {
+                sb.toString() + "\n\n...[文件内容过长，TermX 已截取前 $maxChars 字符]..."
             } else {
-                text
+                sb.toString()
             }
         } ?: "无法读取文件流"
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         "读取文件失败: ${e.message}"
     }

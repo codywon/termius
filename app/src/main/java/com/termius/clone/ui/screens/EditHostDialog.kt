@@ -1,7 +1,6 @@
 package com.termius.clone.ui.screens
 
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,13 +33,16 @@ import androidx.compose.ui.window.DialogProperties
 import com.termius.clone.data.model.AuthType
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.data.model.IdentityEntity
+import com.termius.clone.data.security.KeyVaultManager
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.Strings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import net.schmizz.sshj.userauth.password.PasswordUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,17 +62,40 @@ fun EditHostDialog(
     var portText by remember { mutableStateOf(hostToEdit?.port?.toString() ?: "22") }
     var username by remember { mutableStateOf(hostToEdit?.username ?: "root") }
     var authType by remember { mutableStateOf(hostToEdit?.authType ?: AuthType.PASSWORD) }
-    var password by remember { mutableStateOf(hostToEdit?.password ?: "") }
+    var password by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var privateKey by remember { mutableStateOf(hostToEdit?.privateKey ?: "") }
-    var passphrase by remember { mutableStateOf(hostToEdit?.passphrase ?: "") }
+    var privateKey by remember { mutableStateOf("") }
+    var passphrase by remember { mutableStateOf("") }
     var selectedIdentityId by remember { mutableStateOf(hostToEdit?.identityId) }
     var groupName by remember { mutableStateOf(hostToEdit?.groupName ?: "") }
     var selectedColor by remember { mutableStateOf(hostToEdit?.colorTag ?: "#67DF70") }
 
-    var isAdvancedExpanded by remember { mutableStateOf(false) }
-    var keepAliveSec by remember { mutableStateOf("30") }
-    var isBackgroundKeepAlive by remember { mutableStateOf(true) }
+    var isCredentialsReady by remember(hostToEdit?.id) {
+        mutableStateOf(
+            hostToEdit == null || (
+                hostToEdit.password.isEmpty() &&
+                hostToEdit.privateKey.isEmpty() &&
+                hostToEdit.passphrase.isEmpty()
+            )
+        )
+    }
+    var isSaving by remember { mutableStateOf(false) }
+
+    LaunchedEffect(hostToEdit?.id) {
+        if (hostToEdit != null && !isCredentialsReady) {
+            val (decPass, decKey, decPhrase) = withContext(Dispatchers.IO) {
+                Triple(
+                    runCatching { KeyVaultManager.decryptForUi(hostToEdit.password) }.getOrDefault(""),
+                    runCatching { KeyVaultManager.decryptForUi(hostToEdit.privateKey) }.getOrDefault(""),
+                    runCatching { KeyVaultManager.decryptForUi(hostToEdit.passphrase) }.getOrDefault("")
+                )
+            }
+            password = decPass
+            privateKey = decKey
+            passphrase = decPhrase
+            isCredentialsReady = true
+        }
+    }
 
     var isTestingHandshake by remember { mutableStateOf(false) }
     var handshakeResult by remember { mutableStateOf<String?>(null) }
@@ -117,32 +142,59 @@ fun EditHostDialog(
                                     return@Button
                                 }
 
+                                val port = portText.toIntOrNull()
+                                if (port == null || port !in 1..65535) {
+                                    Toast.makeText(context, if (Strings.isZh) "请输入有效端口号 (1-65535)" else "Invalid port (1-65535)", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+
                                 if (authType == AuthType.KEY && privateKey.isBlank()) {
                                     Toast.makeText(context, if (Strings.isZh) "请粘贴 SSH 私钥或切换为密码认证" else "Please provide SSH private key", Toast.LENGTH_LONG).show()
                                     return@Button
                                 }
 
-                                val port = portText.toIntOrNull() ?: 22
+                                if (authType == AuthType.IDENTITY_REF && selectedIdentityId == null) {
+                                    Toast.makeText(context, if (Strings.isZh) "请选择一个已保存的凭据" else "Please select a saved credential", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
+
                                 val finalLabel = if (label.isBlank()) trimmedHost else label.trim()
-                                val host = (hostToEdit ?: HostEntity(
-                                    label = finalLabel,
-                                    hostname = trimmedHost
-                                )).copy(
-                                    label = finalLabel,
-                                    hostname = trimmedHost,
-                                    port = port,
-                                    username = username.trim().ifBlank { "root" },
-                                    authType = authType,
-                                    password = password,
-                                    privateKey = privateKey.trim(),
-                                    passphrase = passphrase,
-                                    identityId = selectedIdentityId,
-                                    groupName = groupName.trim(),
-                                    colorTag = selectedColor
-                                )
-                                onSave(host)
+                                val targetUser = username.trim().ifBlank { "root" }
+                                scope.launch {
+                                    isSaving = true
+                                    try {
+                                        val (encPass, encKey, encPhrase) = withContext(Dispatchers.IO) {
+                                            Triple(
+                                                if (authType == AuthType.PASSWORD) KeyVaultManager.encrypt(password) else "",
+                                                if (authType == AuthType.KEY) KeyVaultManager.encrypt(privateKey.trim()) else "",
+                                                if (authType == AuthType.KEY) KeyVaultManager.encrypt(passphrase) else ""
+                                            )
+                                        }
+                                        val host = (hostToEdit ?: HostEntity(
+                                            label = finalLabel,
+                                            hostname = trimmedHost
+                                        )).copy(
+                                            label = finalLabel,
+                                            hostname = trimmedHost,
+                                            port = port,
+                                            username = targetUser,
+                                            authType = authType,
+                                            password = encPass,
+                                            privateKey = encKey,
+                                            passphrase = encPhrase,
+                                            identityId = if (authType == AuthType.IDENTITY_REF) selectedIdentityId else null,
+                                            groupName = groupName.trim(),
+                                            colorTag = selectedColor
+                                        )
+                                        onSave(host)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } finally {
+                                        isSaving = false
+                                    }
+                                }
                             },
-                            enabled = hostname.isNotBlank(),
+                            enabled = hostname.isNotBlank() && isCredentialsReady && !isSaving,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = theme.primary),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
@@ -411,72 +463,6 @@ fun EditHostDialog(
                     }
                 }
 
-                // 高级选项与保活
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = theme.surfaceContainer,
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, ObsidianOutlineVariant)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { isAdvancedExpanded = !isAdvancedExpanded },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(if (Strings.isZh) "高级选项与保活" else "Advanced & Keepalive", fontWeight = FontWeight.Bold, color = theme.primary, fontSize = 13.sp)
-                            Icon(
-                                if (isAdvancedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = null,
-                                tint = ObsidianTextSecondary
-                            )
-                        }
-
-                        AnimatedVisibility(visible = isAdvancedExpanded) {
-                            Column(
-                                modifier = Modifier.padding(top = 10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(if (Strings.isZh) "后台常驻保持" else "Keep Alive in Background", color = ObsidianTextPrimary, fontSize = 13.sp)
-                                        Text(if (Strings.isZh) "锁屏或切后台时不断开" else "Maintain connection when locked", color = ObsidianTextSecondary, fontSize = 11.sp)
-                                    }
-                                    Switch(
-                                        checked = isBackgroundKeepAlive,
-                                        onCheckedChange = { isBackgroundKeepAlive = it }
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(if (Strings.isZh) "心跳探测间隔" else "Heartbeat Interval", color = ObsidianTextPrimary, fontSize = 13.sp)
-                                        Text(if (Strings.isZh) "定时发送空包防防火墙断开" else "Prevent NAT timeout", color = ObsidianTextSecondary, fontSize = 11.sp)
-                                    }
-                                    OutlinedTextField(
-                                        value = keepAliveSec,
-                                        onValueChange = { keepAliveSec = it.filter { c -> c.isDigit() } },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.width(64.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(if (Strings.isZh) "秒" else "s", color = ObsidianTextSecondary, fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // 连接握手测试
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -488,33 +474,103 @@ fun EditHostDialog(
                         Button(
                             onClick = {
                                 val trimmedTarget = hostname.trim()
+                                val targetPort = portText.toIntOrNull()
+                                if (targetPort == null || targetPort !in 1..65535) {
+                                    handshakeSuccess = false
+                                    handshakeResult = if (Strings.isZh) "端口号无效 (1-65535)" else "Invalid port (1-65535)"
+                                    return@Button
+                                }
+
+                                val targetUser = username.trim().ifBlank { "root" }
+                                val selectedIdentity = if (authType == AuthType.IDENTITY_REF) {
+                                    identities.find { it.id == selectedIdentityId }
+                                } else null
+
+                                if (authType == AuthType.KEY && privateKey.isBlank()) {
+                                    handshakeSuccess = false
+                                    handshakeResult = if (Strings.isZh) "请先提供 SSH 私钥内容" else "Please provide SSH private key"
+                                    return@Button
+                                }
+                                if (authType == AuthType.IDENTITY_REF && selectedIdentity == null) {
+                                    handshakeSuccess = false
+                                    handshakeResult = if (Strings.isZh) "请先选择一个已保存的凭据" else "Please select a saved credential"
+                                    return@Button
+                                }
+
                                 scope.launch {
                                     isTestingHandshake = true
-                                    handshakeResult = if (Strings.isZh) "正在探测 $trimmedTarget 握手..." else "Connecting to $trimmedTarget..."
+                                    handshakeResult = if (Strings.isZh) "正在连接并验证 $trimmedTarget..." else "Connecting & authenticating $trimmedTarget..."
                                     handshakeSuccess = false
 
-                                    withContext(Dispatchers.IO) {
+                                    val (ok, msg) = withContext(Dispatchers.IO) {
+                                        var client: SSHClient? = null
                                         try {
                                             com.termius.clone.TermiusApplication.setupBouncyCastle()
-                                            val client = SSHClient()
-                                            client.addHostKeyVerifier(PromiscuousVerifier())
+                                            client = SSHClient().apply {
+                                                addHostKeyVerifier(PromiscuousVerifier())
+                                                connectTimeout = 8_000
+                                                timeout = 8_000
+                                            }
                                             val start = System.currentTimeMillis()
-                                            client.connect(trimmedTarget, portText.toIntOrNull() ?: 22)
-                                            val ping = System.currentTimeMillis() - start
-                                            client.disconnect()
-                                            client.close()
-                                            handshakeSuccess = true
-                                            handshakeResult = if (Strings.isZh) "握手成功 (网络延迟: ${ping}ms)" else "Connected! (Ping: ${ping}ms)"
+                                            client.connect(trimmedTarget, targetPort)
+
+                                            val effectiveUser = if (authType == AuthType.IDENTITY_REF && selectedIdentity != null) {
+                                                selectedIdentity.username.ifBlank { targetUser }
+                                            } else {
+                                                targetUser
+                                            }
+
+                                            when (authType) {
+                                                AuthType.PASSWORD -> client.authPassword(effectiveUser, password)
+                                                AuthType.KEY -> {
+                                                    val trimmedKey = privateKey.trim()
+                                                    val keyProvider = if (passphrase.isNotEmpty()) {
+                                                        client.loadKeys(trimmedKey, null, PasswordUtils.createOneOff(passphrase.toCharArray()))
+                                                    } else {
+                                                        client.loadKeys(trimmedKey, null, null)
+                                                    }
+                                                    client.authPublickey(effectiveUser, keyProvider)
+                                                }
+                                                AuthType.IDENTITY_REF -> {
+                                                    val ident = selectedIdentity!!
+                                                    val decKey = KeyVaultManager.decrypt(ident.privateKey)
+                                                    if (decKey.isNotEmpty()) {
+                                                        val decPhrase = KeyVaultManager.decrypt(ident.passphrase)
+                                                        val keyProvider = if (decPhrase.isNotEmpty()) {
+                                                            client.loadKeys(decKey, null, PasswordUtils.createOneOff(decPhrase.toCharArray()))
+                                                        } else {
+                                                            client.loadKeys(decKey, null, null)
+                                                        }
+                                                        client.authPublickey(effectiveUser, keyProvider)
+                                                    } else {
+                                                        val decPass = KeyVaultManager.decrypt(ident.password)
+                                                        client.authPassword(effectiveUser, decPass)
+                                                    }
+                                                }
+                                            }
+
+                                            if (!client.isAuthenticated) {
+                                                false to (if (Strings.isZh) "SSH 认证失败，请检查凭据" else "SSH authentication failed")
+                                            } else {
+                                                val ping = System.currentTimeMillis() - start
+                                                true to (if (Strings.isZh) "连接与认证成功 (网络延迟: ${ping}ms)" else "Connected & Authenticated! (${ping}ms)")
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
                                         } catch (e: Exception) {
-                                            handshakeSuccess = false
-                                            handshakeResult = if (Strings.isZh) "连接失败: ${e.message}" else "Failed: ${e.message}"
+                                            false to (if (Strings.isZh) "连接失败: ${e.message}" else "Failed: ${e.message}")
                                         } finally {
-                                            isTestingHandshake = false
+                                            try { client?.disconnect() } catch (_: Throwable) {}
+                                            try { client?.close() } catch (_: Throwable) {}
                                         }
                                     }
+
+                                    handshakeSuccess = ok
+                                    handshakeResult = msg
+                                    isTestingHandshake = false
                                 }
                             },
-                            enabled = hostname.isNotBlank() && !isTestingHandshake,
+                            enabled = hostname.isNotBlank() && isCredentialsReady && !isTestingHandshake,
                             colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceContainerHigh),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()

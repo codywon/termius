@@ -82,6 +82,68 @@ enum class TerminalInputMode {
     HIDDEN        // 完全隐藏：全屏终端
 }
 
+/**
+ * 终端修饰键序列转换纯函数：
+ * 支持 Shift / Caps / Ctrl / Alt 对字母、Shift+Tab、方向键及标准 xterm 功能键的序列转换。
+ */
+internal fun applyTerminalModifiers(
+    key: String,
+    isShift: Boolean = false,
+    isCaps: Boolean = false,
+    isCtrl: Boolean = false,
+    isAlt: Boolean = false
+): String {
+    if (key.isEmpty()) return key
+
+    if (key == TerminalKeyCodes.TAB) {
+        val base = if (isShift) "\u001B[Z" else TerminalKeyCodes.TAB
+        return if (isAlt && !isShift) "\u001B$base" else base
+    }
+
+    val mod = 1 + (if (isShift) 1 else 0) + (if (isAlt) 2 else 0) + (if (isCtrl) 4 else 0)
+    if (mod > 1) {
+        when (key) {
+            TerminalKeyCodes.ARROW_UP -> return "\u001B[1;${mod}A"
+            TerminalKeyCodes.ARROW_DOWN -> return "\u001B[1;${mod}B"
+            TerminalKeyCodes.ARROW_RIGHT -> return "\u001B[1;${mod}C"
+            TerminalKeyCodes.ARROW_LEFT -> return "\u001B[1;${mod}D"
+            TerminalKeyCodes.HOME -> return "\u001B[1;${mod}H"
+            TerminalKeyCodes.END -> return "\u001B[1;${mod}F"
+            TerminalKeyCodes.F1 -> return "\u001B[1;${mod}P"
+            TerminalKeyCodes.F2 -> return "\u001B[1;${mod}Q"
+            TerminalKeyCodes.F3 -> return "\u001B[1;${mod}R"
+            TerminalKeyCodes.F4 -> return "\u001B[1;${mod}S"
+        }
+        if (key.startsWith("\u001B[") && key.endsWith("~") && key.length > 3) {
+            val codeNum = key.substring(2, key.length - 1)
+            if (codeNum.all { it.isDigit() }) {
+                return "\u001B[$codeNum;${mod}~"
+            }
+        }
+    }
+
+    if (key.length == 1) {
+        val ch = key[0]
+        if (isCtrl) {
+            val ctrlBytes = TerminalKeyCodes.getCtrlCode(ch)
+            val ctrlStr = String(ctrlBytes, Charsets.UTF_8)
+            return if (isAlt) "\u001B$ctrlStr" else ctrlStr
+        }
+        val transformedChar = if (ch in 'a'..'z' || ch in 'A'..'Z') {
+            val upper = isShift xor isCaps
+            if (upper) ch.uppercaseChar() else ch.lowercaseChar()
+        } else {
+            ch
+        }
+        return if (isAlt) "\u001B$transformedChar" else transformedChar.toString()
+    }
+
+    if (isAlt && !key.startsWith("\u001B")) {
+        return "\u001B$key"
+    }
+    return key
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TerminalAccessoryBar(
@@ -130,6 +192,27 @@ fun TerminalAccessoryBar(
     var isShiftActive by remember { mutableStateOf(false) }
     var isWinActive by remember { mutableStateOf(false) }
     var isCapsActive by remember { mutableStateOf(false) }
+
+    fun sendModifiedKey(rawKey: String, consumeModifiers: Boolean = true) {
+        val ctrl = isCtrlActive
+        val alt = isAltActive
+        val shift = isShiftActive
+        val caps = isCapsActive
+        val converted = applyTerminalModifiers(
+            key = rawKey,
+            isShift = shift,
+            isCaps = caps,
+            isCtrl = ctrl,
+            isAlt = alt
+        )
+        onSendKey(converted)
+        if (!isComboMode && consumeModifiers) {
+            if (ctrl) onToggleCtrl()
+            if (alt) onToggleAlt()
+            if (shift) isShiftActive = false
+            if (isWinActive) isWinActive = false
+        }
+    }
 
     // 如果处于 HIDDEN 状态，不渲染主体
     if (currentMode == TerminalInputMode.HIDDEN) {
@@ -234,8 +317,8 @@ fun TerminalAccessoryBar(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AccessoryButton(label = "ESC", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.ESC) })
-                    AccessoryButton(label = "TAB", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(TerminalKeyCodes.TAB) })
+                    AccessoryButton(label = "ESC", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey(TerminalKeyCodes.ESC) })
+                    AccessoryButton(label = "TAB", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey(TerminalKeyCodes.TAB) })
                     AccessoryButton(label = "⌫", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, autoRepeat = true, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
                     AccessoryButton(
                         label = "CTRL",
@@ -255,18 +338,18 @@ fun TerminalAccessoryBar(
                         activeBorder = ObsidianPrimary,
                         onClick = onToggleAlt
                     )
-                    AccessoryButton(label = "/", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("/") })
-                    AccessoryButton(label = "-", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("-") })
-                    AccessoryButton(label = "|", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("|") })
-                    AccessoryButton(label = "~", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("~") })
-                    AccessoryButton(label = ":", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey(":") })
-                    AccessoryButton(label = "$", height = 26.dp, fontSize = 10.sp, onClick = { onSendKey("$") })
+                    AccessoryButton(label = "/", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey("/") })
+                    AccessoryButton(label = "-", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey("-") })
+                    AccessoryButton(label = "|", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey("|") })
+                    AccessoryButton(label = "~", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey("~") })
+                    AccessoryButton(label = ":", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey(":") })
+                    AccessoryButton(label = "$", height = 26.dp, fontSize = 10.sp, onClick = { sendModifiedKey("$") })
 
                     // 方向键
-                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_UP) }
-                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_DOWN) }
-                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_LEFT) }
-                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = 26.dp) { onSendKey(TerminalKeyCodes.ARROW_RIGHT) }
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = 26.dp) { sendModifiedKey(TerminalKeyCodes.ARROW_UP) }
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = 26.dp) { sendModifiedKey(TerminalKeyCodes.ARROW_DOWN) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = 26.dp) { sendModifiedKey(TerminalKeyCodes.ARROW_LEFT) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = 26.dp) { sendModifiedKey(TerminalKeyCodes.ARROW_RIGHT) }
 
                     // Ctrl+C 中断
                     AccessoryButton(label = "Ctrl+C", height = 26.dp, fontSize = 10.sp, textColor = ObsidianError, onClick = { onSendKey("\u0003") })
@@ -523,8 +606,8 @@ fun TerminalAccessoryBar(
                     horizontalArrangement = Arrangement.spacedBy(if (isLandscape) 4.dp else 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AccessoryButton(label = "ESC", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey(TerminalKeyCodes.ESC) })
-                    AccessoryButton(label = "TAB", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey(TerminalKeyCodes.TAB) })
+                    AccessoryButton(label = "ESC", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey(TerminalKeyCodes.ESC) })
+                    AccessoryButton(label = "TAB", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey(TerminalKeyCodes.TAB) })
                     AccessoryButton(label = "⌫", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, autoRepeat = true, onClick = { onSendKey(TerminalKeyCodes.BACKSPACE) })
                     AccessoryButton(
                         label = "CTRL",
@@ -544,18 +627,18 @@ fun TerminalAccessoryBar(
                         activeBorder = ObsidianPrimary,
                         onClick = onToggleAlt
                     )
-                    AccessoryButton(label = "/", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey("/") })
-                    AccessoryButton(label = "-", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey("-") })
-                    AccessoryButton(label = "|", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey("|") })
-                    AccessoryButton(label = "~", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey("~") })
-                    AccessoryButton(label = ":", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey(":") })
-                    AccessoryButton(label = "$", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { onSendKey("$") })
+                    AccessoryButton(label = "/", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey("/") })
+                    AccessoryButton(label = "-", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey("-") })
+                    AccessoryButton(label = "|", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey("|") })
+                    AccessoryButton(label = "~", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey("~") })
+                    AccessoryButton(label = ":", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey(":") })
+                    AccessoryButton(label = "$", height = accessoryBtnHeight, fontSize = accessoryFontSize, onClick = { sendModifiedKey("$") })
 
                     // 方向键
-                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = accessoryBtnHeight) { onSendKey(TerminalKeyCodes.ARROW_UP) }
-                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = accessoryBtnHeight) { onSendKey(TerminalKeyCodes.ARROW_DOWN) }
-                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = accessoryBtnHeight) { onSendKey(TerminalKeyCodes.ARROW_LEFT) }
-                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = accessoryBtnHeight) { onSendKey(TerminalKeyCodes.ARROW_RIGHT) }
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = accessoryBtnHeight) { sendModifiedKey(TerminalKeyCodes.ARROW_UP) }
+                    AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = accessoryBtnHeight) { sendModifiedKey(TerminalKeyCodes.ARROW_DOWN) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = accessoryBtnHeight) { sendModifiedKey(TerminalKeyCodes.ARROW_LEFT) }
+                    AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = accessoryBtnHeight) { sendModifiedKey(TerminalKeyCodes.ARROW_RIGHT) }
 
                     // Ctrl+C 中断
                     AccessoryButton(label = "Ctrl+C", height = accessoryBtnHeight, fontSize = accessoryFontSize, textColor = ObsidianError, onClick = { onSendKey("\u0003") })
@@ -600,6 +683,11 @@ fun TerminalAccessoryBar(
                         QuickCommandManager.move(fromIndex, toIndex)
                     }
                 )
+                LaunchedEffect(isEditMode) {
+                    if (!isEditMode) {
+                        reorderState.onDragCancel()
+                    }
+                }
 
                 Box(
                     modifier = Modifier
@@ -741,13 +829,7 @@ fun TerminalAccessoryBar(
 
                 // 按键分发与组合键消耗控制助手
                 fun sendPcKey(key: String, consumeModifiers: Boolean = true) {
-                    onSendKey(key)
-                    if (!isComboMode && consumeModifiers) {
-                        if (isCtrlActive) onToggleCtrl()
-                        if (isAltActive) onToggleAlt()
-                        if (isShiftActive) isShiftActive = false
-                        if (isWinActive) isWinActive = false
-                    }
+                    sendModifiedKey(key, consumeModifiers)
                 }
 
                 Column(
@@ -874,7 +956,7 @@ fun TerminalAccessoryBar(
                         AccessoryButton("F4", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F4) }
                         AccessoryButton("F5", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F5) }
                         AccessoryButton("F6", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F6) }
-                        AccessoryButton("Del", height = keyBtnHeight, fontSize = keyFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.DELETE, consumeModifiers = false) }
+                        AccessoryButton("Del", height = keyBtnHeight, fontSize = keyFontSize, textColor = ObsidianError, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.DELETE) }
                         AccessoryButton("End", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.END) }
                         AccessoryButton("PgDn", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.PAGE_DOWN) }
                     }
@@ -888,8 +970,8 @@ fun TerminalAccessoryBar(
                         AccessoryButton("F8", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F8) }
                         AccessoryButton("F9", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F9) }
                         AccessoryButton("Caps", height = keyBtnHeight, fontSize = keyFontSize, isActive = isCapsActive, activeBg = theme.primary.copy(alpha = 0.25f), modifier = Modifier.weight(1f)) { isCapsActive = !isCapsActive }
-                        AccessoryButton("Enter", height = keyBtnHeight, fontSize = keyFontSize, textColor = if (theme.isDark) Color.Black else Color.White, bgColor = theme.primary, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ENTER, consumeModifiers = false) }
-                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_UP, consumeModifiers = false) }
+                        AccessoryButton("Enter", height = keyBtnHeight, fontSize = keyFontSize, textColor = if (theme.isDark) Color.Black else Color.White, bgColor = theme.primary, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ENTER) }
+                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowUp, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_UP) }
                     }
 
                     // Row 5: F10, F11, F12, ◀, ▼, ▶
@@ -900,9 +982,9 @@ fun TerminalAccessoryBar(
                         AccessoryButton("F10", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F10) }
                         AccessoryButton("F11", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F11) }
                         AccessoryButton("F12", height = keyBtnHeight, fontSize = keyFontSize, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.F12) }
-                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_LEFT, consumeModifiers = false) }
-                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_DOWN, consumeModifiers = false) }
-                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_RIGHT, consumeModifiers = false) }
+                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowBack, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_LEFT) }
+                        AccessoryIconButton(icon = Icons.Default.KeyboardArrowDown, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_DOWN) }
+                        AccessoryIconButton(icon = Icons.AutoMirrored.Filled.ArrowForward, size = keyBtnHeight, autoRepeat = true, modifier = Modifier.weight(1f)) { sendPcKey(TerminalKeyCodes.ARROW_RIGHT) }
                     }
                 }
             }
@@ -1316,6 +1398,15 @@ private fun QuickCommandCard(
 
     val isDraggingThis = reorderState.draggingKey == command.id
     val cardHeight = if (isLandscape) 46.dp else 52.dp
+    val currentIndex by rememberUpdatedState(index)
+
+    DisposableEffect(isEditMode, command.id) {
+        onDispose {
+            if (reorderState.draggingKey == command.id) {
+                reorderState.onDragCancel()
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -1339,23 +1430,24 @@ private fun QuickCommandCard(
                         onClick() // 普通模式下执行指令
                     }
                 },
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (isEditMode) {
-                        reorderState.onDragStart(command.id, index)
-                    } else {
+                onLongClick = if (isEditMode) {
+                    null
+                } else {
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongClick()
                     }
                 }
             )
             .then(
                 if (isEditMode) {
-                    // 编辑模式下整张卡片都是拖拽热区，长按 100ms 震动抓起直接拖动
+                    // 编辑模式下长按拖拽生命周期统一由 detectDragGesturesAfterLongPress 管理，
+                    // 使用 rememberUpdatedState 获取最新 index（key 不含 index 避免换位时中断手势）
                     Modifier.pointerInput(command.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                reorderState.onDragStart(command.id, index)
+                                reorderState.onDragStart(command.id, currentIndex)
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
@@ -1555,10 +1647,10 @@ private fun CommandEditDialog(
                     Button(
                         onClick = {
                             if (title.isNotBlank() && commandText.isNotBlank()) {
-                                val finalCmd = if (appendEnter && !commandText.endsWith("\n")) {
-                                    commandText + "\n"
+                                val finalCmd = if (appendEnter) {
+                                    if (commandText.endsWith("\n")) commandText else "$commandText\n"
                                 } else {
-                                    commandText
+                                    commandText.trimEnd('\r', '\n')
                                 }
                                 onSave(title.trim(), subtitle.trim(), finalCmd)
                             }
@@ -1715,6 +1807,7 @@ private fun AccessoryIconButton(
  * - 长按（持续按住 350ms）：进入连发循环，每 65ms 触发一次并伴随清脆刻度触感反馈
  * - 拖动规避：移动距离超过系统 touchSlop 或父级滚动抢占时自动取消，绝不阻断列表横向滑动
  */
+@Composable
 private fun Modifier.repeatingClickable(
     enabled: Boolean = true,
     initialDelayMillis: Long = 350L,
@@ -1723,13 +1816,16 @@ private fun Modifier.repeatingClickable(
     onPressedChange: ((Boolean) -> Unit)? = null,
     onClick: () -> Unit
 ): Modifier = if (enabled) {
-    this.pointerInput(onClick) {
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnPressedChange by rememberUpdatedState(onPressedChange)
+    val currentHaptic by rememberUpdatedState(haptic)
+    this.pointerInput(enabled) {
         coroutineScope {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val downId = down.id
                 val downPos = down.position
-                onPressedChange?.invoke(true)
+                currentOnPressedChange?.invoke(true)
 
                 var isRepeating = false
                 var cancelled = false
@@ -1737,12 +1833,12 @@ private fun Modifier.repeatingClickable(
                 val timerJob = launch {
                     delay(initialDelayMillis)
                     isRepeating = true
-                    haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onClick()
+                    currentHaptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    currentOnClick()
                     while (isActive) {
                         delay(repeatIntervalMillis)
-                        haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onClick()
+                        currentHaptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        currentOnClick()
                     }
                 }
 
@@ -1768,15 +1864,15 @@ private fun Modifier.repeatingClickable(
                         if (!change.pressed) {
                             change.consume()
                             if (!isRepeating && !cancelled) {
-                                haptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onClick()
+                                currentHaptic?.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                currentOnClick()
                             }
                             break
                         }
                     }
                 } finally {
                     timerJob.cancel()
-                    onPressedChange?.invoke(false)
+                    currentOnPressedChange?.invoke(false)
                 }
             }
         }

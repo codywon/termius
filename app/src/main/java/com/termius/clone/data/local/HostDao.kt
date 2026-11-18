@@ -26,4 +26,7 @@ interface HostDao {
 
     @Query("UPDATE hosts SET lastConnected = :timestamp WHERE id = :id")
     suspend fun updateLastConnected(id: Long, timestamp: Long)
+
+    @androidx.room.Query("UPDATE hosts SET identityId = NULL, authType = 'PASSWORD' WHERE identityId = :identityId")
+    suspend fun detachIdentityFromHosts(identityId: Long)
 }

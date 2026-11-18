@@ -7,17 +7,33 @@ import com.termius.clone.data.model.AuthType
 import com.termius.clone.data.model.DangerousActionRequest
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.data.model.SystemEnvInfo
+import com.termius.clone.data.security.KeyVaultManager
 import com.termius.clone.terminal.session.SessionManager
 import com.termius.clone.terminal.session.SshSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.coroutineContext
 
 /**
  * TermX Mobile AI SRE 智能体运维工具箱 (Tool Registry)
@@ -32,6 +48,90 @@ class TermXAgentToolRegistry(
 
     companion object {
         private const val TAG = "TermXToolRegistry"
+        private const val DEFAULT_SESSION_KEY = "__default__"
+
+        /**
+         * UTF-8 流式解码器：保留跨块拆分的多字节字符残留，彻底消除中文/Emoji 跨读取边界变 U+FFFD ()
+         */
+        internal fun readStreamWithUtf8Decoder(stream: InputStream, maxChars: Int): String {
+            val decoder = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+            val readBuf = ByteArray(2048)
+            val carry = ByteArray(4)
+            var carryLen = 0
+            val sb = StringBuilder()
+            var truncated = false
+            val charBuf = CharBuffer.allocate(2048)
+
+            fun decodeBytes(bytes: ByteArray, length: Int, endOfInput: Boolean) {
+                val inBuf = ByteBuffer.wrap(bytes, 0, length)
+                while (true) {
+                    charBuf.clear()
+                    val result = decoder.decode(inBuf, charBuf, endOfInput)
+                    charBuf.flip()
+                    if (!truncated && charBuf.hasRemaining()) {
+                        val remainingCap = maxChars - sb.length
+                        if (remainingCap > 0) {
+                            val toAppend = minOf(remainingCap, charBuf.remaining())
+                            sb.append(charBuf, 0, toAppend)
+                            if (toAppend < charBuf.remaining() || sb.length >= maxChars) {
+                                truncated = true
+                            }
+                        } else {
+                            truncated = true
+                        }
+                    }
+                    if (result.isUnderflow) {
+                        carryLen = inBuf.remaining()
+                        if (carryLen > 0) {
+                            inBuf.get(carry, 0, carryLen)
+                        }
+                        break
+                    }
+                    if (result.isOverflow) continue
+                    break
+                }
+            }
+
+            try {
+                while (true) {
+                    val combined = ByteArray(carryLen + readBuf.size)
+                    if (carryLen > 0) {
+                        System.arraycopy(carry, 0, combined, 0, carryLen)
+                    }
+                    val n = stream.read(combined, carryLen, readBuf.size)
+                    if (n == -1) {
+                        if (carryLen > 0) {
+                            decodeBytes(carry, carryLen, endOfInput = true)
+                        } else {
+                            decodeBytes(ByteArray(0), 0, endOfInput = true)
+                        }
+                        charBuf.clear()
+                        decoder.flush(charBuf)
+                        charBuf.flip()
+                        if (!truncated && charBuf.hasRemaining()) {
+                            val remainingCap = maxChars - sb.length
+                            if (remainingCap > 0) {
+                                sb.append(charBuf, 0, minOf(remainingCap, charBuf.remaining()))
+                            }
+                        }
+                        break
+                    }
+                    val totalBytes = carryLen + n
+                    carryLen = 0
+                    decodeBytes(combined, totalBytes, endOfInput = false)
+                }
+            } catch (_: Exception) {
+                // 超时或协程取消强制关闭流时返回已解码部分内容
+            }
+
+            if (truncated) {
+                val head = sb.substring(0, minOf(sb.length, maxChars / 2))
+                return "$head\n... [输出超过限制已截断] ..."
+            }
+            return sb.toString()
+        }
 
         /**
          * 导出 OpenAI 兼容的 Function Calling 声明元数据
@@ -141,16 +241,43 @@ class TermXAgentToolRegistry(
         }
     }
 
-    // 内部状态跟踪
-    private var activeTargetHost: HostEntity? = null
-    private var cachedEnvInfo: SystemEnvInfo? = null
+    // 多会话隔离：按 AI sessionId 记录显式 select_target_host 选定的主机 ID（绝不锁定全局或锁死终端回退主机）
+    private val selectedHostIdBySession = ConcurrentHashMap<String, Long>()
+    private val cachedEnvInfoByHostId = ConcurrentHashMap<Long, SystemEnvInfo>()
 
-    fun getActiveTargetHost(): HostEntity? = activeTargetHost
+    @Volatile
+    var currentAiSessionId: String? = null
+
+    private fun currentSessionKey(): String =
+        currentAiSessionId?.takeIf { it.isNotBlank() } ?: DEFAULT_SESSION_KEY
+
+    fun getActiveTargetHost(): HostEntity? {
+        val key = currentSessionKey()
+        val explicitId = selectedHostIdBySession[key] ?: return null
+        val host = try {
+            runBlocking(Dispatchers.IO) {
+                db.hostDao().getHostById(explicitId)
+            }
+        } catch (_: Exception) {
+            null
+        }
+        if (host == null) {
+            selectedHostIdBySession.remove(key)
+        }
+        return host
+    }
 
     fun setActiveTargetHost(host: HostEntity?) {
-        this.activeTargetHost = host
-        this.cachedEnvInfo = null
+        val key = currentSessionKey()
+        if (host == null) {
+            selectedHostIdBySession.remove(key)
+        } else {
+            selectedHostIdBySession[key] = host.id
+            cachedEnvInfoByHostId.remove(host.id)
+        }
     }
+
+    suspend fun resolveTargetHost(): HostEntity? = ensureTargetHost()
 
     /**
      * 核心工具执行派发器
@@ -190,6 +317,8 @@ class TermXAgentToolRegistry(
                 }
                 else -> "未知工具名称: $name"
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "执行工具 $name 异常", e)
             "工具执行出错: ${e.message}"
@@ -219,36 +348,37 @@ class TermXAgentToolRegistry(
         val host = db.hostDao().getHostById(hostId)
             ?: return "错误: 未找到 ID 为 $hostId 的主机配置。"
 
-        activeTargetHost = host
-        cachedEnvInfo = null
+        selectedHostIdBySession[currentSessionKey()] = host.id
+        cachedEnvInfoByHostId.remove(host.id)
         return "已成功切换目标主机为: 【${host.label}】(${host.username}@${host.hostname}:${host.port})。后续命令将在此主机执行。"
     }
 
     private suspend fun ensureTargetHost(): HostEntity? {
-        if (activeTargetHost != null) return activeTargetHost
+        val key = currentSessionKey()
+        val explicitHostId = selectedHostIdBySession[key]
+        if (explicitHostId != null) {
+            val latestHost = db.hostDao().getHostById(explicitHostId)
+            if (latestHost != null) {
+                return latestHost
+            }
+            // 主机已被删除时自动清除无效绑定，回退实时终端探测
+            selectedHostIdBySession.remove(key)
+        }
 
-        // 优先使用当前前台活跃会话的主机
+        // 未显式指定主机时每次实时读取前台活跃会话主机（绝不反写缓存锁死）
         val foregroundSession = SessionManager.currentSession
         if (foregroundSession != null) {
-            activeTargetHost = foregroundSession.host
-            return activeTargetHost
+            return foregroundSession.host
         }
 
-        // 其次使用任意已连接会话的主机
+        // 其次实时读取任意已连接会话的主机
         val anyActive = SessionManager.sessions.value.firstOrNull()
         if (anyActive != null) {
-            activeTargetHost = anyActive.host
-            return activeTargetHost
+            return anyActive.host
         }
 
-        // 再次使用数据库中第一台主机
-        val firstSaved = db.hostDao().getAllHostsSync().firstOrNull()
-        if (firstSaved != null) {
-            activeTargetHost = firstSaved
-            return activeTargetHost
-        }
-
-        return null
+        // 再次回退数据库中第一台主机
+        return db.hostDao().getAllHostsSync().firstOrNull()
     }
 
     private suspend fun handleDetectHostEnvironment(): String {
@@ -264,7 +394,7 @@ class TermXAgentToolRegistry(
         """.trimIndent()
 
         val probeResult = runRawSshCommand(host, probeScript, 10)
-        if (probeResult.startsWith("SSH 连接失败") || probeResult.startsWith("执行超时")) {
+        if (probeResult.startsWith("SSH 连接失败") || probeResult.startsWith("执行超时") || probeResult.startsWith("执行异常")) {
             return "环境探测失败: $probeResult"
         }
 
@@ -310,7 +440,7 @@ class TermXAgentToolRegistry(
             installedTools = tools,
             rawSummary = probeResult.take(600)
         )
-        cachedEnvInfo = info
+        cachedEnvInfoByHostId[host.id] = info
 
         return """
             【目标主机环境画像探测完成】:
@@ -410,6 +540,8 @@ class TermXAgentToolRegistry(
      * 底层 SSH 执行实现：优先复用活跃的 SshSession 连接通道，若无则建立独立安全通道
      */
     private suspend fun runRawSshCommand(host: HostEntity, command: String, timeoutSec: Int): String = withContext(Dispatchers.IO) {
+        coroutineContext.ensureActive()
+
         // 1. 尝试复用已连接会话的 SSHClient
         val existingSession = SessionManager.sessions.value.find { it.host.id == host.id }
         val activeClient = existingSession?.getClient()
@@ -420,105 +552,174 @@ class TermXAgentToolRegistry(
 
         // 2. 建立临时连接
         com.termius.clone.TermiusApplication.setupBouncyCastle()
-        val client = SSHClient()
-        client.addHostKeyVerifier(PromiscuousVerifier())
+        val client = SSHClient().apply {
+            connectTimeout = 15_000
+            timeout = 30_000
+            addHostKeyVerifier(PromiscuousVerifier())
+        }
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                try {
+                    client.disconnect()
+                } catch (_: Exception) {}
+            }
+        }
 
         try {
+            coroutineContext.ensureActive()
             client.connect(host.hostname, host.port)
             val username = host.username
+            val hostPassword = KeyVaultManager.decrypt(host.password)
+            val hostPrivateKey = KeyVaultManager.decrypt(host.privateKey)
+            val hostPassphrase = KeyVaultManager.decrypt(host.passphrase)
 
             when (host.authType) {
-                AuthType.PASSWORD -> client.authPassword(username, host.password)
+                AuthType.PASSWORD -> client.authPassword(username, hostPassword)
                 AuthType.KEY -> {
-                    if (host.privateKey.isNotBlank()) {
-                        val kp = if (host.passphrase.isNotBlank()) {
-                            client.loadKeys(host.privateKey, null, PasswordUtils.createOneOff(host.passphrase.toCharArray()))
+                    if (hostPrivateKey.isNotBlank()) {
+                        val kp = if (hostPassphrase.isNotBlank()) {
+                            client.loadKeys(hostPrivateKey, null, PasswordUtils.createOneOff(hostPassphrase.toCharArray()))
                         } else {
-                            client.loadKeys(host.privateKey, null, null)
+                            client.loadKeys(hostPrivateKey, null, null)
                         }
                         client.authPublickey(username, kp)
                     } else {
-                        client.authPassword(username, host.password)
+                        client.authPassword(username, hostPassword)
                     }
                 }
                 AuthType.IDENTITY_REF -> {
                     val identity = host.identityId?.let { db.identityDao().getIdentityById(it) }
                     if (identity != null) {
                         val authUser = identity.username.ifBlank { username }
-                        if (identity.privateKey.isNotBlank()) {
-                            val kp = if (identity.passphrase.isNotBlank()) {
-                                client.loadKeys(identity.privateKey, null, PasswordUtils.createOneOff(identity.passphrase.toCharArray()))
+                        val idPassword = KeyVaultManager.decrypt(identity.password)
+                        val idPrivateKey = KeyVaultManager.decrypt(identity.privateKey)
+                        val idPassphrase = KeyVaultManager.decrypt(identity.passphrase)
+                        if (idPrivateKey.isNotBlank()) {
+                            val kp = if (idPassphrase.isNotBlank()) {
+                                client.loadKeys(idPrivateKey, null, PasswordUtils.createOneOff(idPassphrase.toCharArray()))
                             } else {
-                                client.loadKeys(identity.privateKey, null, null)
+                                client.loadKeys(idPrivateKey, null, null)
                             }
                             client.authPublickey(authUser, kp)
                         } else {
-                            client.authPassword(authUser, identity.password)
+                            client.authPassword(authUser, idPassword)
                         }
                     } else {
-                        client.authPassword(username, host.password)
+                        client.authPassword(username, hostPassword)
                     }
                 }
             }
 
+            coroutineContext.ensureActive()
             return@withContext executeViaClient(client, command, timeoutSec)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "SSH 连接失败: ${host.hostname}", e)
             return@withContext "SSH 连接失败 (${host.hostname}:${host.port}): ${e.message}"
         } finally {
+            cancelHandle?.dispose()
             try {
                 client.disconnect()
             } catch (_: Exception) {}
         }
     }
 
-    private fun executeViaClient(client: SSHClient, command: String, timeoutSec: Int): String {
+    private suspend fun executeViaClient(client: SSHClient, command: String, timeoutSec: Int): String {
+        val safeTimeoutSec = timeoutSec.coerceIn(1, 300)
         return try {
-            val session = client.startSession()
-            try {
-                val cmd = session.exec(command)
-                val stdout = readStreamWithLimit(cmd.inputStream, 8192)
-                val stderr = readStreamWithLimit(cmd.errorStream, 4096)
-                cmd.join(timeoutSec.toLong(), TimeUnit.SECONDS)
-                val exitCode = cmd.exitStatus ?: 0
+            coroutineScope {
+                coroutineContext.ensureActive()
+                val session = client.startSession()
+                var cmd: Session.Command? = null
+                val timedOut = AtomicBoolean(false)
+                val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+                    if (cause != null) {
+                        closeSessionAndCommand(cmd, session)
+                    }
+                }
 
-                val sb = StringBuilder()
-                sb.append("退出码: $exitCode\n")
-                if (stdout.isNotBlank()) {
-                    sb.append("--- [STDOUT] ---\n").append(stdout.trim()).append("\n")
+                try {
+                    val execCmd = session.exec(command)
+                    cmd = execCmd
+                    val startMs = System.currentTimeMillis()
+
+                    val watchdog = launch(Dispatchers.IO) {
+                        delay(safeTimeoutSec * 1000L)
+                        if (timedOut.compareAndSet(false, true)) {
+                            closeSessionAndCommand(execCmd, session)
+                        }
+                    }
+
+                    // 并发读取 stdout 与 stderr，彻底消除串行读流导致的管道窗口死锁
+                    val stdoutDeferred = async(Dispatchers.IO) {
+                        readStreamWithUtf8Decoder(execCmd.inputStream, 8192)
+                    }
+                    val stderrDeferred = async(Dispatchers.IO) {
+                        readStreamWithUtf8Decoder(execCmd.errorStream, 4096)
+                    }
+
+                    val stdout = stdoutDeferred.await()
+                    val stderr = stderrDeferred.await()
+
+                    if (!timedOut.get()) {
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val elapsedMs = System.currentTimeMillis() - startMs
+                                val remainingMs = (safeTimeoutSec * 1000L - elapsedMs).coerceAtLeast(200L)
+                                execCmd.join(remainingMs, TimeUnit.MILLISECONDS)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    watchdog.cancel()
+                    coroutineContext.ensureActive()
+
+                    val exitStatus = execCmd.exitStatus
+                    val elapsedTotal = System.currentTimeMillis() - startMs
+                    if (timedOut.get() || (exitStatus == null && elapsedTotal >= safeTimeoutSec * 1000L - 100L)) {
+                        val sb = StringBuilder("执行超时: 命令在 ${safeTimeoutSec} 秒内未完成，已强制中断。")
+                        if (stdout.isNotBlank()) {
+                            sb.append("\n--- [STDOUT (超时前部分输出)] ---\n").append(stdout.trim())
+                        }
+                        if (stderr.isNotBlank()) {
+                            sb.append("\n--- [STDERR (超时前部分输出)] ---\n").append(stderr.trim())
+                        }
+                        return@coroutineScope sb.toString().trim()
+                    }
+
+                    val exitCode = exitStatus ?: -1
+                    val sb = StringBuilder()
+                    sb.append("退出码: $exitCode\n")
+                    if (stdout.isNotBlank()) {
+                        sb.append("--- [STDOUT] ---\n").append(stdout.trim()).append("\n")
+                    }
+                    if (stderr.isNotBlank()) {
+                        sb.append("--- [STDERR] ---\n").append(stderr.trim()).append("\n")
+                    }
+                    if (stdout.isBlank() && stderr.isBlank()) {
+                        sb.append(if (exitCode == 0) "(命令执行成功，无任何文本输出)" else "(命令执行结束，无文本输出)")
+                    }
+                    sb.toString().trim()
+                } finally {
+                    cancelHandle?.dispose()
+                    closeSessionAndCommand(cmd, session)
                 }
-                if (stderr.isNotBlank()) {
-                    sb.append("--- [STDERR] ---\n").append(stderr.trim()).append("\n")
-                }
-                if (stdout.isBlank() && stderr.isBlank()) {
-                    sb.append("(命令执行成功，无任何文本输出)")
-                }
-                sb.toString().trim()
-            } finally {
-                session.close()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             "执行异常: ${e.message}"
         }
     }
 
-    private fun readStreamWithLimit(stream: InputStream, maxChars: Int): String {
-        return try {
-            val buffer = ByteArray(2048)
-            val sb = StringBuilder()
-            var read: Int
-            while (stream.read(buffer).also { read = it } != -1) {
-                sb.append(String(buffer, 0, read, Charsets.UTF_8))
-                if (sb.length > maxChars) {
-                    val head = sb.substring(0, maxChars / 2)
-                    sb.setLength(0)
-                    sb.append(head).append("\n... [输出超过限制已截断] ...")
-                    break
-                }
-            }
-            sb.toString()
-        } catch (_: Exception) {
-            ""
-        }
+    private fun closeSessionAndCommand(cmd: Session.Command?, session: Session?) {
+        try {
+            cmd?.close()
+        } catch (_: Exception) {}
+        try {
+            session?.close()
+        } catch (_: Exception) {}
     }
 }

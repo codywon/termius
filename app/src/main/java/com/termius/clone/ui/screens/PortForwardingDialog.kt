@@ -1,5 +1,6 @@
 package com.termius.clone.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -7,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,8 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -24,6 +28,7 @@ import com.termius.clone.data.model.TunnelType
 import com.termius.clone.terminal.session.SshSession
 import com.termius.clone.terminal.tunnel.TunnelManager
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.Strings
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,6 +36,7 @@ fun PortForwardingDialog(
     activeSession: SshSession?,
     onDismissRequest: () -> Unit
 ) {
+    val context = LocalContext.current
     val rules by TunnelManager.rules.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
 
@@ -118,7 +124,15 @@ fun PortForwardingDialog(
                             TunnelItemCard(
                                 rule = rule,
                                 onToggle = {
-                                    TunnelManager.toggleTunnel(rule.id, activeSession?.getClient())
+                                    if (!rule.isRunning && (activeSession == null || !activeSession.isConnected)) {
+                                        Toast.makeText(
+                                            context,
+                                            if (Strings.isZh) "请先连接活跃的 SSH 会话后再开启端口转发" else "Connect an active SSH session first",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        TunnelManager.toggleTunnel(rule.id, activeSession)
+                                    }
                                 },
                                 onDelete = {
                                     TunnelManager.removeRule(rule.id)
@@ -266,11 +280,15 @@ fun CreateTunnelRuleDialog(
     onDismiss: () -> Unit,
     onConfirm: (TunnelRule) -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var localPort by remember { mutableStateOf("8080") }
     var remoteHost by remember { mutableStateOf("127.0.0.1") }
     var remotePort by remember { mutableStateOf("80") }
     var description by remember { mutableStateOf("") }
+
+    val isLocalPortInvalid = localPort.isNotEmpty() && (localPort.toIntOrNull()?.let { it !in 1..65535 } ?: true)
+    val isRemotePortInvalid = remotePort.isNotEmpty() && (remotePort.toIntOrNull()?.let { it !in 1..65535 } ?: true)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -296,18 +314,22 @@ fun CreateTunnelRuleDialog(
                 ) {
                     OutlinedTextField(
                         value = localPort,
-                        onValueChange = { localPort = it },
+                        onValueChange = { localPort = it.filter { ch -> ch.isDigit() } },
                         label = { Text("本地端口") },
                         placeholder = { Text("8080") },
+                        isError = isLocalPortInvalid,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = remotePort,
-                        onValueChange = { remotePort = it },
+                        onValueChange = { remotePort = it.filter { ch -> ch.isDigit() } },
                         label = { Text("远程端口") },
                         placeholder = { Text("80") },
+                        isError = isRemotePortInvalid,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
@@ -337,16 +359,32 @@ fun CreateTunnelRuleDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val lPort = localPort.toIntOrNull() ?: 8080
-                    val rPort = remotePort.toIntOrNull() ?: 80
+                    val lPort = localPort.toIntOrNull()
+                    val rPort = remotePort.toIntOrNull()
+                    if (lPort == null || lPort !in 1..65535) {
+                        Toast.makeText(
+                            context,
+                            if (Strings.isZh) "本地端口必须在 1..65535 之间" else "Local port must be between 1 and 65535",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@Button
+                    }
+                    if (rPort == null || rPort !in 1..65535) {
+                        Toast.makeText(
+                            context,
+                            if (Strings.isZh) "远程端口必须在 1..65535 之间" else "Remote port must be between 1 and 65535",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@Button
+                    }
                     val rule = TunnelRule(
-                        name = if (name.isNotBlank()) name else "Tunnel $lPort",
+                        name = if (name.isNotBlank()) name.trim() else "Tunnel $lPort",
                         type = TunnelType.LOCAL,
                         localPort = lPort,
-                        remoteHost = if (remoteHost.isNotBlank()) remoteHost else "127.0.0.1",
+                        remoteHost = if (remoteHost.isNotBlank()) remoteHost.trim() else "127.0.0.1",
                         remotePort = rPort,
                         isRunning = false,
-                        description = description
+                        description = description.trim()
                     )
                     onConfirm(rule)
                 },

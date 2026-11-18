@@ -1,12 +1,14 @@
 package com.termius.clone.ai
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.regex.Pattern
 
@@ -49,6 +51,7 @@ object WebSearchHelper {
                 return@withContext bingResult
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.w(TAG, "Bing 搜索失败，尝试回退备用搜索引擎: ${e.message}")
         }
 
@@ -59,6 +62,7 @@ object WebSearchHelper {
                 return@withContext ddgResult
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.w(TAG, "DuckDuckGo 搜索失败: ${e.message}")
         }
 
@@ -98,13 +102,14 @@ object WebSearchHelper {
 
                 val cleanTitle = cleanHtmlTags(rawTitle)
                 val cleanSnippet = cleanHtmlTags(rawSnippet)
+                val cleanUrl = rawUrl.replace("&amp;", "&").trim()
 
-                if (cleanTitle.isNotBlank() && rawUrl.startsWith("http")) {
+                if (cleanTitle.isNotBlank() && cleanUrl.startsWith("http")) {
                     items.add(
                         WebSearchItem(
                             title = cleanTitle,
                             snippet = cleanSnippet,
-                            url = rawUrl
+                            url = cleanUrl
                         )
                     )
                 }
@@ -159,13 +164,14 @@ object WebSearchHelper {
 
             val cleanTitle = cleanHtmlTags(if (rawTitle.isNotBlank()) rawTitle else rawSnippet)
             val cleanSnippet = cleanHtmlTags(rawSnippet)
+            val normalizedUrl = normalizeDuckDuckGoUrl(rawUrl)
 
-            if (cleanTitle.isNotBlank()) {
+            if (cleanTitle.isNotBlank() && normalizedUrl.isNotBlank()) {
                 items.add(
                     WebSearchItem(
                         title = cleanTitle,
                         snippet = cleanSnippet,
-                        url = if (rawUrl.startsWith("http")) rawUrl else "https://$rawUrl"
+                        url = normalizedUrl
                     )
                 )
             }
@@ -177,6 +183,30 @@ object WebSearchHelper {
             items = items,
             source = "DuckDuckGo"
         )
+    }
+
+    internal fun normalizeDuckDuckGoUrl(rawUrl: String): String {
+        val cleanUrl = rawUrl.trim().replace("&amp;", "&")
+        if (cleanUrl.isBlank()) return ""
+
+        val fullUrl = when {
+            cleanUrl.startsWith("http://", ignoreCase = true) || cleanUrl.startsWith("https://", ignoreCase = true) -> cleanUrl
+            cleanUrl.startsWith("//") -> "https:$cleanUrl"
+            cleanUrl.startsWith("/") -> "https://html.duckduckgo.com$cleanUrl"
+            else -> "https://$cleanUrl"
+        }
+
+        val uddgMatch = Regex("""(?:[?&])uddg=([^&]+)""").find(fullUrl)
+        if (uddgMatch != null) {
+            try {
+                val decoded = URLDecoder.decode(uddgMatch.groupValues[1], "UTF-8").trim()
+                if (decoded.startsWith("http://", ignoreCase = true) || decoded.startsWith("https://", ignoreCase = true)) {
+                    return decoded
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return fullUrl
     }
 
     private fun fetchHtml(urlString: String, extraHeaders: Map<String, String>): String {

@@ -3,7 +3,16 @@ package com.termius.clone.ai
 import android.util.Log
 import com.termius.clone.data.model.AiAgentConfig
 import com.termius.clone.data.model.AiChatMessage
+import com.termius.clone.terminal.session.SessionManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +20,10 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import com.termius.clone.terminal.session.SessionManager
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 
 /**
  * TermX Mobile 生产级极简 ReAct Agent 执行引擎 & OpenAI 兼容流式客户端：
@@ -175,6 +187,9 @@ class TermXAgentClient(
             }
         }
 
+        private val generatedToolIdCounter = AtomicLong(0L)
+        private val disconnectScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
         /**
          * 将流式聚合的 toolCallMap 安全刷入 toolCallsDetected，自带智能 ID 回溯与去重
          */
@@ -182,7 +197,7 @@ class TermXAgentClient(
             toolCallMap: Map<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>,
             toolCallsDetected: MutableList<JSONObject>
         ) {
-            for ((_, triple) in toolCallMap) {
+            for ((idx, triple) in toolCallMap) {
                 val id = triple.first.toString().trim()
                 var name = triple.second.toString().trim()
                 val args = triple.third.toString().trim()
@@ -192,10 +207,12 @@ class TermXAgentClient(
                 }
 
                 if (name.isNotEmpty()) {
-                    val finalId = if (id.isNotEmpty() && id != "null") id else "call_${System.currentTimeMillis()}_${toolCallsDetected.size}"
-                    val exists = toolCallsDetected.any {
-                        it.optString("id") == finalId || (it.optJSONObject("function")?.optString("name") == name && finalId.startsWith("call_"))
+                    val finalId = if (id.isNotEmpty() && id != "null") {
+                        id
+                    } else {
+                        "call_gen_${System.currentTimeMillis()}_${idx}"
                     }
+                    val exists = toolCallsDetected.any { it.optString("id") == finalId }
                     if (!exists) {
                         toolCallsDetected.add(
                             JSONObject().apply {
@@ -283,7 +300,7 @@ class TermXAgentClient(
                     put("content", "【系统指令】: 自动化运维工具执行阶段已完成。请基于上述所有工具返回的真实观测结果与命令输出，向用户输出完整的 Markdown 格式运维总结报告与排障结论。无需再调用任何工具。")
                 })
             }
-            return clean
+            return ContextCompactor.mergeConsecutiveSameRoleMessages(clean)
         }
 
         /**
@@ -380,6 +397,313 @@ class TermXAgentClient(
             sb.append("💡 **运维建议**：如需进一步针对上述服务或进程执行后续操作，您可以直接回复“继续”或下达具体指令。")
             return sb.toString().trim()
         }
+
+        /**
+         * 解析 SSE 数据块 payload (兼容 choices[0].delta、choices[0].text 与顶层字段)
+         */
+        internal fun parseSseChunk(
+            payload: String,
+            currentStepReasoning: StringBuilder,
+            currentStepContent: StringBuilder,
+            fullAccumulatedReasoning: StringBuilder,
+            fullAccumulatedContent: StringBuilder,
+            toolCallMap: MutableMap<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>,
+            toolCallsDetected: MutableList<JSONObject>,
+            onChunk: (delta: String, isThinking: Boolean) -> Unit
+        ) {
+            try {
+                val json = JSONObject(payload)
+                if (json.has("error")) {
+                    val errObj = json.optJSONObject("error")
+                    val errMsg = errObj?.optString("message", "") ?: json.optString("error", "流式通信错误")
+                    Log.w(TAG, "SSE chunk 包含业务错误: $errMsg")
+                    return
+                }
+
+                val choices = json.optJSONArray("choices")
+                if (choices != null && choices.length() > 0) {
+                    val choice = choices.getJSONObject(0)
+                    val delta = choice.optJSONObject("delta")
+                    val message = choice.optJSONObject("message")
+
+                    // 1. 思考链增量
+                    val reasoningDelta = when {
+                        delta != null -> extractContentText(delta, "reasoning_content")
+                            .ifEmpty { extractContentText(delta, "reasoning") }
+                            .ifEmpty { extractContentText(delta, "thought") }
+                        message != null -> extractContentText(message, "reasoning_content")
+                            .ifEmpty { extractContentText(message, "reasoning") }
+                            .ifEmpty { extractContentText(message, "thought") }
+                        else -> extractContentText(choice, "reasoning_content")
+                            .ifEmpty { extractContentText(choice, "reasoning") }
+                    }
+
+                    if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
+                        currentStepReasoning.append(reasoningDelta)
+                        fullAccumulatedReasoning.append(reasoningDelta)
+                        onChunk(reasoningDelta, true)
+                    }
+
+                    // 2. 正文打字机增量
+                    val contentDelta = when {
+                        delta != null -> extractContentText(delta, "content")
+                            .ifEmpty { extractContentText(delta, "text") }
+                        message != null -> extractContentText(message, "content")
+                            .ifEmpty { extractContentText(message, "text") }
+                        else -> extractContentText(choice, "text")
+                            .ifEmpty { extractContentText(choice, "content") }
+                    }
+
+                    if (contentDelta.isNotEmpty() && contentDelta != "null") {
+                        onChunk(contentDelta, false)
+                        currentStepContent.append(contentDelta)
+                        fullAccumulatedContent.append(contentDelta)
+                    }
+
+                    // 3. 工具调用增量 (兼容 tool_calls 列表与单数 function_call)
+                    val toolsArr = delta?.optJSONArray("tool_calls")
+                        ?: message?.optJSONArray("tool_calls")
+                        ?: choice.optJSONArray("tool_calls")
+
+                    if (toolsArr != null) {
+                        for (i in 0 until toolsArr.length()) {
+                            val t = toolsArr.getJSONObject(i)
+                            val idx = if (t.has("index")) t.optInt("index", i) else i
+                            val id = if (!t.isNull("id")) t.optString("id", "").trim() else ""
+                            val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
+                            val name = resolveToolName(func, t, id)
+                            val argsPart = extractToolArgumentsString(func, t)
+
+                            val triple = toolCallMap.getOrPut(idx) {
+                                Triple(StringBuilder(), StringBuilder(), StringBuilder())
+                            }
+                            if (id.isNotEmpty() && id != "null" && triple.first.isEmpty()) triple.first.append(id)
+                            if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
+                            appendToolArguments(triple.third, argsPart)
+                        }
+                    } else {
+                        val singleFunc = delta?.optJSONObject("function_call")
+                            ?: message?.optJSONObject("function_call")
+                            ?: choice.optJSONObject("function_call")
+                        if (singleFunc != null) {
+                            val name = resolveToolName(singleFunc, null, "")
+                            val argsPart = extractToolArgumentsString(singleFunc, null)
+                            val triple = toolCallMap.getOrPut(0) {
+                                Triple(StringBuilder(), StringBuilder(), StringBuilder())
+                            }
+                            if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
+                            appendToolArguments(triple.third, argsPart)
+                        }
+                    }
+                } else {
+                    // 顶层提取 (兼容特殊 SSE 代理)
+                    val topReasoning = extractContentText(json, "reasoning_content")
+                        .ifEmpty { extractContentText(json, "reasoning") }
+                        .ifEmpty { extractContentText(json, "thought") }
+                    if (topReasoning.isNotEmpty() && topReasoning != "null") {
+                        currentStepReasoning.append(topReasoning)
+                        fullAccumulatedReasoning.append(topReasoning)
+                        onChunk(topReasoning, true)
+                    }
+
+                    val topContent = extractContentText(json, "content")
+                        .ifEmpty { extractContentText(json, "text") }
+                        .ifEmpty { extractContentText(json, "response") }
+                    if (topContent.isNotEmpty() && topContent != "null") {
+                        onChunk(topContent, false)
+                        currentStepContent.append(topContent)
+                        fullAccumulatedContent.append(topContent)
+                    }
+
+                    val topTools = json.optJSONArray("tool_calls")
+                    if (topTools != null) {
+                        for (i in 0 until topTools.length()) {
+                            val norm = normalizeToolCall(topTools.getJSONObject(i))
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
+                        }
+                    } else {
+                        val topSingleFunc = json.optJSONObject("function_call")
+                        if (topSingleFunc != null) {
+                            val norm = normalizeToolCall(topSingleFunc)
+                            if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
+                                toolCallsDetected.add(norm)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "解析 SSE payload 块异常: ${e.message}")
+            }
+        }
+
+        private fun isValidJsonObject(raw: String): Boolean {
+            val trimmed = raw.trim()
+            if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false
+            return try {
+                JSONObject(trimmed)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        private fun appendToolArguments(buf: StringBuilder, argsPart: String) {
+            if (argsPart.isEmpty()) return
+            val trimmedIncoming = argsPart.trim()
+            val current = buf.toString().trim()
+            if (current.isEmpty()) {
+                buf.append(argsPart)
+                return
+            }
+            // 仅当新分片本身为合法完整 JSON 且与已累积内容重复（相同或完整快照）时才覆盖，
+            // 防止普通分片 {a=1} + {print} 误把前半截 JSON 清空！
+            if (isValidJsonObject(trimmedIncoming)) {
+                val isRepeatedSnapshot = trimmedIncoming == current ||
+                    trimmedIncoming.startsWith(current) ||
+                    (isValidJsonObject(current) && current.startsWith(trimmedIncoming))
+                if (isRepeatedSnapshot) {
+                    buf.setLength(0)
+                    buf.append(trimmedIncoming)
+                    return
+                }
+            }
+            buf.append(argsPart)
+        }
+
+        /**
+         * 剔除中间步骤正文中夹带的文本工具协议块，避免 ReAct 中间协议源码污染最终回答
+         */
+        internal fun stripTextualToolBlocks(content: String): String {
+            if (content.isBlank()) return content
+            var cleaned = content
+
+            val codeBlockRegex = Regex("```(?:tool:)?([a-zA-Z0-9_]*)\\s*\\n([\\s\\S]*?)```")
+            cleaned = codeBlockRegex.replace(cleaned) { match ->
+                val label = match.groupValues[1].trim()
+                val body = match.groupValues[2].trim()
+                val isDirectTool = VALID_TOOL_NAMES.contains(label)
+                val isJsonTool = (label.equals("json", ignoreCase = true) || label.isEmpty()) &&
+                    body.startsWith("{") && body.endsWith("}") &&
+                    run {
+                        try {
+                            val parsed = JSONObject(body)
+                            val tn = parsed.optString("name", "")
+                                .ifEmpty { parsed.optString("tool", "") }
+                                .ifEmpty { parsed.optString("function", "") }
+                            VALID_TOOL_NAMES.contains(tn)
+                        } catch (_: Exception) {
+                            false
+                        }
+                    }
+                if (isDirectTool || isJsonTool) "" else match.value
+            }
+
+            val tagRegex = Regex("<(?:tool_call|tool|action)>\\s*([\\s\\S]*?)\\s*</(?:tool_call|tool|action)>")
+            cleaned = tagRegex.replace(cleaned, "")
+
+            val reactRegex = Regex("Action:\\s*([a-zA-Z0-9_]+)\\s*\\n+Action Input:\\s*[\\s\\S]+?(?:\\n*(?=Thought|Observation|Action:)|$)")
+            cleaned = reactRegex.replace(cleaned) { match ->
+                val toolName = match.groupValues[1].trim()
+                if (VALID_TOOL_NAMES.contains(toolName)) "" else match.value
+            }
+
+            return cleaned.replace(Regex("\n{3,}"), "\n\n").trim()
+        }
+
+        /**
+         * 规范化工具调用对象（兼容顶层 name/arguments 与 function 嵌套层级，支持智能 ID 回溯与多态参数提取）
+         */
+        internal fun normalizeToolCall(t: JSONObject): JSONObject {
+            val rawId = if (!t.isNull("id")) t.optString("id", "").trim() else ""
+            val id = if (rawId.isNotEmpty() && rawId != "null") {
+                rawId
+            } else {
+                "call_gen_${System.currentTimeMillis()}_${generatedToolIdCounter.incrementAndGet()}"
+            }
+            val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
+            val name = resolveToolName(func, t, id)
+            val args = extractToolArgumentsString(func, t)
+
+            return JSONObject().apply {
+                put("id", id)
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", name)
+                    put("arguments", if (args.isNotBlank()) args else "{}")
+                })
+            }
+        }
+
+        /**
+         * 安全提取 content 或 reasoning 文本（兼容 String 与 JSONArray 块结构）
+         */
+        internal fun extractContentText(jsonObj: JSONObject, key: String): String {
+            if (jsonObj.isNull(key)) return ""
+            val raw = jsonObj.opt(key) ?: return ""
+            return when (raw) {
+                is String -> raw
+                is JSONArray -> {
+                    val sb = StringBuilder()
+                    for (i in 0 until raw.length()) {
+                        val item = raw.optJSONObject(i)
+                        if (item != null) {
+                            if (isImageContentPart(item)) {
+                                val url = extractImagePartUrl(item)
+                                if (url.isNotBlank()) sb.append("\n\n![图片](").append(url).append(")\n\n")
+                            } else {
+                                val text = item.optString("text", "")
+                                if (text.isNotEmpty()) sb.append(text)
+                            }
+                        } else {
+                            sb.append(raw.optString(i, ""))
+                        }
+                    }
+                    sb.toString()
+                }
+                is JSONObject -> {
+                    if (isImageContentPart(raw)) {
+                        val url = extractImagePartUrl(raw)
+                        if (url.isNotBlank()) "\n\n![图片]($url)\n\n" else ""
+                    } else {
+                        raw.optString("text", "")
+                    }
+                }
+                else -> raw.toString()
+            }
+        }
+
+        /** 判断一个内容块是不是图片块（兼容 OpenAI / Claude / Gemini / 各家网关的字段命名） */
+        private fun isImageContentPart(part: JSONObject): Boolean {
+            val type = part.optString("type", "").lowercase()
+            if (type.contains("image")) return true
+            if (type == "input_image" || type == "output_image") return true
+            if (part.has("inlineData") || part.has("inline_data") || part.has("image_url")) return true
+            return false
+        }
+
+        /** 从图片块里取出可渲染的地址：data URI 或 http(s) URL；取不到就返回空串 */
+        private fun extractImagePartUrl(part: JSONObject): String {
+            part.optJSONObject("image_url")?.optString("url", "")?.takeIf { it.isNotBlank() }?.let { return it }
+            part.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
+            for (key in arrayOf("inlineData", "inline_data", "source", "image")) {
+                val obj = part.optJSONObject(key) ?: continue
+                obj.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
+                val data = obj.optString("data", "")
+                if (data.isNotBlank()) {
+                    val mime = obj.optString("mimeType", obj.optString("mime_type", "image/png"))
+                    return if (data.startsWith("data:")) data else "data:$mime;base64,$data"
+                }
+            }
+            val direct = part.optString("data", "")
+            if (direct.isNotBlank()) {
+                val mime = part.optString("mimeType", part.optString("mime_type", "image/png"))
+                return if (direct.startsWith("data:")) direct else "data:$mime;base64,$direct"
+            }
+            return ""
+        }
     }
 
     /**
@@ -398,7 +722,85 @@ class TermXAgentClient(
             return@withContext
         }
 
-        val activeHost = toolRegistry.getActiveTargetHost()
+        coroutineContext.ensureActive()
+        val cancelled = AtomicBoolean(false)
+        val activeConnRef = AtomicReference<HttpURLConnection?>(null)
+        val completionSignal = CompletableDeferred<Unit>()
+        val workerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+        fun disconnectConnAsync(conn: HttpURLConnection?) {
+            if (conn == null) return
+            disconnectScope.launch {
+                try {
+                    conn.disconnect()
+                } catch (_: Throwable) {}
+            }
+        }
+
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                cancelled.set(true)
+                disconnectConnAsync(activeConnRef.getAndSet(null))
+                completionSignal.cancel(CancellationException("chatStream cancelled", cause))
+            }
+        }
+
+        val safeOnChunk: (String, Boolean) -> Unit = { delta, isThinking ->
+            if (!cancelled.get()) onChunk(delta, isThinking)
+        }
+        val safeOnToolAction: (String) -> Unit = { action ->
+            if (!cancelled.get()) onToolAction(action)
+        }
+        val safeOnError: (String) -> Unit = { err ->
+            if (!cancelled.get()) onError(err)
+        }
+        val safeOnComplete: (String, String) -> Unit = { full, reasoning ->
+            if (!cancelled.get()) onComplete(full, reasoning)
+        }
+
+        val workerJob = workerScope.launch(coroutineContext.minusKey(Job)) {
+            try {
+                runReActLoop(
+                    config = config,
+                    conversationHistory = conversationHistory,
+                    cancelled = cancelled,
+                    activeConnRef = activeConnRef,
+                    onChunk = safeOnChunk,
+                    onToolAction = safeOnToolAction,
+                    onError = safeOnError,
+                    onComplete = safeOnComplete
+                )
+                completionSignal.complete(Unit)
+            } catch (e: CancellationException) {
+                completionSignal.cancel(e)
+            } catch (t: Throwable) {
+                completionSignal.completeExceptionally(t)
+            }
+        }
+        workerJob.invokeOnCompletion { workerScope.cancel() }
+
+        try {
+            completionSignal.await()
+        } finally {
+            cancelHandle?.dispose()
+            cancelled.set(true)
+            disconnectConnAsync(activeConnRef.getAndSet(null))
+            workerJob.cancel()
+        }
+    }
+
+    private suspend fun runReActLoop(
+        config: AiAgentConfig,
+        conversationHistory: List<AiChatMessage>,
+        cancelled: AtomicBoolean,
+        activeConnRef: AtomicReference<HttpURLConnection?>,
+        onChunk: (delta: String, isThinking: Boolean) -> Unit,
+        onToolAction: (actionText: String) -> Unit,
+        onError: (errorText: String) -> Unit,
+        onComplete: (fullContent: String, reasoningContent: String) -> Unit
+    ) {
+        coroutineContext.ensureActive()
+        val activeHost = toolRegistry.resolveTargetHost()
             ?: SessionManager.currentSession?.host
 
         val hostContextHint = if (activeHost != null) {
@@ -437,12 +839,14 @@ class TermXAgentClient(
 
         // 2. The ReAct Loop (Thought -> Action -> Observation)
         while (step < maxSteps) {
+            coroutineContext.ensureActive()
+            if (cancelled.get()) return
             step++
 
             messagesArray = ContextCompactor.compactActiveMessages(messagesArray, config)
             val isFinalStep = (step == maxSteps)
 
-            var toolCallsDetected = mutableListOf<JSONObject>()
+            val toolCallsDetected = mutableListOf<JSONObject>()
             val currentStepContent = StringBuilder()
             val currentStepReasoning = StringBuilder()
             val stepStartContentLength = fullAccumulatedContent.length
@@ -454,6 +858,8 @@ class TermXAgentClient(
             val maxTierAttempts = 3 // Tier 1: stream+tools -> Tier 2: stream+text -> Tier 3: non-stream+text (CLIProxyAPI 终极克星)
 
             while (tierAttempt < maxTierAttempts && !stepSucceeded) {
+                coroutineContext.ensureActive()
+                if (cancelled.get()) return
                 tierAttempt++
                 currentStepContent.clear()
                 currentStepReasoning.clear()
@@ -465,13 +871,28 @@ class TermXAgentClient(
                 fullAccumulatedContent.setLength(stepStartContentLength)
                 fullAccumulatedReasoning.setLength(stepStartReasoningLength)
 
+                val stepChunkCallback: (String, Boolean) -> Unit = { delta, isThinking ->
+                    if (!cancelled.get()) {
+                        if (!isThinking && delta.isNotEmpty() &&
+                            stepStartContentLength > 0 &&
+                            fullAccumulatedContent.length == stepStartContentLength &&
+                            !fullAccumulatedContent.endsWith("\n\n")
+                        ) {
+                            val sep = if (fullAccumulatedContent.endsWith("\n")) "\n" else "\n\n"
+                            fullAccumulatedContent.append(sep)
+                            onChunk(sep, false)
+                        }
+                        onChunk(delta, isThinking)
+                    }
+                }
+
                 val currentNativeTools = useNativeTools
                 val currentStream = useStream
 
                 val outgoingMessages = if (!currentNativeTools || isFinalStep) {
                     applyReasoningPassthrough(sanitizeMessagesForTextMode(messagesArray, isFinalStep), passReasoning)
                 } else {
-                    applyReasoningPassthrough(messagesArray, passReasoning)
+                    applyReasoningPassthrough(ContextCompactor.mergeConsecutiveSameRoleMessages(messagesArray), passReasoning)
                 }
 
                 val requestBody = JSONObject().apply {
@@ -487,9 +908,10 @@ class TermXAgentClient(
                 }
 
                 var conn: HttpURLConnection? = null
-                var attemptSucceeded = false
 
                 for (attempt in 1..2) {
+                    coroutineContext.ensureActive()
+                    if (cancelled.get()) return
                     try {
                         val baseUrl = config.baseUrl.trim().trimEnd('/')
                         val endpoint = when {
@@ -509,6 +931,7 @@ class TermXAgentClient(
                             setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                             setRequestProperty("Accept", if (currentStream) "text/event-stream" else "application/json")
                         }
+                        activeConnRef.set(conn)
 
                         conn.outputStream.use { os ->
                             os.write(requestBody.toString().toByteArray(Charsets.UTF_8))
@@ -566,8 +989,11 @@ class TermXAgentClient(
                                 continue
                             }
 
-                            onError("大模型服务返回异常 ($responseCode): $errorBody")
-                            return@withContext
+                            coroutineContext.ensureActive()
+                            if (!cancelled.get()) {
+                                onError("大模型服务返回异常 ($responseCode): $errorBody")
+                            }
+                            return
                         }
 
                         val reader = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8))
@@ -583,12 +1009,14 @@ class TermXAgentClient(
                                 fullAccumulatedReasoning = fullAccumulatedReasoning,
                                 fullAccumulatedContent = fullAccumulatedContent,
                                 toolCallsDetected = toolCallsDetected,
-                                onChunk = onChunk
+                                onChunk = stepChunkCallback
                             )
                         } else {
-                            // 模式 2: 流式请求 (优先 SSE，若首行是整包 JSON 则自适应解析)
+                            // 模式 2: 流式请求 (优先 SSE，若首行不是标准 SSE 前缀则按整包 JSON/纯文本自适应解析)
                             var firstLine: String? = null
                             while (true) {
+                                coroutineContext.ensureActive()
+                                if (cancelled.get()) return
                                 val line = reader.readLine() ?: break
                                 if (line.isNotBlank()) {
                                     firstLine = line.trim()
@@ -597,8 +1025,13 @@ class TermXAgentClient(
                             }
 
                             if (firstLine != null) {
-                                if (firstLine.startsWith("{") || (!firstLine.startsWith("data:") && !firstLine.startsWith(":"))) {
-                                    // 服务端在 stream:true 下直接回送了整包 JSON (部分反代网关行为)
+                                val isStandardSse = firstLine.startsWith("data:") ||
+                                    firstLine.startsWith("event:") ||
+                                    firstLine.startsWith("id:") ||
+                                    firstLine.startsWith("retry:") ||
+                                    firstLine.startsWith(":")
+                                if (firstLine.startsWith("{") || !isStandardSse) {
+                                    // 服务端在 stream:true 下直接回送了整包 JSON 或纯文本 (部分反代网关行为)
                                     val remainingText = reader.use { it.readText() }
                                     val fullJsonStr = firstLine + "\n" + remainingText
                                     lastRawSnippet = fullJsonStr.take(2000)
@@ -609,7 +1042,7 @@ class TermXAgentClient(
                                         fullAccumulatedReasoning = fullAccumulatedReasoning,
                                         fullAccumulatedContent = fullAccumulatedContent,
                                         toolCallsDetected = toolCallsDetected,
-                                        onChunk = onChunk
+                                        onChunk = stepChunkCallback
                                     )
                                 } else {
                                     // 标准 SSE 逐行流式解析
@@ -619,6 +1052,8 @@ class TermXAgentClient(
 
                                     try {
                                         while (currentLine != null) {
+                                            coroutineContext.ensureActive()
+                                            if (cancelled.get()) break
                                             val trimmed = currentLine.trim()
                                             if (rawSnippetBuilder.length < 2000) {
                                                 rawSnippetBuilder.append(trimmed).append("\n")
@@ -637,7 +1072,7 @@ class TermXAgentClient(
                                                         fullAccumulatedContent = fullAccumulatedContent,
                                                         toolCallMap = toolCallMap,
                                                         toolCallsDetected = toolCallsDetected,
-                                                        onChunk = onChunk
+                                                        onChunk = stepChunkCallback
                                                     )
                                                 }
                                             }
@@ -652,18 +1087,27 @@ class TermXAgentClient(
                             }
                         }
 
-                        attemptSucceeded = true
                         break
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
-                        conn?.disconnect()
-                        if (attempt < 2 && currentStepContent.isBlank() && toolCallsDetected.isEmpty()) {
+                        activeConnRef.compareAndSet(conn, null)
+                        if (attempt < 2 && !cancelled.get() && currentStepContent.isBlank() && toolCallsDetected.isEmpty()) {
                             onToolAction("网络通信波动，正在进行第 $attempt 次自动重试...")
                             kotlinx.coroutines.delay(800L)
                         } else {
                             break
                         }
                     } finally {
-                        conn?.disconnect()
+                        activeConnRef.compareAndSet(conn, null)
+                        val c = conn
+                        if (c != null) {
+                            disconnectScope.launch {
+                                try {
+                                    c.disconnect()
+                                } catch (_: Throwable) {}
+                            }
+                        }
                     }
                 }
 
@@ -690,8 +1134,8 @@ class TermXAgentClient(
 
                 // 核心自愈判断：是否拿到了任何有效数据 (必须使用 isNotBlank 严格过滤纯空白字符)
                 val hasValidOutput = currentStepContent.isNotBlank() ||
-                        currentStepReasoning.isNotBlank() ||
-                        toolCallsDetected.isNotEmpty()
+                    currentStepReasoning.isNotBlank() ||
+                    toolCallsDetected.isNotEmpty()
 
                 if (hasValidOutput) {
                     stepSucceeded = true
@@ -716,11 +1160,14 @@ class TermXAgentClient(
                 }
             }
 
+            coroutineContext.ensureActive()
+            if (cancelled.get()) return
+
             if (!stepSucceeded) {
                 if (executedToolRecords.isNotEmpty()) {
                     val fallbackReport = buildExecutedToolsReport(executedToolRecords, activeHost?.label ?: "目标服务器")
                     onComplete(fallbackReport, fullAccumulatedReasoning.toString())
-                    return@withContext
+                    return
                 }
                 val sampleSnippet = lastRawSnippet.trim().take(2000)
                 val rawSampleText = when {
@@ -729,22 +1176,23 @@ class TermXAgentClient(
                 }
                 val failMsg = "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$rawSampleText\n\n💡 排查建议：\n1. 若使用 CLIProxyAPI，请检查其控制台日志是否提示上游 CLI (如 Claude/Gemini/Codex) 登录失效、限流或命令超时；\n2. 检查设置中的模型名称是否与后端代理配置一致；\n3. 检查 API 额度与网络连接状态。"
                 onError(failMsg)
-                return@withContext
+                return
             }
 
             // 3. 终答判定 (Final Answer)
             if (toolCallsDetected.isEmpty() || isFinalStep) {
                 finalAnswerContent = currentStepContent
                 onToolAction("")
-                val rawAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
+                val rawAccumulated = if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()
+                val rawAnswer = stripTextualToolBlocks(rawAccumulated).trim()
                 val safeAnswer = if (rawAnswer.isNotBlank() && rawAnswer != "null") {
                     rawAnswer
-                } else if (fullAccumulatedReasoning.isNotBlank()) {
-                    fullAccumulatedReasoning.toString().trim()
                 } else if (executedToolRecords.isNotEmpty()) {
                     // 🌟 核心突破：Observation-First 自愈兜底！
                     // 若模型在多步执行中未给出最终总结文字，但此前工具已成功在服务器上执行，优先组织呈现真实运维排障报告！
                     buildExecutedToolsReport(executedToolRecords, activeHost?.label ?: "目标服务器")
+                } else if (fullAccumulatedReasoning.isNotBlank()) {
+                    fullAccumulatedReasoning.toString().trim()
                 } else {
                     val sampleSnippet = lastRawSnippet.trim().take(2000)
                     val diagDetail = if (sampleSnippet.isNotBlank()) {
@@ -755,13 +1203,25 @@ class TermXAgentClient(
                     "⚠️ 大模型服务本次未返回有效回答或工具调用。\n已自动尝试 [原生流式] -> [文本流式] -> [非流式稳定] 三级自愈链路。$diagDetail\n\n💡 建议排查方向：\n1. 检查后端代理 (如 CLIProxyAPI) 日志，确认上游 CLI (如 Claude/Gemini/Codex) 登录认证是否有效、是否发生进程超时或被防火墙拦截；\n2. 检查设置中的模型名称是否与后端代理所支持的模型一致；\n3. 检查 API 额度与主机网络连通性。"
                 }
                 onComplete(safeAnswer, fullAccumulatedReasoning.toString())
-                return@withContext
+                return
+            }
+
+            // 多步工具执行前：剔除本轮累积正文中包含的文本 ReAct 工具协议块，保证用户展示内容整洁
+            val rawStepText = currentStepContent.toString()
+            val strippedStepText = stripTextualToolBlocks(rawStepText)
+            fullAccumulatedContent.setLength(stepStartContentLength)
+            if (strippedStepText.isNotBlank()) {
+                if (stepStartContentLength > 0 && !fullAccumulatedContent.endsWith("\n\n")) {
+                    val sep = if (fullAccumulatedContent.endsWith("\n")) "\n" else "\n\n"
+                    fullAccumulatedContent.append(sep)
+                }
+                fullAccumulatedContent.append(strippedStepText)
             }
 
             // 4. 执行 Action 并获取 Observation
             val assistantMsg = JSONObject().apply {
                 put("role", "assistant")
-                val cleanContent = currentStepContent.toString().trim()
+                val cleanContent = rawStepText.trim()
                 if (cleanContent.isNotEmpty() && cleanContent != "null") {
                     put("content", cleanContent)
                 } else {
@@ -782,8 +1242,10 @@ class TermXAgentClient(
             }
             messagesArray.put(assistantMsg)
 
-            // 依次执行每个工具
+            // 依次执行每个工具 (每次前均检查协程取消状态)
             for (toolObj in toolCallsDetected) {
+                coroutineContext.ensureActive()
+                if (cancelled.get()) return
                 val callId = toolObj.getString("id")
                 val funcObj = toolObj.getJSONObject("function")
                 val funcName = funcObj.getString("name")
@@ -801,6 +1263,9 @@ class TermXAgentClient(
                 onToolAction(statusText)
 
                 val observation = toolRegistry.executeTool(funcName, funcArgs)
+                coroutineContext.ensureActive()
+                if (cancelled.get()) return
+
                 executedToolRecords.add(
                     ExecutedToolRecord(
                         step = step,
@@ -826,8 +1291,11 @@ class TermXAgentClient(
             }
         }
 
+        coroutineContext.ensureActive()
+        if (cancelled.get()) return
         onToolAction("")
-        val exitAnswer = (if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()).trim()
+        val rawExit = if (fullAccumulatedContent.isNotBlank()) fullAccumulatedContent.toString() else finalAnswerContent.toString()
+        val exitAnswer = stripTextualToolBlocks(rawExit).trim()
         val safeExitAnswer = if (exitAnswer.isNotBlank() && exitAnswer != "null") {
             exitAnswer
         } else if (executedToolRecords.isNotEmpty()) {
@@ -944,173 +1412,24 @@ class TermXAgentClient(
                 }
 
                 if (extractedContent.isNotBlank() && extractedContent != "null") {
+                    onChunk(extractedContent, false)
                     currentStepContent.append(extractedContent)
                     fullAccumulatedContent.append(extractedContent)
-                    onChunk(extractedContent, false)
                 }
             } else if (!trimmed.startsWith("<")) {
                 // 服务端以纯文本形式直接返回了大模型输出 (部分反代透传 stdout)
+                onChunk(trimmed, false)
                 currentStepContent.append(trimmed)
                 fullAccumulatedContent.append(trimmed)
-                onChunk(trimmed, false)
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Log.e(TAG, "解析整包 JSON 异常: ${e.message}", e)
             if (!trimmed.startsWith("<") && trimmed.isNotBlank()) {
+                onChunk(trimmed, false)
                 currentStepContent.append(trimmed)
                 fullAccumulatedContent.append(trimmed)
-                onChunk(trimmed, false)
             }
-        }
-    }
-
-    /**
-     * 解析 SSE 数据块 payload (兼容 choices[0].delta、choices[0].text 与顶层字段)
-     */
-    private fun parseSseChunk(
-        payload: String,
-        currentStepReasoning: StringBuilder,
-        currentStepContent: StringBuilder,
-        fullAccumulatedReasoning: StringBuilder,
-        fullAccumulatedContent: StringBuilder,
-        toolCallMap: MutableMap<Int, Triple<StringBuilder, StringBuilder, StringBuilder>>,
-        toolCallsDetected: MutableList<JSONObject>,
-        onChunk: (delta: String, isThinking: Boolean) -> Unit
-    ) {
-        try {
-            val json = JSONObject(payload)
-            if (json.has("error")) {
-                val errObj = json.optJSONObject("error")
-                val errMsg = errObj?.optString("message", "") ?: json.optString("error", "流式通信错误")
-                Log.w(TAG, "SSE chunk 包含业务错误: $errMsg")
-                return
-            }
-
-            val choices = json.optJSONArray("choices")
-            if (choices != null && choices.length() > 0) {
-                val choice = choices.getJSONObject(0)
-                val delta = choice.optJSONObject("delta")
-                val message = choice.optJSONObject("message")
-
-                // 1. 思考链增量
-                val reasoningDelta = when {
-                    delta != null -> extractContentText(delta, "reasoning_content")
-                        .ifEmpty { extractContentText(delta, "reasoning") }
-                        .ifEmpty { extractContentText(delta, "thought") }
-                    message != null -> extractContentText(message, "reasoning_content")
-                        .ifEmpty { extractContentText(message, "reasoning") }
-                        .ifEmpty { extractContentText(message, "thought") }
-                    else -> extractContentText(choice, "reasoning_content")
-                        .ifEmpty { extractContentText(choice, "reasoning") }
-                }
-
-                if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
-                    currentStepReasoning.append(reasoningDelta)
-                    fullAccumulatedReasoning.append(reasoningDelta)
-                    onChunk(reasoningDelta, true)
-                }
-
-                // 2. 正文打字机增量
-                val contentDelta = when {
-                    delta != null -> extractContentText(delta, "content")
-                        .ifEmpty { extractContentText(delta, "text") }
-                    message != null -> extractContentText(message, "content")
-                        .ifEmpty { extractContentText(message, "text") }
-                    else -> extractContentText(choice, "text")
-                        .ifEmpty { extractContentText(choice, "content") }
-                }
-
-                if (contentDelta.isNotEmpty() && contentDelta != "null") {
-                    currentStepContent.append(contentDelta)
-                    fullAccumulatedContent.append(contentDelta)
-                    onChunk(contentDelta, false)
-                }
-
-                // 3. 工具调用增量 (兼容 tool_calls 列表与单数 function_call)
-                val toolsArr = delta?.optJSONArray("tool_calls")
-                    ?: message?.optJSONArray("tool_calls")
-                    ?: choice.optJSONArray("tool_calls")
-
-                if (toolsArr != null) {
-                    for (i in 0 until toolsArr.length()) {
-                        val t = toolsArr.getJSONObject(i)
-                        val idx = if (t.has("index")) t.optInt("index", i) else i
-                        val id = if (!t.isNull("id")) t.optString("id", "").trim() else ""
-                        val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
-                        val name = resolveToolName(func, t, id)
-                        val argsPart = extractToolArgumentsString(func, t)
-
-                        val triple = toolCallMap.getOrPut(idx) {
-                            Triple(StringBuilder(), StringBuilder(), StringBuilder())
-                        }
-                        if (id.isNotEmpty() && id != "null" && triple.first.isEmpty()) triple.first.append(id)
-                        if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
-                        if (argsPart.isNotEmpty()) {
-                            val currentArgs = triple.third.toString().trim()
-                            val isIncomingCompleteJson = argsPart.trim().startsWith("{") && argsPart.trim().endsWith("}")
-                            val isCurrentCompleteJson = currentArgs.startsWith("{") && currentArgs.endsWith("}")
-                            if (isIncomingCompleteJson && isCurrentCompleteJson) {
-                                triple.third.setLength(0)
-                                triple.third.append(argsPart.trim())
-                            } else {
-                                triple.third.append(argsPart)
-                            }
-                        }
-                    }
-                } else {
-                    val singleFunc = delta?.optJSONObject("function_call")
-                        ?: message?.optJSONObject("function_call")
-                        ?: choice.optJSONObject("function_call")
-                    if (singleFunc != null) {
-                        val name = resolveToolName(singleFunc, null, "")
-                        val argsPart = extractToolArgumentsString(singleFunc, null)
-                        val triple = toolCallMap.getOrPut(0) {
-                            Triple(StringBuilder(), StringBuilder(), StringBuilder())
-                        }
-                        if (name.isNotEmpty() && triple.second.isEmpty()) triple.second.append(name)
-                        if (argsPart.isNotEmpty()) triple.third.append(argsPart)
-                    }
-                }
-            } else {
-                // 顶层提取 (兼容特殊 SSE 代理)
-                val topReasoning = extractContentText(json, "reasoning_content")
-                    .ifEmpty { extractContentText(json, "reasoning") }
-                    .ifEmpty { extractContentText(json, "thought") }
-                if (topReasoning.isNotEmpty() && topReasoning != "null") {
-                    currentStepReasoning.append(topReasoning)
-                    fullAccumulatedReasoning.append(topReasoning)
-                    onChunk(topReasoning, true)
-                }
-
-                val topContent = extractContentText(json, "content")
-                    .ifEmpty { extractContentText(json, "text") }
-                    .ifEmpty { extractContentText(json, "response") }
-                if (topContent.isNotEmpty() && topContent != "null") {
-                    currentStepContent.append(topContent)
-                    fullAccumulatedContent.append(topContent)
-                    onChunk(topContent, false)
-                }
-
-                val topTools = json.optJSONArray("tool_calls")
-                if (topTools != null) {
-                    for (i in 0 until topTools.length()) {
-                        val norm = normalizeToolCall(topTools.getJSONObject(i))
-                        if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
-                            toolCallsDetected.add(norm)
-                        }
-                    }
-                } else {
-                    val topSingleFunc = json.optJSONObject("function_call")
-                    if (topSingleFunc != null) {
-                        val norm = normalizeToolCall(topSingleFunc)
-                        if (norm.optJSONObject("function")?.optString("name")?.isNotEmpty() == true) {
-                            toolCallsDetected.add(norm)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "解析 SSE payload 块异常: ${e.message}")
         }
     }
 
@@ -1125,95 +1444,6 @@ class TermXAgentClient(
                 lower.contains("unrecognized field") ||
                 lower.contains("not supported") ||
                 lower.contains("schema")
-    }
-
-    /**
-     * 规范化工具调用对象（兼容顶层 name/arguments 与 function 嵌套层级，支持智能 ID 回溯与多态参数提取）
-     */
-    private fun normalizeToolCall(t: JSONObject): JSONObject {
-        val id = if (!t.isNull("id")) t.optString("id", "").trim() else "call_${System.currentTimeMillis()}"
-        val func = t.optJSONObject("function") ?: t.optJSONObject("function_call")
-        val name = resolveToolName(func, t, id)
-        val args = extractToolArgumentsString(func, t)
-
-        return JSONObject().apply {
-            put("id", id)
-            put("type", "function")
-            put("function", JSONObject().apply {
-                put("name", name)
-                put("arguments", if (args.isNotBlank()) args else "{}")
-            })
-        }
-    }
-
-    /**
-     * 安全提取 content 或 reasoning 文本（兼容 String 与 JSONArray 块结构）
-     */
-    private fun extractContentText(jsonObj: JSONObject, key: String): String {
-        if (jsonObj.isNull(key)) return ""
-        val raw = jsonObj.opt(key) ?: return ""
-        return when (raw) {
-            is String -> raw
-            is JSONArray -> {
-                val sb = StringBuilder()
-                for (i in 0 until raw.length()) {
-                    val item = raw.optJSONObject(i)
-                    if (item != null) {
-                        // 结构化内容块：图片类不得 toString() 成文本，否则会把 base64 打进聊天正文
-                        if (isImageContentPart(item)) {
-                            val url = extractImagePartUrl(item)
-                            if (url.isNotBlank()) sb.append("\n\n![图片](").append(url).append(")\n\n")
-                        } else {
-                            val text = item.optString("text", "")
-                            if (text.isNotEmpty()) sb.append(text)
-                        }
-                    } else {
-                        sb.append(raw.optString(i, ""))
-                    }
-                }
-                sb.toString()
-            }
-            is JSONObject -> {
-                // 单个对象同样不得无条件 toString()（其中可能包含整段 base64）
-                if (isImageContentPart(raw)) {
-                    val url = extractImagePartUrl(raw)
-                    if (url.isNotBlank()) "\n\n![图片]($url)\n\n" else ""
-                } else {
-                    raw.optString("text", "")
-                }
-            }
-            else -> raw.toString()
-        }
-    }
-
-    /** 判断一个内容块是不是图片块（兼容 OpenAI / Claude / Gemini / 各家网关的字段命名） */
-    private fun isImageContentPart(part: JSONObject): Boolean {
-        val type = part.optString("type", "").lowercase()
-        if (type.contains("image")) return true
-        if (type == "input_image" || type == "output_image") return true
-        if (part.has("inlineData") || part.has("inline_data") || part.has("image_url")) return true
-        return false
-    }
-
-    /** 从图片块里取出可渲染的地址：data URI 或 http(s) URL；取不到就返回空串 */
-    private fun extractImagePartUrl(part: JSONObject): String {
-        part.optJSONObject("image_url")?.optString("url", "")?.takeIf { it.isNotBlank() }?.let { return it }
-        part.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
-        for (key in arrayOf("inlineData", "inline_data", "source", "image")) {
-            val obj = part.optJSONObject(key) ?: continue
-            obj.optString("url", "").takeIf { it.isNotBlank() }?.let { return it }
-            val data = obj.optString("data", "")
-            if (data.isNotBlank()) {
-                val mime = obj.optString("mimeType", obj.optString("mime_type", "image/png"))
-                return if (data.startsWith("data:")) data else "data:$mime;base64,$data"
-            }
-        }
-        val direct = part.optString("data", "")
-        if (direct.isNotBlank()) {
-            val mime = part.optString("mimeType", part.optString("mime_type", "image/png"))
-            return if (direct.startsWith("data:")) direct else "data:$mime;base64,$direct"
-        }
-        return ""
     }
 
     /**

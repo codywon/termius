@@ -13,6 +13,8 @@ import java.util.Collections
 object QuickCommandManager {
     private const val PREFS_NAME = "teamx_quick_commands_prefs"
     private const val KEY_COMMANDS = "saved_commands"
+    private const val KEY_MIGRATION_VERSION = "quick_commands_migration_version"
+    private const val CURRENT_MIGRATION_VERSION = 1
 
     private val gson = Gson()
     private var prefs: SharedPreferences? = null
@@ -43,28 +45,40 @@ object QuickCommandManager {
     )
 
     fun init(context: Context) {
-        if (prefs == null) {
-            prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            loadCommands()
+        synchronized(this) {
+            if (prefs == null) {
+                prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                loadCommandsLocked()
+            }
         }
     }
 
-    private fun loadCommands() {
+    private fun loadCommandsLocked() {
         val sp = prefs ?: return
         val json = sp.getString(KEY_COMMANDS, null)
+        val migratedVersion = sp.getInt(KEY_MIGRATION_VERSION, 0)
         if (json.isNullOrBlank()) {
             _commands.value = defaultCommands
-            saveToDisk(_commands.value)
-        } else {
-            try {
-                val type = object : TypeToken<List<QuickCommand>>() {}.type
-                val list: List<QuickCommand> = gson.fromJson(json, type)
+            saveToDiskLocked(defaultCommands)
+            sp.edit().putInt(KEY_MIGRATION_VERSION, CURRENT_MIGRATION_VERSION).apply()
+            return
+        }
+        try {
+            val type = object : TypeToken<List<QuickCommand>>() {}.type
+            val list: List<QuickCommand>? = gson.fromJson(json, type)
+            if (list == null) {
+                _commands.value = defaultCommands
+                saveToDiskLocked(defaultCommands)
+                sp.edit().putInt(KEY_MIGRATION_VERSION, CURRENT_MIGRATION_VERSION).apply()
+                return
+            }
+            if (migratedVersion < CURRENT_MIGRATION_VERSION) {
                 if (list.isEmpty()) {
                     _commands.value = defaultCommands
-                    saveToDisk(defaultCommands)
+                    saveToDiskLocked(defaultCommands)
                 } else {
                     val mutableList = list.toMutableList()
-                    // 兼容老数据升级：确保拥有 Ctrl+V 与优化后的 Ctrl+C
+                    // 一次性迁移：仅首次升级时补齐 Ctrl+V 与优化后的 Ctrl+C，后续尊重用户删改
                     val hasCtrlV = mutableList.any { it.id == "ctrl_v" || it.title.equals("Ctrl+V", ignoreCase = true) }
                     if (!hasCtrlV) {
                         val ctrlCIndex = mutableList.indexOfFirst { it.id == "ctrl_c" || it.title.equals("Ctrl+C", ignoreCase = true) }
@@ -79,91 +93,111 @@ object QuickCommandManager {
                         mutableList[ctrlCIndex] = mutableList[ctrlCIndex].copy(subtitle = "中断/复制")
                     }
                     _commands.value = mutableList
-                    saveToDisk(mutableList)
+                    saveToDiskLocked(mutableList)
                 }
-            } catch (e: Exception) {
-                _commands.value = defaultCommands
+                sp.edit().putInt(KEY_MIGRATION_VERSION, CURRENT_MIGRATION_VERSION).apply()
+            } else {
+                _commands.value = list
             }
+        } catch (e: Exception) {
+            _commands.value = defaultCommands
         }
     }
 
-    private fun saveToDisk(list: List<QuickCommand>) {
+    private fun saveToDiskLocked(list: List<QuickCommand>) {
         val sp = prefs ?: return
         val json = gson.toJson(list)
         sp.edit().putString(KEY_COMMANDS, json).apply()
     }
 
     fun addCommand(title: String, subtitle: String, command: String) {
-        val current = _commands.value.toMutableList()
-        val item = QuickCommand(
-            title = title.trim(),
-            subtitle = subtitle.trim(),
-            command = command,
-            isCustom = true
-        )
-        current.add(item)
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            val current = _commands.value.toMutableList()
+            val item = QuickCommand(
+                title = title.trim(),
+                subtitle = subtitle.trim(),
+                command = command,
+                isCustom = true
+            )
+            current.add(item)
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun updateCommand(id: String, title: String, subtitle: String, command: String) {
-        val current = _commands.value.toMutableList()
-        val index = current.indexOfFirst { it.id == id }
-        if (index >= 0) {
-            current[index] = current[index].copy(
-                title = title.trim(),
-                subtitle = subtitle.trim(),
-                command = command
-            )
-            _commands.value = current
-            saveToDisk(current)
+        synchronized(this) {
+            val current = _commands.value.toMutableList()
+            val index = current.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                current[index] = current[index].copy(
+                    title = title.trim(),
+                    subtitle = subtitle.trim(),
+                    command = command
+                )
+                _commands.value = current
+                saveToDiskLocked(current)
+            }
         }
     }
 
     fun deleteCommand(id: String) {
-        val current = _commands.value.toMutableList()
-        current.removeAll { it.id == id }
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            val current = _commands.value.toMutableList()
+            current.removeAll { it.id == id }
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun moveUp(index: Int) {
-        if (index <= 0 || index >= _commands.value.size) return
-        val current = _commands.value.toMutableList()
-        Collections.swap(current, index, index - 1)
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            if (index <= 0 || index >= _commands.value.size) return
+            val current = _commands.value.toMutableList()
+            Collections.swap(current, index, index - 1)
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun moveDown(index: Int) {
-        if (index < 0 || index >= _commands.value.size - 1) return
-        val current = _commands.value.toMutableList()
-        Collections.swap(current, index, index + 1)
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            if (index < 0 || index >= _commands.value.size - 1) return
+            val current = _commands.value.toMutableList()
+            Collections.swap(current, index, index + 1)
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun move(fromIndex: Int, toIndex: Int) {
-        if (fromIndex == toIndex) return
-        val current = _commands.value.toMutableList()
-        if (fromIndex !in current.indices || toIndex !in current.indices) return
-        val item = current.removeAt(fromIndex)
-        current.add(toIndex, item)
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            if (fromIndex == toIndex) return
+            val current = _commands.value.toMutableList()
+            if (fromIndex !in current.indices || toIndex !in current.indices) return
+            val item = current.removeAt(fromIndex)
+            current.add(toIndex, item)
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun swap(fromIndex: Int, toIndex: Int) {
-        if (fromIndex == toIndex) return
-        val current = _commands.value.toMutableList()
-        if (fromIndex !in current.indices || toIndex !in current.indices) return
-        Collections.swap(current, fromIndex, toIndex)
-        _commands.value = current
-        saveToDisk(current)
+        synchronized(this) {
+            if (fromIndex == toIndex) return
+            val current = _commands.value.toMutableList()
+            if (fromIndex !in current.indices || toIndex !in current.indices) return
+            Collections.swap(current, fromIndex, toIndex)
+            _commands.value = current
+            saveToDiskLocked(current)
+        }
     }
 
     fun resetToDefaults() {
-        _commands.value = defaultCommands
-        saveToDisk(defaultCommands)
+        synchronized(this) {
+            _commands.value = defaultCommands
+            saveToDiskLocked(defaultCommands)
+            prefs?.edit()?.putInt(KEY_MIGRATION_VERSION, CURRENT_MIGRATION_VERSION)?.apply()
+        }
     }
 }

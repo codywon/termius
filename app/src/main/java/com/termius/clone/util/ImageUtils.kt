@@ -3,7 +3,10 @@ package com.termius.clone.util
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.ImageDecoder
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.util.Base64
@@ -161,9 +164,10 @@ object ImageUtils {
         quality: Int = 85
     ): String? {
         return try {
-            val bitmap = decodeBoundedBitmap(context, uri, maxDimension)
+            val rawBitmap = decodeBoundedBitmap(context, uri, maxDimension)
                 ?: decodeWithImageDecoder(context, uri, maxDimension)
                 ?: return null
+            val bitmap = flattenAlphaOnWhite(rawBitmap)
 
             val outputStream = ByteArrayOutputStream()
             val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
@@ -178,7 +182,56 @@ object ImageUtils {
         }
     }
 
-    /** BitmapFactory 采样解码管线：先读边界算 inSampleSize，再解码并等比缩放到 maxDimension */
+    /** 若位图包含透明通道，则合成到纯白画布上，避免透明 PNG 转 JPEG 后透明区域变黑块 */
+    private fun flattenAlphaOnWhite(bitmap: Bitmap): Bitmap {
+        if (!bitmap.hasAlpha()) return bitmap
+        val flattened = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(flattened)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        if (!bitmap.isRecycled) bitmap.recycle()
+        return flattened
+    }
+
+    private fun readExifOrientation(context: Context, uri: Uri): Int {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            } ?: ExifInterface.ORIENTATION_NORMAL
+        } catch (_: Throwable) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+    }
+
+    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.setRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.setRotate(-90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
+            else -> return bitmap
+        }
+        val transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (transformed != bitmap && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        return transformed
+    }
+
+    /** BitmapFactory 采样解码管线：先读边界算 inSampleSize，再解码、缩放并应用 EXIF 旋转/镜像矫正 */
     private fun decodeBoundedBitmap(context: Context, uri: Uri, maxDimension: Int): Bitmap? {
         // 1. 仅读取边界获取尺寸
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -191,34 +244,41 @@ object ImageUtils {
 
         // 2. 计算下采样率 inSampleSize 避免解码时内存暴涨
         var sampleSize = 1
-        var maxSide = maxOf(origWidth, origHeight)
-        while (maxSide / 2 >= maxDimension) {
-            sampleSize *= 2
-            maxSide /= 2
+        if (maxDimension > 0) {
+            var maxSide = maxOf(origWidth, origHeight)
+            while (maxSide / 2 >= maxDimension) {
+                sampleSize *= 2
+                maxSide /= 2
+            }
         }
 
-        // 3. 实际解码采样图像 (RGB_565 节省 50% 内存)
+        // 3. 实际解码采样图像（使用 ARGB_8888 保留透明通道以便后续合成白底）
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
-            inPreferredConfig = Bitmap.Config.RGB_565
+            inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         var bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, decodeOptions)
         } ?: return null
 
         // 4. 精确等比缩小至最长边不超过 maxDimension
-        val currentMax = maxOf(bitmap.width, bitmap.height)
-        if (currentMax > maxDimension) {
-            val scale = maxDimension.toFloat() / currentMax
-            val targetW = (bitmap.width * scale).toInt().coerceAtLeast(1)
-            val targetH = (bitmap.height * scale).toInt().coerceAtLeast(1)
-            val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
-            if (scaled != bitmap) {
-                bitmap.recycle()
-                bitmap = scaled
+        if (maxDimension > 0) {
+            val currentMax = maxOf(bitmap.width, bitmap.height)
+            if (currentMax > maxDimension) {
+                val scale = maxDimension.toFloat() / currentMax
+                val targetW = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                val targetH = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+                if (scaled != bitmap) {
+                    bitmap.recycle()
+                    bitmap = scaled
+                }
             }
         }
-        return bitmap
+
+        // 5. EXIF 方向矫正（BitmapFactory 不会自动旋转）
+        val orientation = readExifOrientation(context, uri)
+        return applyExifOrientation(bitmap, orientation)
     }
 
     /** ImageDecoder 兜底解码 (API 28+)：直接按目标尺寸解码，天然支持 HEIF/AVIF 与渐进式 JPEG */

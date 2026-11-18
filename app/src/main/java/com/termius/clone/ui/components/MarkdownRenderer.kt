@@ -84,7 +84,7 @@ import org.commonmark.parser.Parser
  * 大模型友好型 CJK Markdown 规整引擎
  */
 object CjkMarkdownNormalizer {
-    private val CODE_BLOCK_PATTERN = Regex("""(```[\s\S]*?```|`[^`\n]+`)""")
+    private val CODE_BLOCK_PATTERN = Regex("""(```[\s\S]*?```|```[\s\S]*$|`[^`\n]+`)""")
     private val PSEUDO_LIST_REGEX = Regex("""(?m)^([\t ]*)[•◦▪◆]\s+""")
     private val INNER_BOLD_WHITESPACE_ASTERISK = Regex("""\*\*[\t ]*([^*]+?)[\t ]*\*\*""")
     private val INNER_BOLD_WHITESPACE_UNDERSCORE = Regex("""__[\t ]*([^_]+?)[\t ]*__""")
@@ -97,8 +97,8 @@ object CjkMarkdownNormalizer {
 
     // 智能表格换行修复：
     // 大模型输出表格时常将多行粘连为单行，例如 "| 说明 | |:---|:---| | TCP | ... | | TCP | ..."
-    // 将两行相接处的 "| |" 或 "||" 替换为 "|\n|"
-    private val TABLE_STICKY_ROW_REGEX = Regex("""\|\s*\|(?=\s*[:\w\-\./*\$#@~`\u4e00-\u9fa5])""")
+    // 仅针对以 `|` 开头的表格行将两行相接处的 "| |" 或 "||" 替换为 "|\n|"，防止拆断脚本/正文中的逻辑或 `||`
+    private val TABLE_STICKY_ROW_REGEX = Regex("""\|[ \t]*\|(?=[ \t]*[:\w\-\./*\$#@~`\u4e00-\u9fa5])""")
     private val TABLE_SEPARATOR_REGEX = Regex("""(?<!\n)(\|[^\n|]+?\|\s*)(\|(?:[\s:]*-+[\s:]*\|)+)""")
 
     fun normalize(rawMarkdown: String): String {
@@ -129,10 +129,17 @@ object CjkMarkdownNormalizer {
     private fun fixSegment(text: String): String {
         var s = text
 
-        // 1. 自动修复大模型单行粘连表格（在表头、分隔线与数据行间安全插入换行）
+        // 1. 自动修复大模型单行粘连表格（仅对以 `|` 开头的表格行插入换行）
         if (s.contains("|") && s.contains("-")) {
-            s = TABLE_SEPARATOR_REGEX.replace(s) { "${it.groupValues[1]}\n${it.groupValues[2]}" }
-            s = TABLE_STICKY_ROW_REGEX.replace(s, "|\n|")
+            s = s.split("\n").joinToString("\n") { line ->
+                if (line.trimStart().startsWith("|")) {
+                    var fixedLine = TABLE_SEPARATOR_REGEX.replace(line) { "${it.groupValues[1]}\n${it.groupValues[2]}" }
+                    fixedLine = TABLE_STICKY_ROW_REGEX.replace(fixedLine, "|\n|")
+                    fixedLine
+                } else {
+                    line
+                }
+            }
         }
 
         // 2. 规范化伪列表符号
@@ -365,7 +372,8 @@ private fun RenderAstBlockNode(
                 3 -> 14.sp
                 else -> 13.sp
             }
-            val annotated = buildInlineAnnotatedString(node, isUser)
+            val inlineTextColor = if (isUser) Color.White else theme.textPrimary
+            val annotated = buildInlineAnnotatedString(node, isUser, inlineTextColor)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -392,8 +400,9 @@ private fun RenderAstBlockNode(
         }
 
         is Paragraph -> {
+            val inlineTextColor = if (isUser) Color.White else theme.textPrimary
             Text(
-                text = buildInlineAnnotatedString(node, isUser),
+                text = buildInlineAnnotatedString(node, isUser, inlineTextColor),
                 style = TextStyle(
                     fontSize = 13.5.sp,
                     color = if (isUser) Color.White else theme.textPrimary,
@@ -537,63 +546,43 @@ private fun RenderAstBlockNode(
     }
 }
 
-private fun buildInlineAnnotatedString(parentNode: Node, isUser: Boolean): AnnotatedString {
-    val initial = buildAnnotatedString {
-        appendInlineChildren(parentNode, this, isUser)
+private fun buildInlineAnnotatedString(
+    parentNode: Node,
+    isUser: Boolean,
+    textColor: Color = Color.Unspecified
+): AnnotatedString {
+    return buildAnnotatedString {
+        appendInlineChildren(parentNode, this, isUser, textColor)
     }
-    return fixUnrenderedBoldInAnnotatedString(initial)
 }
 
 private val GLOBAL_FALLBACK_BOLD_REGEX = Regex("""\*\*[\t ]*([^*]+?)[\t ]*\*\*""")
 
-private fun fixUnrenderedBoldInAnnotatedString(source: AnnotatedString): AnnotatedString {
-    val rawText = source.text
-    if (!rawText.contains("**")) return source
-    if (!GLOBAL_FALLBACK_BOLD_REGEX.containsMatchIn(rawText)) return source
-
-    return buildAnnotatedString {
-        var cursor = 0
-        GLOBAL_FALLBACK_BOLD_REGEX.findAll(rawText).forEach { match ->
-            val matchStart = match.range.first
-            val matchEnd = match.range.last + 1
-            val innerBoldContent = match.groupValues[1]
-
-            if (matchStart > cursor) {
-                append(source.subSequence(cursor, matchStart))
-            }
-
-            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-            append(innerBoldContent)
-            pop()
-
-            cursor = matchEnd
-        }
-        if (cursor < rawText.length) {
-            append(source.subSequence(cursor, rawText.length))
-        }
-    }
-}
-
-private fun appendInlineChildren(parent: Node, builder: AnnotatedString.Builder, isUser: Boolean) {
+private fun appendInlineChildren(
+    parent: Node,
+    builder: AnnotatedString.Builder,
+    isUser: Boolean,
+    textColor: Color
+) {
     var child = parent.firstChild
     while (child != null) {
         when (child) {
             is MdText -> {
-                appendMdTextWithFallbacks(child.literal, builder, isUser)
+                appendMdTextWithFallbacks(child.literal, builder, isUser, textColor)
             }
             is StrongEmphasis -> {
                 builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                appendInlineChildren(child, builder, isUser)
+                appendInlineChildren(child, builder, isUser, textColor)
                 builder.pop()
             }
             is Emphasis -> {
                 builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                appendInlineChildren(child, builder, isUser)
+                appendInlineChildren(child, builder, isUser, textColor)
                 builder.pop()
             }
             is Strikethrough -> {
                 builder.pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-                appendInlineChildren(child, builder, isUser)
+                appendInlineChildren(child, builder, isUser, textColor)
                 builder.pop()
             }
             is Code -> {
@@ -616,7 +605,7 @@ private fun appendInlineChildren(parent: Node, builder: AnnotatedString.Builder,
                         textDecoration = TextDecoration.Underline
                     )
                 )
-                appendInlineChildren(child, builder, isUser)
+                appendInlineChildren(child, builder, isUser, textColor)
                 builder.pop()
             }
             is Image -> {
@@ -626,7 +615,7 @@ private fun appendInlineChildren(parent: Node, builder: AnnotatedString.Builder,
             }
             is SoftLineBreak -> builder.append(" ")
             is HardLineBreak -> builder.append("\n")
-            else -> appendInlineChildren(child, builder, isUser)
+            else -> appendInlineChildren(child, builder, isUser, textColor)
         }
         child = child.next
     }
@@ -635,10 +624,11 @@ private fun appendInlineChildren(parent: Node, builder: AnnotatedString.Builder,
 private fun appendMdTextWithFallbacks(
     literal: String,
     builder: AnnotatedString.Builder,
-    isUser: Boolean
+    isUser: Boolean,
+    textColor: Color
 ) {
     if (!literal.contains("**")) {
-        LatexMathParser.appendTextWithMath(literal, builder, isUser)
+        LatexMathParser.appendTextWithMath(literal, builder, isUser, textColor)
         return
     }
 
@@ -648,17 +638,17 @@ private fun appendMdTextWithFallbacks(
         val end = match.range.last + 1
         if (start > lastIndex) {
             val plain = literal.substring(lastIndex, start)
-            LatexMathParser.appendTextWithMath(plain, builder, isUser)
+            LatexMathParser.appendTextWithMath(plain, builder, isUser, textColor)
         }
         val boldContent = match.groupValues[1]
         builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-        LatexMathParser.appendTextWithMath(boldContent, builder, isUser)
+        LatexMathParser.appendTextWithMath(boldContent, builder, isUser, textColor)
         builder.pop()
         lastIndex = end
     }
     if (lastIndex < literal.length) {
         val plain = literal.substring(lastIndex)
-        LatexMathParser.appendTextWithMath(plain, builder, isUser)
+        LatexMathParser.appendTextWithMath(plain, builder, isUser, textColor)
     }
 }
 
@@ -683,7 +673,7 @@ private fun AstTableCard(tableNode: TableBlock, isUser: Boolean) {
                         var cellNode = rowNode.firstChild
                         while (cellNode != null) {
                             if (cellNode is TableCell) {
-                                headerCells.add(buildInlineAnnotatedString(cellNode, isUser = false))
+                                headerCells.add(buildInlineAnnotatedString(cellNode, isUser = false, textColor = theme.textPrimary))
                             }
                             cellNode = cellNode.next
                         }
@@ -700,7 +690,7 @@ private fun AstTableCard(tableNode: TableBlock, isUser: Boolean) {
                         var cellNode = rowNode.firstChild
                         while (cellNode != null) {
                             if (cellNode is TableCell) {
-                                rowCells.add(buildInlineAnnotatedString(cellNode, isUser = false))
+                                rowCells.add(buildInlineAnnotatedString(cellNode, isUser = false, textColor = theme.textPrimary))
                             }
                             cellNode = cellNode.next
                         }
