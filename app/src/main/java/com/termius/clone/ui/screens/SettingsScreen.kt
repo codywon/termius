@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.data.local.AppDatabase
 import com.termius.clone.data.model.IdentityEntity
+import com.termius.clone.data.security.KeyVaultManager
+import com.termius.clone.service.SshForegroundService
 import com.termius.clone.ui.components.AppUpdateDialog
 import com.termius.clone.ui.components.UpdateUiState
 import com.termius.clone.ui.theme.*
@@ -36,8 +38,10 @@ import com.termius.clone.util.BatteryOptimizationHelper
 import com.termius.clone.util.LanguageManager
 import com.termius.clone.util.Strings
 import com.termius.clone.util.UpdateCheckResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlin.math.abs
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen() {
@@ -52,7 +56,7 @@ fun SettingsScreen() {
     var updateUiState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
 
-    var sshKeepaliveEnabled by remember { mutableStateOf(true) }
+    val isServiceRunning by SshForegroundService.runningFlow.collectAsState()
     var isIgnoringBattery by remember { mutableStateOf(BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)) }
     var showBatteryGuideDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
@@ -63,12 +67,17 @@ fun SettingsScreen() {
     var aiConfig by remember { mutableStateOf(aiConfigManager.loadConfig()) }
     var showAiSettingsDialog by remember { mutableStateOf(false) }
 
-    // 交互优化：从系统设置或授权弹窗返回时自动刷新电池优化状态
+    // 交互优化：从系统设置或授权弹窗返回时自动刷新电池优化状态与未知应用安装授权状态
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isIgnoringBattery = BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+                val permState = updateUiState as? UpdateUiState.PermissionRequired
+                if (permState != null && AppUpdateManager.canInstallPackages(context)) {
+                    updateUiState = UpdateUiState.ReadyToInstall(permState.apkFile, permState.info)
+                    AppUpdateManager.installApk(context, permState.apkFile)
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -282,7 +291,14 @@ fun SettingsScreen() {
                                             )
                                         }
                                         IconButton(
-                                            onClick = { scope.launch { db.identityDao().deleteIdentity(identity) } },
+                                            onClick = {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        db.hostDao().detachIdentityFromHosts(identity.id)
+                                                        db.identityDao().deleteIdentity(identity)
+                                                    }
+                                                }
+                                            },
                                             modifier = Modifier.size(24.dp)
                                         ) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ObsidianError, modifier = Modifier.size(16.dp))
@@ -298,43 +314,27 @@ fun SettingsScreen() {
                 // ---------------- 3. 连接与保活 (对标 ConnectBot) ----------------
                 SettingsSectionHeader(title = Strings.groupConnection)
 
-                // SSH 心跳保持
-                SettingsItem(
-                    title = Strings.keepalivePing,
-                    subtitle = Strings.keepalivePingDesc,
-                    trailingContent = {
-                        Switch(
-                            checked = sshKeepaliveEnabled,
-                            onCheckedChange = { sshKeepaliveEnabled = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = theme.primary,
-                                checkedTrackColor = theme.primary.copy(alpha = 0.3f)
-                            )
-                        )
-                    }
-                )
-                DividerLine()
-
-                // 后台常驻服务
+                // 后台常驻服务 (实时订阅 SshForegroundService.runningFlow)
+                val serviceBadgeColor = if (isServiceRunning) theme.primary else ObsidianTextMuted
                 SettingsItem(
                     title = Strings.wakeLockStatus,
                     subtitle = Strings.wakeLockStatusDesc,
                     trailingContent = {
                         Surface(
                             shape = RoundedCornerShape(50),
-                            color = theme.primary.copy(alpha = 0.12f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.primary.copy(alpha = 0.35f))
+                            color = serviceBadgeColor.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, serviceBadgeColor.copy(alpha = 0.35f))
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
-                                Box(modifier = Modifier.size(5.dp).background(theme.primary, CircleShape))
+                                Box(modifier = Modifier.size(5.dp).background(serviceBadgeColor, CircleShape))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = Strings.runningStatus,
+                                    text = if (isServiceRunning) Strings.runningStatus else if (Strings.isZh) "未运行" else "Stopped",
                                     fontSize = 11.sp,
-                                    color = theme.primary,
+                                    color = serviceBadgeColor,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -652,9 +652,16 @@ fun SettingsScreen() {
                 AppUpdateManager.installApk(context, file)
             } else {
                 val currentInfo = (updateUiState as? UpdateUiState.ReadyToInstall)?.info
+                    ?: (updateUiState as? UpdateUiState.PermissionRequired)?.info
                 if (currentInfo != null) {
                     updateUiState = UpdateUiState.PermissionRequired(file, currentInfo)
                 }
+            }
+        },
+        onCheckPermissionAndInstall = { file, info ->
+            if (AppUpdateManager.canInstallPackages(context)) {
+                updateUiState = UpdateUiState.ReadyToInstall(file, info)
+                AppUpdateManager.installApk(context, file)
             }
         },
         onIgnore = { tagName ->
@@ -672,9 +679,26 @@ fun SettingsScreen() {
             onDismiss = { showAddIdentityDialog = false },
             onSave = { identity ->
                 scope.launch {
-                    db.identityDao().insertIdentity(identity)
-                    showAddIdentityDialog = false
-                    Toast.makeText(context, if (Strings.isZh) "凭据已保存" else "Saved", Toast.LENGTH_SHORT).show()
+                    try {
+                        val encryptedIdentity = withContext(Dispatchers.IO) {
+                            identity.copy(
+                                password = KeyVaultManager.encrypt(identity.password),
+                                privateKey = KeyVaultManager.encrypt(identity.privateKey),
+                                passphrase = KeyVaultManager.encrypt(identity.passphrase)
+                            )
+                        }
+                        db.identityDao().insertIdentity(encryptedIdentity)
+                        showAddIdentityDialog = false
+                        Toast.makeText(context, if (Strings.isZh) "凭据已保存" else "Saved", Toast.LENGTH_SHORT).show()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Toast.makeText(
+                            context,
+                            if (Strings.isZh) "凭据加密保存失败: ${e.message}" else "Save failed: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             }
         )
@@ -842,6 +866,7 @@ private fun AddIdentityDialog(
     var passphrase by remember { mutableStateOf("") }
     var authMode by remember { mutableStateOf(0) }
     val theme = LocalAppTheme.current
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -912,23 +937,41 @@ private fun AddIdentityDialog(
             Button(
                 onClick = {
                     if (name.isNotBlank()) {
-                        val keyType = if (privateKey.contains("ED25519", ignoreCase = true)) "ED25519"
-                        else if (privateKey.contains("RSA", ignoreCase = true)) "RSA"
-                        else if (privateKey.isNotBlank()) "OPENSSH" else "NONE"
+                        val isKeyMode = authMode == 1
+                        val cleanKey = if (isKeyMode) privateKey.trim() else ""
+                        if (isKeyMode && cleanKey.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                if (Strings.isZh) "请粘贴 SSH 私钥内容" else "Please provide SSH private key",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@Button
+                        }
+                        val cleanPassword = if (!isKeyMode) password else ""
+                        val cleanPassphrase = if (isKeyMode) passphrase else ""
+                        val keyType = if (!isKeyMode) {
+                            "PASSWORD"
+                        } else if (cleanKey.contains("ED25519", ignoreCase = true)) {
+                            "ED25519"
+                        } else if (cleanKey.contains("RSA", ignoreCase = true)) {
+                            "RSA"
+                        } else {
+                            "OPENSSH"
+                        }
 
                         onSave(
                             IdentityEntity(
                                 name = name.trim(),
                                 username = username.trim().ifBlank { "root" },
-                                password = password,
-                                privateKey = privateKey.trim(),
-                                passphrase = passphrase,
+                                password = cleanPassword,
+                                privateKey = cleanKey,
+                                passphrase = cleanPassphrase,
                                 keyType = keyType
                             )
                         )
                     }
                 },
-                enabled = name.isNotBlank(),
+                enabled = name.isNotBlank() && (authMode == 0 || privateKey.isNotBlank()),
                 colors = ButtonDefaults.buttonColors(containerColor = theme.primary, contentColor = ObsidianOnPrimary)
             ) {
                 Text(Strings.save)

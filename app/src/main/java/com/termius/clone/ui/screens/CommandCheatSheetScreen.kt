@@ -34,7 +34,9 @@ data class BuiltInCommand(
     val title: String,
     val category: String,
     val command: String,
-    val description: String
+    val description: String,
+    val stableKey: String = "",
+    val snippetEntity: SnippetEntity? = null
 )
 
 private val BUILTIN_COMMANDS = listOf(
@@ -104,15 +106,20 @@ fun CommandCheatSheetScreen() {
 
     // 组合内置命令与用户自定义命令
     val allItems = remember(userSnippets) {
+        val builtInItems = BUILTIN_COMMANDS.mapIndexed { index, cmd ->
+            cmd.copy(stableKey = "builtin_$index")
+        }
         val userCommands = userSnippets.map {
             BuiltInCommand(
                 title = it.title,
                 category = "我的收藏",
                 command = it.command,
-                description = it.description.ifBlank { "用户自定义运维指令" }
+                description = it.description.ifBlank { "用户自定义运维指令" },
+                stableKey = "snippet_${it.id}",
+                snippetEntity = it
             )
         }
-        BUILTIN_COMMANDS + userCommands
+        builtInItems + userCommands
     }
 
     val filteredList = remember(allItems, searchQuery, selectedCategory) {
@@ -229,12 +236,24 @@ fun CommandCheatSheetScreen() {
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredList, key = { it.title + it.command }) { cmd ->
+                    items(filteredList, key = { it.stableKey }) { cmd ->
                         CommandCard(
                             command = cmd,
                             onCopy = {
                                 clipboardManager.setText(AnnotatedString(cmd.command))
                                 Toast.makeText(context, "${Strings.copySuccess}: ${cmd.command}", Toast.LENGTH_SHORT).show()
+                            },
+                            onDelete = cmd.snippetEntity?.let { entity ->
+                                {
+                                    scope.launch {
+                                        db.snippetDao().deleteSnippet(entity)
+                                        Toast.makeText(
+                                            context,
+                                            if (Strings.isZh) "已删除自定义指令" else "Deleted snippet",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
                             }
                         )
                     }
@@ -267,7 +286,8 @@ fun CommandCheatSheetScreen() {
 @Composable
 private fun CommandCard(
     command: BuiltInCommand,
-    onCopy: () -> Unit
+    onCopy: () -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     val theme = LocalAppTheme.current
 
@@ -306,6 +326,20 @@ private fun CommandCard(
                     color = ObsidianTextPrimary,
                     modifier = Modifier.weight(1f)
                 )
+
+                if (onDelete != null) {
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = Strings.delete,
+                            tint = ObsidianError,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
 
                 IconButton(
                     onClick = onCopy,

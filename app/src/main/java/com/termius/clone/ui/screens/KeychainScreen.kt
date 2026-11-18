@@ -1,5 +1,6 @@
 package com.termius.clone.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -25,8 +26,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.data.local.AppDatabase
 import com.termius.clone.data.model.IdentityEntity
+import com.termius.clone.data.security.KeyVaultManager
 import com.termius.clone.ui.theme.*
+import com.termius.clone.util.Strings
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,7 +138,12 @@ fun KeychainScreen() {
 
                             IconButton(
                                 onClick = {
-                                    scope.launch { db.identityDao().deleteIdentity(identity) }
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            db.hostDao().detachIdentityFromHosts(identity.id)
+                                            db.identityDao().deleteIdentity(identity)
+                                        }
+                                    }
                                 }
                             ) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ObsidianError)
@@ -225,18 +236,49 @@ fun KeychainScreen() {
             confirmButton = {
                 Button(
                     onClick = {
+                        val cleanKey = if (isKeyAuth) privateKey.trim() else ""
+                        if (isKeyAuth && cleanKey.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                if (Strings.isZh) "请提供 SSH 私钥内容" else "Please provide SSH private key",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@Button
+                        }
+                        val cleanPassword = if (!isKeyAuth) password else ""
+                        val cleanPassphrase = if (isKeyAuth) passphrase else ""
+                        val finalKeyType = if (!isKeyAuth) {
+                            "PASSWORD"
+                        } else if (cleanKey.contains("ED25519", ignoreCase = true)) {
+                            "ED25519"
+                        } else if (cleanKey.contains("RSA", ignoreCase = true)) {
+                            "RSA"
+                        } else {
+                            "OPENSSH"
+                        }
                         scope.launch {
-                            db.identityDao().insertIdentity(
-                                IdentityEntity(
-                                    name = name.ifBlank { "Identity #${System.currentTimeMillis() % 1000}" },
-                                    username = username,
-                                    password = if (!isKeyAuth) password else "",
-                                    privateKey = if (isKeyAuth) privateKey else "",
-                                    passphrase = passphrase,
-                                    keyType = if (isKeyAuth) "RSA/ED25519" else "PASSWORD"
-                                )
-                            )
-                            showAddDialog = false
+                            try {
+                                val encryptedIdentity = withContext(Dispatchers.IO) {
+                                    IdentityEntity(
+                                        name = name.trim().ifBlank { "Identity #${System.currentTimeMillis() % 1000}" },
+                                        username = username.trim().ifBlank { "ubuntu" },
+                                        password = KeyVaultManager.encrypt(cleanPassword),
+                                        privateKey = KeyVaultManager.encrypt(cleanKey),
+                                        passphrase = KeyVaultManager.encrypt(cleanPassphrase),
+                                        keyType = finalKeyType
+                                    )
+                                }
+                                db.identityDao().insertIdentity(encryptedIdentity)
+                                showAddDialog = false
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    if (Strings.isZh) "保存凭据失败: ${e.message}" else "Save failed: ${e.message}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ObsidianPrimary),

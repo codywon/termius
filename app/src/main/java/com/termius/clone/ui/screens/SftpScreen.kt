@@ -1,7 +1,6 @@
 package com.termius.clone.ui.screens
 
 import android.net.Uri
-import android.os.Environment
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -37,12 +36,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.termius.clone.data.local.AppDatabase
+import com.termius.clone.data.model.AuthType
 import com.termius.clone.data.model.HostEntity
 import com.termius.clone.sftp.SftpClientManager
 import com.termius.clone.sftp.SftpItem
 import com.termius.clone.ui.theme.*
 import com.termius.clone.util.Strings
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -60,7 +61,6 @@ fun SftpScreen(
     val db = remember { AppDatabase.getDatabase(context) }
 
     val hosts by db.hostDao().getAllHosts().collectAsState(initial = emptyList())
-    val identities by db.identityDao().getAllIdentities().collectAsState(initial = emptyList())
 
     var selectedHost by remember { mutableStateOf(initialHost) }
     var currentPath by remember { mutableStateOf("/") }
@@ -87,9 +87,22 @@ fun SftpScreen(
     var createFileName by remember { mutableStateOf("") }
 
     var showHeaderMenu by remember { mutableStateOf(false) }
+    var pendingDownloadItem by remember { mutableStateOf<SftpItem?>(null) }
 
     val sftpManager = remember { SftpClientManager() }
     var currentLoadJob by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(sftpManager) {
+        onDispose {
+            currentLoadJob?.cancel()
+            currentLoadJob = null
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    sftpManager.disconnect()
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
     fun loadDir(path: String, forceRefresh: Boolean = false) {
         // 1. 取消上一次正在执行的加载任务，彻底消除并发通道争抢
@@ -122,7 +135,7 @@ fun SftpScreen(
                 val list = sftpManager.listDirectory(path, forceRefresh = forceRefresh)
                 items = list
             } catch (e: CancellationException) {
-                // 协程主动切换取消，绝不提示任何异常
+                throw e
             } catch (e: Exception) {
                 if (items.isEmpty()) {
                     Toast.makeText(context, if (Strings.isZh) "加载目录失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -143,17 +156,24 @@ fun SftpScreen(
             scope.launch {
                 isLoading = true
                 try {
-                    val fileName = queryFileName(context, uri) ?: "upload_${System.currentTimeMillis()}"
+                    val rawName = queryFileName(context, uri) ?: "upload_${System.currentTimeMillis()}"
+                    val fileName = rawName
+                        .substringAfterLast('/')
+                        .substringAfterLast('\\')
+                        .trim()
+                        .let { if (it.isEmpty() || it == "." || it == "..") "upload_${System.currentTimeMillis()}" else it }
                     val targetRemotePath = if (currentPath.endsWith("/")) "$currentPath$fileName" else "$currentPath/$fileName"
 
                     withContext(Dispatchers.IO) {
-                        val inputStream = context.contentResolver.openInputStream(uri)
-                            ?: throw IllegalStateException(if (Strings.isZh) "无法读取所选文件" else "Cannot open selected file")
-                        val tempFile = File(context.cacheDir, fileName)
-                        tempFile.outputStream().use { out ->
-                            inputStream.copyTo(out)
-                        }
+                        val tempFile = File.createTempFile("sftp_upload_", ".tmp", context.cacheDir)
                         try {
+                            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                                tempFile.outputStream().use { out ->
+                                    inputStream.copyTo(out)
+                                }
+                            } ?: throw IllegalStateException(
+                                if (Strings.isZh) "无法读取所选文件" else "Cannot open selected file"
+                            )
                             sftpManager.uploadFile(tempFile, targetRemotePath)
                         } finally {
                             tempFile.delete()
@@ -161,6 +181,8 @@ fun SftpScreen(
                     }
                     Toast.makeText(context, if (Strings.isZh) "文件上传成功: $fileName" else "Uploaded: $fileName", Toast.LENGTH_SHORT).show()
                     loadDir(currentPath, forceRefresh = true)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Toast.makeText(context, if (Strings.isZh) "上传失败: ${e.message}" else "Upload failed: ${e.message}", Toast.LENGTH_LONG).show()
                 } finally {
@@ -170,15 +192,52 @@ fun SftpScreen(
         }
     }
 
+    val downloadFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*")
+    ) { uri: Uri? ->
+        val targetItem = pendingDownloadItem
+        pendingDownloadItem = null
+        if (uri != null && targetItem != null) {
+            scope.launch {
+                isLoading = true
+                try {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            sftpManager.downloadToStream(targetItem.path, out)
+                        } ?: throw IllegalStateException(
+                            if (Strings.isZh) "无法创建目标文件流" else "Cannot open output stream"
+                        )
+                    }
+                    Toast.makeText(context, "${targetItem.name}\n${Strings.downloadSuccess}", Toast.LENGTH_LONG).show()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Toast.makeText(context, if (Strings.isZh) "下载失败: ${e.message}" else "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                } finally {
+                    isLoading = false
+                }
+            }
+        }
+    }
+
     fun connectToHost(host: HostEntity) {
+        currentLoadJob?.cancel()
         scope.launch {
             isLoading = true
             try {
-                val identity = identities.find { it.id == host.identityId }
+                val identity = if (host.authType == AuthType.IDENTITY_REF && host.identityId != null) {
+                    withContext(Dispatchers.IO) {
+                        db.identityDao().getIdentityById(host.identityId)
+                    }
+                } else {
+                    null
+                }
                 sftpManager.connect(host, identity)
                 isConnected = true
                 selectedHost = host
                 loadDir("/")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Toast.makeText(context, if (Strings.isZh) "SFTP 连接失败: ${e.message}" else "Connection failed: ${e.message}", Toast.LENGTH_LONG).show()
                 isConnected = false
@@ -275,6 +334,8 @@ fun SftpScreen(
                                         Toast.makeText(context, Strings.saveSuccess, Toast.LENGTH_SHORT).show()
                                         editingItem = null
                                         loadDir(currentPath, forceRefresh = true)
+                                    } catch (e: CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         Toast.makeText(context, if (Strings.isZh) "保存失败: ${e.message}" else "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
@@ -325,9 +386,7 @@ fun SftpScreen(
                 )
             }
         }
-        return
-    }
-
+    } else {
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -662,6 +721,8 @@ fun SftpScreen(
                                                         try {
                                                             editingContent = sftpManager.readTextFile(item.path)
                                                             editingItem = item
+                                                        } catch (e: CancellationException) {
+                                                            throw e
                                                         } catch (e: Exception) {
                                                             Toast.makeText(context, if (Strings.isZh) "无法读取该文件: ${e.message}" else "Cannot read file: ${e.message}", Toast.LENGTH_SHORT).show()
                                                         } finally {
@@ -740,6 +801,7 @@ fun SftpScreen(
             }
         }
     }
+    }
 
     // 单项文件操作弹窗 (对标 ConnectBot 菜单样式)
     showActionMenuFor?.let { item ->
@@ -772,6 +834,8 @@ fun SftpScreen(
                                     try {
                                         editingContent = sftpManager.readTextFile(item.path)
                                         editingItem = item
+                                    } catch (e: CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         Toast.makeText(context, if (Strings.isZh) "无法读取文件: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                     } finally {
@@ -786,21 +850,8 @@ fun SftpScreen(
                             leadingContent = { Icon(Icons.Default.Download, contentDescription = null, tint = ObsidianSecondary) },
                             modifier = Modifier.clickable {
                                 showActionMenuFor = null
-                                scope.launch {
-                                    isLoading = true
-                                    try {
-                                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                            ?: context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                                            ?: context.filesDir
-                                        val localFile = File(downloadsDir, item.name)
-                                        sftpManager.downloadFile(item.path, localFile)
-                                        Toast.makeText(context, "${localFile.name}\n${Strings.downloadSuccess}", Toast.LENGTH_LONG).show()
-                                    } catch (e: Exception) {
-                                        Toast.makeText(context, if (Strings.isZh) "下载失败: ${e.message}" else "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
+                                pendingDownloadItem = item
+                                downloadFileLauncher.launch(item.name)
                             }
                         )
                     }
@@ -876,6 +927,8 @@ fun SftpScreen(
                                     Toast.makeText(context, if (Strings.isZh) "重命名成功" else "Renamed", Toast.LENGTH_SHORT).show()
                                     renamingItem = null
                                     loadDir(currentPath, forceRefresh = true)
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "重命名失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -930,6 +983,8 @@ fun SftpScreen(
                                 Toast.makeText(context, if (Strings.isZh) "已删除: ${targetItem.name}" else "Deleted: ${targetItem.name}", Toast.LENGTH_SHORT).show()
                                 deletingItem = null
                                 loadDir(currentPath, forceRefresh = true)
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 Toast.makeText(context, if (Strings.isZh) "删除失败: ${e.message}" else "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             } finally {
@@ -982,6 +1037,8 @@ fun SftpScreen(
                                     Toast.makeText(context, if (Strings.isZh) "文件夹创建成功" else "Folder created", Toast.LENGTH_SHORT).show()
                                     showCreateFolderDialog = false
                                     loadDir(currentPath, forceRefresh = true)
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "创建文件夹失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -1038,6 +1095,8 @@ fun SftpScreen(
                                     Toast.makeText(context, if (Strings.isZh) "文件创建成功" else "File created", Toast.LENGTH_SHORT).show()
                                     showCreateFileDialog = false
                                     loadDir(currentPath, forceRefresh = true)
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     Toast.makeText(context, if (Strings.isZh) "创建文件失败: ${e.message}" else "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                                 } finally {

@@ -61,7 +61,8 @@ fun AppUpdateDialog(
     onStartDownload: (UpdateInfo) -> Unit,
     onInstall: (File) -> Unit,
     onIgnore: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onCheckPermissionAndInstall: ((File, UpdateInfo) -> Unit)? = null
 ) {
     if (state is UpdateUiState.Idle || state is UpdateUiState.Checking) {
         return
@@ -417,6 +418,34 @@ fun AppUpdateDialog(
                             Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("前往系统设置授权", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                if (AppUpdateManager.canInstallPackages(context)) {
+                                    if (onCheckPermissionAndInstall != null) {
+                                        onCheckPermissionAndInstall(state.apkFile, state.info)
+                                    } else {
+                                        onInstall(state.apkFile)
+                                    }
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "尚未检测到安装权限，请先在系统设置中开启",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.primary),
+                            border = BorderStroke(1.dp, theme.primary.copy(alpha = 0.5f))
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("已授权，立即安装", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
 
