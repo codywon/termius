@@ -39,16 +39,49 @@ object ContextCompactor {
         for (i in 0 until messages.length()) {
             val item = messages.optJSONObject(i) ?: continue
             val role = item.optString("role", "")
-            val content = item.optString("content", "")
             val toolCalls = item.optJSONArray("tool_calls")
+            val reasoning = if (!item.isNull("reasoning_content")) item.optString("reasoning_content", "") else ""
             total += 4
             total += estimateTokens(role)
-            total += estimateTokens(content)
+            total += estimateContentTokens(item.opt("content"))
+            if (reasoning.isNotEmpty()) {
+                total += estimateTokens(reasoning)
+            }
             if (toolCalls != null) {
                 total += estimateTokens(toolCalls.toString())
             }
         }
         return total
+    }
+
+    private fun estimateContentTokens(rawContent: Any?): Int {
+        if (rawContent == null || rawContent == JSONObject.NULL) return 0
+        return when (rawContent) {
+            is String -> estimateTokens(rawContent)
+            is JSONArray -> {
+                var sum = 0
+                for (j in 0 until rawContent.length()) {
+                    val part = rawContent.optJSONObject(j)
+                    if (part != null) {
+                        val type = part.optString("type", "").lowercase()
+                        if (type.contains("image") || part.has("image_url") || part.has("inlineData") || part.has("inline_data")) {
+                            sum += 256
+                        } else {
+                            sum += estimateTokens(part.optString("text", ""))
+                        }
+                    } else {
+                        sum += estimateTokens(rawContent.optString(j, ""))
+                    }
+                }
+                sum
+            }
+            is JSONObject -> {
+                val type = rawContent.optString("type", "").lowercase()
+                if (type.contains("image") || rawContent.has("image_url")) 256
+                else estimateTokens(rawContent.optString("text", ""))
+            }
+            else -> estimateTokens(rawContent.toString())
+        }
     }
 
     fun isOverThreshold(estimatedTokens: Int, config: AiAgentConfig): Boolean {
@@ -76,42 +109,66 @@ object ContextCompactor {
             }
         )
 
-        if (historyList.isEmpty()) {
+        val validHistory = historyList.filter {
+            it.role != "system" && (
+                it.safeContent.isNotBlank() ||
+                    it.safeReasoning.isNotBlank() ||
+                    it.safeImages.isNotEmpty() ||
+                    it.safeFileContextText.isNotBlank()
+                )
+        }
+        if (validHistory.isEmpty()) {
             return messagesJson
         }
 
-        val estimatedHistoryTokens = historyList.sumOf {
-            estimateTokens(it.content) + estimateTokens(it.reasoningContent) + estimateTokens(it.fileContextText) + 10
+        val systemTokens = estimateTokens(systemContent) + 10
+        val estimatedHistoryTokens = validHistory.sumOf {
+            estimateTokens(it.safeContent) +
+                estimateTokens(it.safeReasoning) +
+                estimateTokens(it.safeFileContextText) +
+                (it.safeImages.size * 256) +
+                10
         }
+        val totalEstimatedTokens = systemTokens + estimatedHistoryTokens
 
         val window = config.contextWindow.coerceAtLeast(4096)
         val thresholdLimit = (window * config.compactionThreshold).toInt()
 
-        if (estimatedHistoryTokens < thresholdLimit) {
-            appendNormalizedMessages(messagesJson, historyList)
-            return messagesJson
+        if (totalEstimatedTokens < thresholdLimit) {
+            appendNormalizedMessages(messagesJson, validHistory)
+            return mergeConsecutiveSameRoleMessages(messagesJson)
         }
 
-        // 超标时保留最近 6 轮，将较早历史提炼为事实摘要
+        // 超标时保留最近 6 轮，且裁剪起点必须对齐到首条 role == "user" (绝不产生紧跟 system 的孤立 assistant)
         val preserveRecentCount = 6
-        val oldHistory = if (historyList.size > preserveRecentCount) {
-            historyList.subList(0, historyList.size - preserveRecentCount)
-        } else {
-            emptyList()
+        var splitIndex = (validHistory.size - preserveRecentCount).coerceAtLeast(0)
+        if (splitIndex > 0 && validHistory[splitIndex].role != "user") {
+            val forwardUserIdx = (splitIndex until validHistory.size).firstOrNull { validHistory[it].role == "user" }
+            if (forwardUserIdx != null) {
+                splitIndex = forwardUserIdx
+            } else {
+                val backwardUserIdx = (splitIndex - 1 downTo 0).firstOrNull { validHistory[it].role == "user" }
+                if (backwardUserIdx != null) {
+                    splitIndex = backwardUserIdx
+                }
+            }
         }
-        val recentHistory = historyList.takeLast(preserveRecentCount)
+
+        val oldHistory = if (splitIndex > 0) validHistory.subList(0, splitIndex) else emptyList()
+        val recentHistory = validHistory.subList(splitIndex, validHistory.size)
 
         if (oldHistory.isNotEmpty()) {
             val summarySb = StringBuilder("【历史早期运维会话记忆与已知事实摘要】:\n")
-            val userQuestions = oldHistory.filter { it.role == "user" }.map { it.content.trim() }
+            val userQuestions = oldHistory.filter { it.role == "user" && it.safeContent.isNotBlank() }
+                .map { it.safeContent.trim() }
             if (userQuestions.isNotEmpty()) {
                 summarySb.append("- 用户曾关注/提问的问题: ")
                 summarySb.append(userQuestions.takeLast(5).joinToString("；") { it.take(60) })
                 summarySb.append("\n")
             }
 
-            val assistantConclusions = oldHistory.filter { it.role == "assistant" && it.content.isNotBlank() }
-                .map { it.content.trim() }
+            val assistantConclusions = oldHistory.filter { it.role == "assistant" && it.safeContent.isNotBlank() }
+                .map { it.safeContent.trim() }
             if (assistantConclusions.isNotEmpty()) {
                 summarySb.append("- 过去已得出的关键排障结论/诊断: ")
                 summarySb.append(assistantConclusions.takeLast(3).joinToString("；") { it.take(80) })
@@ -127,22 +184,31 @@ object ContextCompactor {
         }
 
         appendNormalizedMessages(messagesJson, recentHistory)
-        return messagesJson
+        return mergeConsecutiveSameRoleMessages(messagesJson)
     }
 
     /**
      * 规范化并填充历史消息：
      * 1. 过滤空内容；
-     * 2. 角色交替守卫 (Role Alternation Guard)：若存在连续两个相同的角色 (如用户在中断后连发两条 user 消息)，
-     *    自动安全合并为一条复合指令，彻底杜绝大模型 API 出现格式校验报错或空回复。
+     * 2. 安全处理多模态图文与附件文本；
+     * 3. 避免紧跟 system 的孤立 assistant 造成严格网关 400。
      */
     private fun appendNormalizedMessages(messagesJson: JSONArray, list: List<AiChatMessage>) {
-        val nonSystemList = list.filter { 
-            it.role != "system" && (it.safeContent.isNotBlank() || it.safeReasoning.isNotBlank() || it.safeImages.isNotEmpty()) 
+        val nonSystemList = list.filter {
+            it.role != "system" && (
+                it.safeContent.isNotBlank() ||
+                    it.safeReasoning.isNotBlank() ||
+                    it.safeImages.isNotEmpty() ||
+                    it.safeFileContextText.isNotBlank()
+                )
         }
         if (nonSystemList.isEmpty()) return
 
-        for (msg in nonSystemList) {
+        // 防御：若过滤后首条非 system 消息仍是 assistant，尝试跳过前置孤立 assistant 直至首条 user
+        val firstUserIdx = nonSystemList.indexOfFirst { it.role == "user" }
+        val alignedList = if (firstUserIdx > 0) nonSystemList.subList(firstUserIdx, nonSystemList.size) else nonSystemList
+
+        for (msg in alignedList) {
             val role = msg.role
             val rawText = if (msg.safeContent.isNotBlank()) msg.safeContent.trim() else msg.safeReasoning.trim()
             val textContent = if (msg.safeFileContextText.isNotBlank()) {
@@ -168,7 +234,7 @@ object ContextCompactor {
                     })
                 }
                 for (imgData in msg.safeImages) {
-                    val formattedUrl = if (imgData.startsWith("data:")) imgData else "data:image/jpeg;base64,$imgData"
+                    val formattedUrl = if (imgData.startsWith("data:") || imgData.startsWith("http")) imgData else "data:image/jpeg;base64,$imgData"
                     contentArray.put(JSONObject().apply {
                         put("type", "image_url")
                         put("image_url", JSONObject().apply {
@@ -196,6 +262,98 @@ object ContextCompactor {
         }
     }
 
+    /**
+     * 角色交替守卫 (Role Alternation Merger)：
+     * 将连续相同的 user 或 assistant 消息安全合并为一条，
+     * 保留 system 与并行 tool 消息的独立结构，防止 DeepSeek Reasoner / Claude / Gemini 400 报错。
+     */
+    fun mergeConsecutiveSameRoleMessages(source: JSONArray): JSONArray {
+        val merged = JSONArray()
+        for (i in 0 until source.length()) {
+            val current = source.optJSONObject(i) ?: continue
+            val role = current.optString("role", "")
+            val last = if (merged.length() > 0) merged.optJSONObject(merged.length() - 1) else null
+
+            if (last != null && role == last.optString("role", "") && (role == "user" || role == "assistant")) {
+                mergeMessageInto(last, current)
+            } else {
+                merged.put(JSONObject(current.toString()))
+            }
+        }
+        return merged
+    }
+
+    private fun mergeMessageInto(target: JSONObject, incoming: JSONObject) {
+        val targetContent = target.opt("content")
+        val incomingContent = incoming.opt("content")
+
+        if (targetContent is JSONArray || incomingContent is JSONArray) {
+            val combinedArray = JSONArray()
+            appendContentPartsTo(combinedArray, targetContent)
+            appendContentPartsTo(combinedArray, incomingContent)
+            target.put("content", combinedArray)
+        } else {
+            val left = if (target.isNull("content")) "" else target.optString("content", "")
+            val right = if (incoming.isNull("content")) "" else incoming.optString("content", "")
+            val mergedText = when {
+                left.isNotBlank() && right.isNotBlank() -> "$left\n\n$right"
+                right.isNotBlank() -> right
+                else -> left
+            }
+            if (mergedText.isNotEmpty() || (!target.isNull("content") || !incoming.isNull("content"))) {
+                target.put("content", mergedText)
+            }
+        }
+
+        // 合并 assistant 的 reasoning_content 与 tool_calls
+        val leftReasoning = if (target.isNull("reasoning_content")) "" else target.optString("reasoning_content", "")
+        val rightReasoning = if (incoming.isNull("reasoning_content")) "" else incoming.optString("reasoning_content", "")
+        if (leftReasoning.isNotBlank() || rightReasoning.isNotBlank()) {
+            val mergedReasoning = when {
+                leftReasoning.isNotBlank() && rightReasoning.isNotBlank() -> "$leftReasoning\n\n$rightReasoning"
+                rightReasoning.isNotBlank() -> rightReasoning
+                else -> leftReasoning
+            }
+            target.put("reasoning_content", mergedReasoning)
+        }
+
+        val incomingToolCalls = incoming.optJSONArray("tool_calls")
+        if (incomingToolCalls != null && incomingToolCalls.length() > 0) {
+            val targetToolCalls = target.optJSONArray("tool_calls") ?: JSONArray().also { target.put("tool_calls", it) }
+            for (j in 0 until incomingToolCalls.length()) {
+                targetToolCalls.put(incomingToolCalls.get(j))
+            }
+        }
+    }
+
+    private fun appendContentPartsTo(dest: JSONArray, rawContent: Any?) {
+        if (rawContent == null || rawContent == JSONObject.NULL) return
+        when (rawContent) {
+            is JSONArray -> {
+                for (i in 0 until rawContent.length()) {
+                    dest.put(rawContent.get(i))
+                }
+            }
+            is String -> {
+                if (rawContent.isNotBlank()) {
+                    dest.put(JSONObject().apply {
+                        put("type", "text")
+                        put("text", rawContent)
+                    })
+                }
+            }
+            else -> {
+                val text = rawContent.toString()
+                if (text.isNotBlank()) {
+                    dest.put(JSONObject().apply {
+                        put("type", "text")
+                        put("text", text)
+                    })
+                }
+            }
+        }
+    }
+
     fun compactActiveMessages(messages: JSONArray, config: AiAgentConfig): JSONArray {
         val totalTokens = calculateMessagesTokens(messages)
         if (!isOverThreshold(totalTokens, config)) {
@@ -207,12 +365,12 @@ object ContextCompactor {
         for (i in 0 until messages.length()) {
             val item = messages.getJSONObject(i)
             val role = item.optString("role", "")
-            val content = item.optString("content", "")
+            val rawContent = item.opt("content")
 
-            if (role == "tool" && content.length > 3000) {
-                val head = content.take(1200)
-                val tail = content.takeLast(800)
-                val trimmedContent = "$head\n\n... [中间超长日志输出由 TermX ContextCompactor 自动省略 ${content.length - 2000} 字符] ...\n\n$tail"
+            if (role == "tool" && rawContent is String && rawContent.length > 3000) {
+                val head = rawContent.take(1200)
+                val tail = rawContent.takeLast(800)
+                val trimmedContent = "$head\n\n... [中间超长日志输出由 TermX ContextCompactor 自动省略 ${rawContent.length - 2000} 字符] ...\n\n$tail"
                 val newItem = JSONObject(item.toString())
                 newItem.put("content", trimmedContent)
                 compacted.put(newItem)

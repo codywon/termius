@@ -11,6 +11,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /**
  * Agent 运行时执行状态数据模型
@@ -40,59 +43,114 @@ object AgentExecutionManager {
     private val _state = MutableStateFlow(AgentExecutionState())
     val state: StateFlow<AgentExecutionState> = _state.asStateFlow()
 
+    private val stateLock = Any()
+    private val executionEpoch = AtomicLong(0L)
     private var activeJob: Job? = null
     private var pendingApprovalDeferred: CompletableDeferred<Boolean>? = null
     private var agentClient: TermXAgentClient? = null
     private var toolRegistry: TermXAgentToolRegistry? = null
 
+    private class ExecutionEpochElement(val epoch: Long) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<ExecutionEpochElement>
+    }
+
     fun getOrInitAgentClient(context: Context): TermXAgentClient {
-        if (agentClient == null) {
-            val db = AppDatabase.getDatabase(context.applicationContext)
-            val registry = TermXAgentToolRegistry(
-                context = context.applicationContext,
-                db = db,
-                approvalRequester = { request ->
-                    val deferred = CompletableDeferred<Boolean>()
-                    _state.value = _state.value.copy(pendingApprovalRequest = request)
-                    pendingApprovalDeferred = deferred
-                    try {
-                        deferred.await()
-                    } finally {
-                        _state.value = _state.value.copy(pendingApprovalRequest = null)
-                        pendingApprovalDeferred = null
+        synchronized(stateLock) {
+            if (agentClient == null) {
+                val appContext = context.applicationContext ?: context
+                val db = AppDatabase.getDatabase(appContext)
+                val registry = TermXAgentToolRegistry(
+                    context = appContext,
+                    db = db,
+                    approvalRequester = approval@{ request ->
+                        currentCoroutineContext().ensureActive()
+                        val reqEpoch = currentCoroutineContext()[ExecutionEpochElement]?.epoch
+                        val deferred = CompletableDeferred<Boolean>()
+                        synchronized(stateLock) {
+                            if (reqEpoch == null || executionEpoch.get() != reqEpoch) {
+                                return@approval false
+                            }
+                            pendingApprovalDeferred = deferred
+                            _state.value = _state.value.copy(pendingApprovalRequest = request)
+                        }
+                        try {
+                            deferred.await()
+                        } finally {
+                            synchronized(stateLock) {
+                                if (executionEpoch.get() == reqEpoch) {
+                                    if (pendingApprovalDeferred === deferred) {
+                                        pendingApprovalDeferred = null
+                                    }
+                                    if (_state.value.pendingApprovalRequest?.approvalId == request.approvalId) {
+                                        _state.value = _state.value.copy(pendingApprovalRequest = null)
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-            )
-            toolRegistry = registry
-            agentClient = TermXAgentClient(registry)
+                )
+                toolRegistry = registry
+                agentClient = TermXAgentClient(registry)
+            }
+            return agentClient!!
         }
-        return agentClient!!
     }
 
     /**
      * 响应人工审批闸口
      */
     fun approveDangerousAction(approved: Boolean) {
-        pendingApprovalDeferred?.complete(approved)
+        val deferred = synchronized(stateLock) {
+            val d = pendingApprovalDeferred
+            pendingApprovalDeferred = null
+            d
+        }
+        deferred?.complete(approved)
     }
 
     /**
      * 手动停止当前执行任务
      */
     fun stopExecution() {
-        activeJob?.cancel()
-        activeJob = null
-        pendingApprovalDeferred?.complete(false)
-        pendingApprovalDeferred = null
-        _state.value = _state.value.copy(
-            isGenerating = false,
-            pendingApprovalRequest = null,
-            currentActionText = ""
-        )
+        val jobToCancel: Job?
+        val deferredToReject: CompletableDeferred<Boolean>?
+        synchronized(stateLock) {
+            executionEpoch.incrementAndGet()
+            jobToCancel = activeJob
+            activeJob = null
+            deferredToReject = pendingApprovalDeferred
+            pendingApprovalDeferred = null
+            _state.value = _state.value.copy(
+                isGenerating = false,
+                pendingApprovalRequest = null,
+                currentActionText = ""
+            )
+        }
+        deferredToReject?.complete(false)
+        jobToCancel?.cancel()
     }
 
     /**
-     * 发起 Agent 执行任务 (全生命周期保护)
+     * 当指定会话被删除或清空时，仅当当前执行属于该会话才取消并重置状态
+     */
+    fun cancelIfSession(sessionId: String) {
+        val jobToCancel: Job?
+        val deferredToReject: CompletableDeferred<Boolean>?
+        synchronized(stateLock) {
+            if (_state.value.sessionId != sessionId) return
+            executionEpoch.incrementAndGet()
+            jobToCancel = activeJob
+            activeJob = null
+            deferredToReject = pendingApprovalDeferred
+            pendingApprovalDeferred = null
+            _state.value = AgentExecutionState()
+        }
+        deferredToReject?.complete(false)
+        jobToCancel?.cancel()
+    }
+
+    /**
+     * 发起 Agent 执行任务 (全生命周期保护 + 执行世代隔离)
      */
     fun executePrompt(
         context: Context,
@@ -100,90 +158,174 @@ object AgentExecutionManager {
         updatedMessages: List<AiChatMessage>,
         onSessionUpdated: (() -> Unit)? = null
     ) {
-        // 如果当前已有同会话任务正在生成，避免重复投递
-        if (_state.value.isGenerating && _state.value.sessionId == sessionId) {
-            return
-        }
-
-        val appContext = context.applicationContext
+        val appContext = context.applicationContext ?: context
         val configManager = AiConfigManager(appContext)
         val aiConfig = configManager.loadConfig()
         val client = getOrInitAgentClient(appContext)
 
-        // 联动前台服务持有 WakeLock 保护，防止切后台或锁屏时网络与进程被系统挂起
-        try {
-            SshForegroundService.start(appContext)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to start foreground service: ${e.message}")
-        }
+        val oldJobToCancel: Job?
+        val oldDeferredToReject: CompletableDeferred<Boolean>?
+        val myEpoch: Long
+        val launchedJob: Job
 
-        _state.value = AgentExecutionState(
-            sessionId = sessionId,
-            isGenerating = true,
-            currentChunkText = "",
-            currentReasoningText = "",
-            currentActionText = "正在初始化运维环境与策略..."
-        )
+        synchronized(stateLock) {
+            // 如果当前已有同会话任务正在生成，避免重复投递
+            if (_state.value.isGenerating && _state.value.sessionId == sessionId) {
+                return
+            }
 
-        activeJob?.cancel()
-        activeJob = executionScope.launch {
-            try {
-                client.chatStream(
-                    config = aiConfig,
-                    conversationHistory = updatedMessages,
-                    onChunk = { delta, isThinking ->
-                        if (isThinking) {
-                            _state.value = _state.value.copy(
-                                currentReasoningText = _state.value.currentReasoningText + delta
-                            )
-                        } else {
-                            _state.value = _state.value.copy(
-                                currentChunkText = _state.value.currentChunkText + delta
-                            )
+            myEpoch = executionEpoch.incrementAndGet()
+            oldJobToCancel = activeJob
+            oldDeferredToReject = pendingApprovalDeferred
+            pendingApprovalDeferred = null
+
+            toolRegistry?.currentAiSessionId = sessionId
+            _state.value = AgentExecutionState(
+                sessionId = sessionId,
+                isGenerating = true,
+                currentChunkText = "",
+                currentReasoningText = "",
+                currentActionText = "正在初始化运维环境与策略...",
+                pendingApprovalRequest = null
+            )
+
+            launchedJob = executionScope.launch(context = ExecutionEpochElement(myEpoch), start = CoroutineStart.LAZY) {
+                var taskAcquired = false
+                try {
+                    try {
+                        SshForegroundService.acquireTask(appContext)
+                        taskAcquired = true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to acquire foreground task: ${e.message}")
+                    }
+
+                    client.chatStream(
+                        config = aiConfig,
+                        conversationHistory = updatedMessages,
+                        onChunk = onChunk@{ delta, isThinking ->
+                            synchronized(stateLock) {
+                                if (executionEpoch.get() != myEpoch) return@onChunk
+                                if (isThinking) {
+                                    _state.value = _state.value.copy(
+                                        currentReasoningText = _state.value.currentReasoningText + delta
+                                    )
+                                } else {
+                                    _state.value = _state.value.copy(
+                                        currentChunkText = _state.value.currentChunkText + delta
+                                    )
+                                }
+                            }
+                        },
+                        onToolAction = onToolAction@{ action ->
+                            synchronized(stateLock) {
+                                if (executionEpoch.get() != myEpoch) return@onToolAction
+                                _state.value = _state.value.copy(currentActionText = action)
+                            }
+                        },
+                        onError = onError@{ err ->
+                            val errMsg = AiChatMessage.assistant(content = "❌ $err", isError = true)
+                            val afterError = updatedMessages + errMsg
+                            var delivered = false
+                            synchronized(stateLock) {
+                                if (executionEpoch.get() != myEpoch) return@onError
+                                if (configManager.hasSession(sessionId)) {
+                                    configManager.saveMessages(sessionId, afterError)
+                                }
+                                _state.value = _state.value.copy(
+                                    isGenerating = false,
+                                    currentActionText = ""
+                                )
+                                delivered = true
+                            }
+                            if (delivered) {
+                                dispatchSessionUpdated(myEpoch, onSessionUpdated)
+                            }
+                        },
+                        onComplete = onComplete@{ full, reasoning ->
+                            val assistantMsg = AiChatMessage.assistant(content = full, reasoning = reasoning)
+                            val afterDone = updatedMessages + assistantMsg
+                            var delivered = false
+                            synchronized(stateLock) {
+                                if (executionEpoch.get() != myEpoch) return@onComplete
+                                if (configManager.hasSession(sessionId)) {
+                                    configManager.saveMessages(sessionId, afterDone)
+                                }
+                                _state.value = _state.value.copy(
+                                    isGenerating = false,
+                                    currentActionText = ""
+                                )
+                                delivered = true
+                            }
+                            if (delivered) {
+                                dispatchSessionUpdated(myEpoch, onSessionUpdated)
+                            }
                         }
-                    },
-                    onToolAction = { action ->
-                        _state.value = _state.value.copy(currentActionText = action)
-                    },
-                    onError = { err ->
-                        val errMsg = AiChatMessage.assistant(content = "❌ $err", isError = true)
-                        val afterError = updatedMessages + errMsg
-                        configManager.saveMessages(sessionId, afterError)
-                        _state.value = _state.value.copy(
-                            isGenerating = false,
-                            currentActionText = ""
-                        )
-                        executionScope.launch(Dispatchers.Main) {
-                            onSessionUpdated?.invoke()
-                        }
-                    },
-                    onComplete = { full, reasoning ->
-                        val assistantMsg = AiChatMessage.assistant(content = full, reasoning = reasoning)
-                        val afterDone = updatedMessages + assistantMsg
-                        configManager.saveMessages(sessionId, afterDone)
-                        _state.value = _state.value.copy(
-                            isGenerating = false,
-                            currentActionText = ""
-                        )
-                        executionScope.launch(Dispatchers.Main) {
-                            onSessionUpdated?.invoke()
+                    )
+                } catch (e: CancellationException) {
+                    Log.i(TAG, "Agent task was cancelled (epoch=$myEpoch)")
+                    synchronized(stateLock) {
+                        if (executionEpoch.get() == myEpoch) {
+                            _state.value = _state.value.copy(
+                                isGenerating = false,
+                                pendingApprovalRequest = null,
+                                currentActionText = ""
+                            )
                         }
                     }
-                )
-            } catch (e: CancellationException) {
-                Log.i(TAG, "Agent task was cancelled by user")
-            } catch (e: Exception) {
-                Log.e(TAG, "Unexpected error in Agent execution", e)
-                val errMsg = AiChatMessage.assistant(content = "❌ 执行异常中断: ${e.message}", isError = true)
-                val afterError = updatedMessages + errMsg
-                configManager.saveMessages(sessionId, afterError)
-                _state.value = _state.value.copy(
-                    isGenerating = false,
-                    currentActionText = ""
-                )
-                executionScope.launch(Dispatchers.Main) {
-                    onSessionUpdated?.invoke()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unexpected error in Agent execution", e)
+                    val errMsg = AiChatMessage.assistant(content = "❌ 执行异常中断: ${e.message}", isError = true)
+                    val afterError = updatedMessages + errMsg
+                    var delivered = false
+                    synchronized(stateLock) {
+                        if (executionEpoch.get() != myEpoch) return@launch
+                        if (configManager.hasSession(sessionId)) {
+                            configManager.saveMessages(sessionId, afterError)
+                        }
+                        _state.value = _state.value.copy(
+                            isGenerating = false,
+                            pendingApprovalRequest = null,
+                            currentActionText = ""
+                        )
+                        delivered = true
+                    }
+                    if (delivered) {
+                        dispatchSessionUpdated(myEpoch, onSessionUpdated)
+                    }
+                } finally {
+                    if (taskAcquired) {
+                        try {
+                            SshForegroundService.releaseTask(appContext)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to release foreground task: ${e.message}")
+                        }
+                    }
                 }
+            }
+            activeJob = launchedJob
+        }
+
+        oldDeferredToReject?.complete(false)
+        oldJobToCancel?.cancel()
+        launchedJob.start()
+    }
+
+    private fun dispatchSessionUpdated(myEpoch: Long, onSessionUpdated: (() -> Unit)?) {
+        val callback = onSessionUpdated ?: return
+        try {
+            executionScope.launch(Dispatchers.Main) {
+                if (executionEpoch.get() == myEpoch) {
+                    callback.invoke()
+                }
+            }
+        } catch (_: IllegalStateException) {
+            // 兼容无 Android Main dispatcher 的纯 JVM 测试环境
+            if (executionEpoch.get() == myEpoch) {
+                callback.invoke()
             }
         }
     }
